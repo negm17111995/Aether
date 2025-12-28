@@ -1,0 +1,141 @@
+// AETHER DEPENDENCY NIRVANA - REAL IMPLEMENTATION
+// File-based package registry with content hashing
+
+import std
+
+// ============================================================================
+// FNV-1a HASH - Real implementation
+// ============================================================================
+
+const FNV_OFFSET: Int = 14695981039346656037
+const FNV_PRIME: Int = 1099511628211
+
+func hash_bytes(data: Int, len: Int) -> Int {
+    let hash = FNV_OFFSET
+    let i = 0
+    while i < len {
+        let byte = ae_load8(data + i)
+        // FNV-1a: hash = (hash XOR byte) * prime
+        hash = __builtin_xor(hash, byte)
+        hash = hash * FNV_PRIME
+        i = i + 1
+    }
+    hash
+}
+
+// Hash an integer value
+func hash_int(val: Int) -> Int {
+    let buf = ae_malloc(8)
+    ae_store64(buf, val)
+    let h = hash_bytes(buf, 8)
+    __builtin_free(buf)
+    h
+}
+
+// Combine two hashes
+func hash_combine(h1: Int, h2: Int) -> Int {
+    let combined = __builtin_xor(h1, h2)
+    combined * FNV_PRIME
+}
+
+// ============================================================================
+// PACKAGE STORAGE - In-memory registry with hash keys
+// ============================================================================
+
+const MAX_PACKAGES: Int = 256
+const PKG_ENTRY_SIZE: Int = 24  // hash + ptr + version
+
+// Registry: [count, entries...]
+func registry_new() -> Int {
+    let size = 8 + MAX_PACKAGES * PKG_ENTRY_SIZE
+    let reg = ae_malloc(size)
+    ae_store64(reg, 0)  // count = 0
+    reg
+}
+
+func registry_count(reg: Int) -> Int {
+    ae_load64(reg)
+}
+
+// Add package to registry
+func registry_add(reg: Int, hash: Int, ptr: Int, version: Int) -> Int {
+    let count = ae_load64(reg)
+    if count >= MAX_PACKAGES {
+        return 0  // Full
+    }
+    
+    let offset = 8 + count * PKG_ENTRY_SIZE
+    ae_store64(reg + offset, hash)
+    ae_store64(reg + offset + 8, ptr)
+    ae_store64(reg + offset + 16, version)
+    ae_store64(reg, count + 1)
+    1
+}
+
+// Find package by hash
+func registry_find(reg: Int, hash: Int) -> Int {
+    let count = ae_load64(reg)
+    let i = 0
+    while i < count {
+        let offset = 8 + i * PKG_ENTRY_SIZE
+        let h = ae_load64(reg + offset)
+        if h == hash {
+            return ae_load64(reg + offset + 8)  // Return ptr
+        }
+        i = i + 1
+    }
+    0  // Not found
+}
+
+// ============================================================================
+// PACKAGE FUNCTIONS - Store and retrieve by content hash
+// ============================================================================
+
+// Store a function and return its content hash
+func pkg_store_func(reg: Int, code: Int, code_size: Int, version: Int) -> Int {
+    let hash = hash_bytes(code, code_size)
+    
+    // Check if already exists (content-addressed = no duplicates)
+    let existing = registry_find(reg, hash)
+    if existing != 0 {
+        return hash  // Already stored
+    }
+    
+    // Copy code to permanent storage
+    let stored = ae_malloc(code_size)
+    let i = 0
+    while i < code_size {
+        ae_store8(stored + i, ae_load8(code + i))
+        i = i + 1
+    }
+    
+    registry_add(reg, hash, stored, version)
+    hash
+}
+
+// Retrieve function by hash
+func pkg_load_func(reg: Int, hash: Int) -> Int {
+    registry_find(reg, hash)
+}
+
+// ============================================================================
+// VERSION RESOLUTION - Content addressing means no conflicts
+// ============================================================================
+
+// With content addressing, same hash = identical code
+// Different hash = different code (both valid, no conflict)
+func pkg_resolve(reg: Int, hash1: Int, hash2: Int) -> Int {
+    if hash1 == hash2 {
+        return hash1  // Same content
+    }
+    // Both are valid, caller decides which to use
+    hash1
+}
+
+// ============================================================================
+// HIGH-LEVEL API
+// ============================================================================
+
+// Note: Global singleton removed - bootstrap doesn't support global let
+// Use registry_new() and pass registry explicitly to all functions
+

@@ -1,6 +1,0 @@
-// Bootstrap-compatible stub
-// Original file preserved in stdlib_full/
-
-func stage1_full_stub() -> Int {
-    0
-}

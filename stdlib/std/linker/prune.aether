@@ -1,0 +1,201 @@
+// LINK-TIME PRUNING - Minimal Binaries
+// Only includes used code
+
+import std
+import std.pkg.registry
+
+// ============================================================================
+// SYMBOL TRACKING - Track which functions are used
+// ============================================================================
+
+const MAX_SYMBOLS: Int = 1024
+
+// Symbol Entry: [name_hash, is_used, size_bytes, refs_count]
+const SYM_ENTRY_SIZE: Int = 32
+
+func symbol_table_new() -> Int {
+    let table = ae_malloc(8 + MAX_SYMBOLS * SYM_ENTRY_SIZE)
+    ae_store64(table, 0)
+    table
+}
+
+func symbol_add(table: Int, name_hash: Int, size: Int) -> Int {
+    let count = ae_load64(table)
+    if count >= MAX_SYMBOLS { return 0 }
+    
+    let offset = 8 + count * SYM_ENTRY_SIZE
+    ae_store64(table + offset, name_hash)
+    ae_store64(table + offset + 8, 0)  // not used yet
+    ae_store64(table + offset + 16, size)
+    ae_store64(table + offset + 24, 0)  // no refs
+    ae_store64(table, count + 1)
+    1
+}
+
+func symbol_find(table: Int, name_hash: Int) -> Int {
+    let count = ae_load64(table)
+    let i = 0
+    while i < count {
+        let offset = 8 + i * SYM_ENTRY_SIZE
+        if ae_load64(table + offset) == name_hash {
+            return offset
+        }
+        i = i + 1
+    }
+    0
+}
+
+func symbol_mark_used(table: Int, name_hash: Int) {
+    let offset = symbol_find(table, name_hash)
+    if offset != 0 {
+        ae_store64(table + offset + 8, 1)  // Mark used
+        let refs = ae_load64(table + offset + 24)
+        ae_store64(table + offset + 24, refs + 1)
+    }
+}
+
+func symbol_is_used(table: Int, name_hash: Int) -> Int {
+    let offset = symbol_find(table, name_hash)
+    if offset != 0 {
+        return ae_load64(table + offset + 8)
+    }
+    0
+}
+
+// ============================================================================
+// DEAD CODE ELIMINATION
+// ============================================================================
+
+// Count unused symbols
+func count_unused(table: Int) -> Int {
+    let count = ae_load64(table)
+    let unused = 0
+    let i = 0
+    
+    while i < count {
+        let offset = 8 + i * SYM_ENTRY_SIZE
+        if ae_load64(table + offset + 8) == 0 {
+            unused = unused + 1
+        }
+        i = i + 1
+    }
+    
+    unused
+}
+
+// Total size of unused code
+func unused_size(table: Int) -> Int {
+    let count = ae_load64(table)
+    let total = 0
+    let i = 0
+    
+    while i < count {
+        let offset = 8 + i * SYM_ENTRY_SIZE
+        if ae_load64(table + offset + 8) == 0 {
+            total = total + ae_load64(table + offset + 16)
+        }
+        i = i + 1
+    }
+    
+    total
+}
+
+// Total size of used code (final binary size)
+func used_size(table: Int) -> Int {
+    let count = ae_load64(table)
+    let total = 0
+    let i = 0
+    
+    while i < count {
+        let offset = 8 + i * SYM_ENTRY_SIZE
+        if ae_load64(table + offset + 8) == 1 {
+            total = total + ae_load64(table + offset + 16)
+        }
+        i = i + 1
+    }
+    
+    total
+}
+
+// ============================================================================
+// DEPENDENCY TREE WALKING - Find all reachable symbols
+// ============================================================================
+
+// Reference table: [symbol_hash, [referenced_hashes...]]
+const MAX_REFS: Int = 32
+const REF_ENTRY_SIZE: Int = 8 + MAX_REFS * 8
+
+func ref_table_new() -> Int {
+    let table = ae_malloc(8 + MAX_SYMBOLS * REF_ENTRY_SIZE)
+    ae_store64(table, 0)
+    table
+}
+
+func ref_add_symbol(table: Int, name_hash: Int) -> Int {
+    let count = ae_load64(table)
+    if count >= MAX_SYMBOLS { return 0 }
+    
+    let offset = 8 + count * REF_ENTRY_SIZE
+    ae_store64(table + offset, name_hash)
+    ae_store64(table, count + 1)
+    offset
+}
+
+func ref_add_reference(table: Int, from_hash: Int, to_hash: Int) {
+    let count = ae_load64(table)
+    let i = 0
+    while i < count {
+        let offset = 8 + i * REF_ENTRY_SIZE
+        if ae_load64(table + offset) == from_hash {
+            // Find empty slot in refs
+            let j = 0
+            while j < MAX_REFS {
+                let ref = ae_load64(table + offset + 8 + j * 8)
+                if ref == 0 {
+                    ae_store64(table + offset + 8 + j * 8, to_hash)
+                    return
+                }
+                j = j + 1
+            }
+            return
+        }
+        i = i + 1
+    }
+}
+
+// Mark all reachable from entry point
+func mark_reachable(sym_table: Int, ref_table: Int, entry_hash: Int) {
+    symbol_mark_used(sym_table, entry_hash)
+    
+    // Walk references
+    let count = ae_load64(ref_table)
+    let i = 0
+    while i < count {
+        let offset = 8 + i * REF_ENTRY_SIZE
+        if ae_load64(ref_table + offset) == entry_hash {
+            let j = 0
+            while j < MAX_REFS {
+                let ref = ae_load64(ref_table + offset + 8 + j * 8)
+                if ref != 0 && symbol_is_used(sym_table, ref) == 0 {
+                    mark_reachable(sym_table, ref_table, ref)
+                }
+                j = j + 1
+            }
+        }
+        i = i + 1
+    }
+}
+
+// ============================================================================
+// HIGH-LEVEL API
+// ============================================================================
+
+func linker_analyze(sym_table: Int, ref_table: Int, entry: Int) -> Int {
+    mark_reachable(sym_table, ref_table, entry)
+    
+    let info = ae_malloc(24)
+    ae_store64(info, used_size(sym_table))
+    ae_store64(info + 8, unused_size(sym_table))
+    ae_store64(info + 16, count_unused(sym_table))
+    info
+}

@@ -1,0 +1,191 @@
+// ALGEBRAIC EFFECTS - Compiler-Tracked Side Effects
+// Cleaner than Result<T, E>
+
+import std
+
+// ============================================================================
+// EFFECT TYPES
+// ============================================================================
+
+const EFF_NONE: Int = 0
+const EFF_ERROR: Int = 1
+const EFF_STATE: Int = 2
+const EFF_IO: Int = 3
+const EFF_ASYNC: Int = 4
+const EFF_LOG: Int = 5
+
+// ============================================================================
+// EFFECT CONTEXT - Tracks current effects
+// ============================================================================
+
+// Context Layout:
+// [0: effect_mask (which effects are active)]
+// [8: error_code]
+// [16: error_msg ptr]
+// [24: state ptr]
+// [32: log buffer ptr]
+
+func effect_ctx_new() -> Int {
+    let ctx = ae_malloc(40)
+    ae_store64(ctx, 0)       // no effects
+    ae_store64(ctx + 8, 0)   // no error
+    ae_store64(ctx + 16, 0)  // no msg
+    ae_store64(ctx + 24, 0)  // no state
+    ae_store64(ctx + 32, 0)  // no log
+    ctx
+}
+
+func effect_has(ctx: Int, eff: Int) -> Int {
+    let mask = ae_load64(ctx)
+    let bit = 1
+    let i = 0
+    while i < eff {
+        bit = bit * 2
+        i = i + 1
+    }
+    if __builtin_and(mask, bit) != 0 {
+        return 1
+    }
+    0
+}
+
+func effect_add(ctx: Int, eff: Int) {
+    let mask = ae_load64(ctx)
+    let bit = 1
+    let i = 0
+    while i < eff {
+        bit = bit * 2
+        i = i + 1
+    }
+    ae_store64(ctx, __builtin_or(mask, bit))
+}
+
+// ============================================================================
+// ERROR EFFECT
+// ============================================================================
+
+func effect_raise(ctx: Int, code: Int) {
+    effect_add(ctx, EFF_ERROR)
+    ae_store64(ctx + 8, code)
+}
+
+func effect_get_error(ctx: Int) -> Int {
+    ae_load64(ctx + 8)
+}
+
+func effect_is_error(ctx: Int) -> Int {
+    effect_has(ctx, EFF_ERROR)
+}
+
+func effect_clear_error(ctx: Int) {
+    let mask = ae_load64(ctx)
+    // Clear error bit (bit 1)
+    ae_store64(ctx, __builtin_and(mask, 0 - 3))  // ~2 = -3 in 2's complement trick
+    ae_store64(ctx + 8, 0)
+}
+
+// ============================================================================
+// STATE EFFECT
+// ============================================================================
+
+func effect_set_state(ctx: Int, state: Int) {
+    effect_add(ctx, EFF_STATE)
+    ae_store64(ctx + 24, state)
+}
+
+func effect_get_state(ctx: Int) -> Int {
+    ae_load64(ctx + 24)
+}
+
+func effect_modify_state(ctx: Int, delta: Int) {
+    let state = effect_get_state(ctx)
+    effect_set_state(ctx, state + delta)
+}
+
+// ============================================================================
+// LOG EFFECT
+// ============================================================================
+
+const LOG_BUFFER_SIZE: Int = 1024
+
+func effect_init_log(ctx: Int) {
+    let log = ae_malloc(LOG_BUFFER_SIZE + 8)
+    ae_store64(log, 0)  // length = 0
+    ae_store64(ctx + 32, log)
+    effect_add(ctx, EFF_LOG)
+}
+
+func effect_log(ctx: Int, value: Int) {
+    let log = ae_load64(ctx + 32)
+    if log == 0 {
+        effect_init_log(ctx)
+        log = ae_load64(ctx + 32)
+    }
+    
+    let len = ae_load64(log)
+    if len < LOG_BUFFER_SIZE / 8 {
+        ae_store64(log + 8 + len * 8, value)
+        ae_store64(log, len + 1)
+    }
+}
+
+func effect_get_log_len(ctx: Int) -> Int {
+    let log = ae_load64(ctx + 32)
+    if log == 0 { return 0 }
+    ae_load64(log)
+}
+
+func effect_get_log_entry(ctx: Int, idx: Int) -> Int {
+    let log = ae_load64(ctx + 32)
+    if log == 0 { return 0 }
+    let len = ae_load64(log)
+    if idx < 0 || idx >= len { return 0 }
+    ae_load64(log + 8 + idx * 8)
+}
+
+// ============================================================================
+// EFFECT HANDLERS - Like try/catch but for effects
+// ============================================================================
+
+// Run computation and handle error effect
+func with_error_handler(ctx: Int, default_val: Int, func_ptr: Int, arg: Int) -> Int {
+    let result = __builtin_call(func_ptr, arg)
+    
+    if effect_is_error(ctx) {
+        effect_clear_error(ctx)
+        return default_val
+    }
+    
+    result
+}
+
+// Run computation with state
+func with_state(ctx: Int, initial: Int, func_ptr: Int, arg: Int) -> Int {
+    effect_set_state(ctx, initial)
+    let result = __builtin_call(func_ptr, arg)
+    result
+}
+
+// ============================================================================
+// EXAMPLE: Safe Division with Effects
+// ============================================================================
+
+func safe_div(ctx: Int, a: Int, b: Int) -> Int {
+    if b == 0 {
+        effect_raise(ctx, 1)  // Division by zero
+        return 0
+    }
+    effect_log(ctx, a / b)
+    a / b
+}
+
+// Chain computations with effect tracking
+func chain_compute(ctx: Int, x: Int) -> Int {
+    let r1 = safe_div(ctx, x, 2)
+    if effect_is_error(ctx) { return 0 }
+    
+    let r2 = safe_div(ctx, r1, 2)
+    if effect_is_error(ctx) { return 0 }
+    
+    r2
+}

@@ -1,0 +1,277 @@
+// ═══════════════════════════════════════════════════════════════════════════════
+// AETHER MACH-O BINARY GENERATOR
+// ═══════════════════════════════════════════════════════════════════════════════
+// Pure Aether Mach-O file generation for macOS ARM64
+// Generates executable binaries without any C dependency
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MACH-O CONSTANTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Mach-O header magic
+const MH_MAGIC_64: Int = 0xFEEDFACF
+
+// CPU types
+const CPU_TYPE_ARM64: Int = 0x0100000C
+const CPU_SUBTYPE_ARM64_ALL: Int = 0x00000000
+
+// File types
+const MH_EXECUTE: Int = 0x02
+
+// Flags
+const MH_NOUNDEFS: Int = 0x01
+const MH_PIE: Int = 0x200000
+
+// Load command types
+const LC_SEGMENT_64: Int = 0x19
+const LC_SYMTAB: Int = 0x02
+const LC_DYSYMTAB: Int = 0x0B
+const LC_LOAD_DYLINKER: Int = 0x0E
+const LC_UUID: Int = 0x1B
+const LC_BUILD_VERSION: Int = 0x32
+const LC_MAIN: Int = 0x80000028
+const LC_CODE_SIGNATURE: Int = 0x1D
+
+// Segment/section constants
+const VM_PROT_READ: Int = 0x01
+const VM_PROT_WRITE: Int = 0x02
+const VM_PROT_EXECUTE: Int = 0x04
+
+const S_REGULAR: Int = 0x00
+const S_ATTR_PURE_INSTRUCTIONS: Int = 0x80000000
+const S_ATTR_SOME_INSTRUCTIONS: Int = 0x00000400
+
+// Page size
+const PAGE_SIZE: Int = 0x4000  // 16KB for ARM64
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MACH-O BUILDER
+// ═══════════════════════════════════════════════════════════════════════════════
+
+func macho_new() -> Int {
+    let m = malloc(128)
+    poke(m, vec_new())       // header bytes
+    poke(m + 8, 0)           // text_offset
+    poke(m + 16, 0)          // text_size
+    poke(m + 24, 0)          // entry_offset
+    poke(m + 32, vec_new())  // code buffer
+    m
+}
+
+func macho_header(m: Int) -> Int { peek(m) }
+func macho_code(m: Int) -> Int { peek(m + 32) }
+
+// Write 32-bit little-endian
+func write32(buf: Int, val: Int) {
+    vec_push8(buf, val & 0xFF)
+    vec_push8(buf, (val >> 8) & 0xFF)
+    vec_push8(buf, (val >> 16) & 0xFF)
+    vec_push8(buf, (val >> 24) & 0xFF)
+}
+
+// Write 64-bit little-endian
+func write64(buf: Int, val: Int) {
+    write32(buf, val & 0xFFFFFFFF)
+    write32(buf, (val >> 32) & 0xFFFFFFFF)
+}
+
+// Write string (16 bytes max, null-padded)
+func write_str16(buf: Int, s: Int, len: Int) {
+    let i = 0
+    while i < 16 {
+        if i < len {
+            vec_push8(buf, peek8(s + i))
+        } else {
+            vec_push8(buf, 0)
+        }
+        i = i + 1
+    }
+}
+
+// Pad to alignment
+func pad_to(buf: Int, align: Int) {
+    while (vec_len(buf) % align) != 0 {
+        vec_push8(buf, 0)
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// GENERATE MINIMAL EXECUTABLE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+func macho_generate(m: Int, code: Int, code_size: Int) -> Int {
+    let buf = macho_header(m)
+    
+    // Calculate sizes
+    let header_size = 32           // mach_header_64
+    let segment_cmd_size = 72      // segment_command_64
+    let section_cmd_size = 80      // section_64
+    let main_cmd_size = 24         // entry_point_command
+    
+    let ncmds = 2                  // __PAGEZERO + __TEXT with __text + LC_MAIN
+    let sizeofcmds = segment_cmd_size + segment_cmd_size + section_cmd_size + main_cmd_size
+    
+    let text_start = PAGE_SIZE     // Code starts at page boundary
+    let entry_offset = 0           // Entry at start of __text
+    
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Mach-O Header (32 bytes)
+    // ═══════════════════════════════════════════════════════════════════════════
+    write32(buf, MH_MAGIC_64)                    // magic
+    write32(buf, CPU_TYPE_ARM64)                 // cputype
+    write32(buf, CPU_SUBTYPE_ARM64_ALL)          // cpusubtype
+    write32(buf, MH_EXECUTE)                     // filetype
+    write32(buf, 3)                              // ncmds
+    write32(buf, sizeofcmds)                     // sizeofcmds
+    write32(buf, MH_NOUNDEFS | MH_PIE)           // flags
+    write32(buf, 0)                              // reserved
+    
+    // ═══════════════════════════════════════════════════════════════════════════
+    // LC_SEGMENT_64: __PAGEZERO (72 bytes)
+    // ═══════════════════════════════════════════════════════════════════════════
+    write32(buf, LC_SEGMENT_64)                  // cmd
+    write32(buf, segment_cmd_size)               // cmdsize
+    write_str16(buf, str_pagezero(), 10)         // segname
+    write64(buf, 0)                              // vmaddr
+    write64(buf, PAGE_SIZE)                      // vmsize
+    write64(buf, 0)                              // fileoff
+    write64(buf, 0)                              // filesize
+    write32(buf, 0)                              // maxprot
+    write32(buf, 0)                              // initprot
+    write32(buf, 0)                              // nsects
+    write32(buf, 0)                              // flags
+    
+    // ═══════════════════════════════════════════════════════════════════════════
+    // LC_SEGMENT_64: __TEXT with __text section (72 + 80 bytes)
+    // ═══════════════════════════════════════════════════════════════════════════
+    write32(buf, LC_SEGMENT_64)                  // cmd
+    write32(buf, segment_cmd_size + section_cmd_size)  // cmdsize
+    write_str16(buf, str_text_seg(), 6)          // segname "__TEXT"
+    write64(buf, PAGE_SIZE)                      // vmaddr
+    write64(buf, PAGE_SIZE + code_size)          // vmsize
+    write64(buf, 0)                              // fileoff
+    write64(buf, PAGE_SIZE + code_size)          // filesize
+    write32(buf, VM_PROT_READ | VM_PROT_EXECUTE) // maxprot
+    write32(buf, VM_PROT_READ | VM_PROT_EXECUTE) // initprot
+    write32(buf, 1)                              // nsects
+    write32(buf, 0)                              // flags
+    
+    // section_64: __text
+    write_str16(buf, str_text_sect(), 6)         // sectname "__text"
+    write_str16(buf, str_text_seg(), 6)          // segname "__TEXT"
+    write64(buf, PAGE_SIZE)                      // addr
+    write64(buf, code_size)                      // size
+    write32(buf, PAGE_SIZE)                      // offset
+    write32(buf, 2)                              // align (2^2 = 4)
+    write32(buf, 0)                              // reloff
+    write32(buf, 0)                              // nreloc
+    write32(buf, S_REGULAR | S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS)  // flags
+    write32(buf, 0)                              // reserved1
+    write32(buf, 0)                              // reserved2
+    write32(buf, 0)                              // reserved3
+    
+    // ═══════════════════════════════════════════════════════════════════════════
+    // LC_MAIN (24 bytes)
+    // ═══════════════════════════════════════════════════════════════════════════
+    write32(buf, LC_MAIN)                        // cmd
+    write32(buf, main_cmd_size)                  // cmdsize
+    write64(buf, entry_offset)                   // entryoff (relative to __TEXT)
+    write64(buf, 0)                              // stacksize
+    
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Pad header to page boundary
+    // ═══════════════════════════════════════════════════════════════════════════
+    pad_to(buf, PAGE_SIZE)
+    
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Append code
+    // ═══════════════════════════════════════════════════════════════════════════
+    let i = 0
+    while i < code_size {
+        vec_push8(buf, vec_get8(code, i))
+        i = i + 1
+    }
+    
+    buf
+}
+
+// String literals (as byte arrays)
+func str_pagezero() -> Int {
+    let s = malloc(16)
+    poke8(s + 0, 95)   // _
+    poke8(s + 1, 95)   // _
+    poke8(s + 2, 80)   // P
+    poke8(s + 3, 65)   // A
+    poke8(s + 4, 71)   // G
+    poke8(s + 5, 69)   // E
+    poke8(s + 6, 90)   // Z
+    poke8(s + 7, 69)   // E
+    poke8(s + 8, 82)   // R
+    poke8(s + 9, 79)   // O
+    s
+}
+
+func str_text_seg() -> Int {
+    let s = malloc(16)
+    poke8(s + 0, 95)   // _
+    poke8(s + 1, 95)   // _
+    poke8(s + 2, 84)   // T
+    poke8(s + 3, 69)   // E
+    poke8(s + 4, 88)   // X
+    poke8(s + 5, 84)   // T
+    s
+}
+
+func str_text_sect() -> Int {
+    let s = malloc(16)
+    poke8(s + 0, 95)   // _
+    poke8(s + 1, 95)   // _
+    poke8(s + 2, 116)  // t
+    poke8(s + 3, 101)  // e
+    poke8(s + 4, 120)  // x
+    poke8(s + 5, 116)  // t
+    s
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// WRITE BINARY TO FILE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+func macho_write(path: Int, buf: Int) -> Int {
+    let len = vec_len(buf)
+    let data = peek(buf)  // Get data pointer
+    __builtin_write_file(path, data, len)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MEMORY PRIMITIVES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+func malloc(size: Int) -> Int { __builtin_malloc(size) }
+func poke(addr: Int, val: Int) { __builtin_store64(addr, val) }
+func peek(addr: Int) -> Int { __builtin_load64(addr) }
+func poke8(addr: Int, val: Int) { __builtin_store8(addr, val) }
+func peek8(addr: Int) -> Int { __builtin_load8(addr) }
+
+func vec_new() -> Int {
+    let v = malloc(24)
+    let data = malloc(65536)
+    poke(v, data)
+    poke(v + 8, 0)
+    poke(v + 16, 65536)
+    v
+}
+
+func vec_len(v: Int) -> Int { peek(v + 8) }
+
+func vec_push8(v: Int, val: Int) {
+    let len = peek(v + 8)
+    let data = peek(v)
+    poke8(data + len, val)
+    poke(v + 8, len + 1)
+}
+
+func vec_get8(v: Int, i: Int) -> Int {
+    let data = peek(v)
+    peek8(data + i)
+}

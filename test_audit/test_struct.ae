@@ -1,0 +1,11 @@
+// TEST: Struct support
+struct Point {
+    x: Int,
+    y: Int,
+}
+
+func main() -> Int {
+    let p = Point { x: 10, y: 20 }
+    print(p.x + p.y)
+    0
+}

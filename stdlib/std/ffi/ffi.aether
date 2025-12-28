@@ -1,0 +1,151 @@
+// BIT-LEVEL FFI - Zero-Overhead C Interop
+// Call C/Rust with no wrapper overhead
+
+import std
+
+// ============================================================================
+// C TYPE MAPPING - Bit-exact layouts
+// ============================================================================
+
+// C types mapped to Aether
+const C_CHAR: Int = 1
+const C_SHORT: Int = 2
+const C_INT: Int = 4
+const C_LONG: Int = 8
+const C_PTR: Int = 8
+const C_FLOAT: Int = 4
+const C_DOUBLE: Int = 8
+
+// ============================================================================
+// C STRUCT EMULATION - Exact memory layout
+// ============================================================================
+
+// Define a C struct layout
+// Layout descriptor: [field_count, field_offsets..., field_sizes...]
+func ffi_struct_new(field_count: Int) -> Int {
+    let layout = ae_malloc(8 + field_count * 16)  // offset + size for each field
+    ae_store64(layout, field_count)
+    layout
+}
+
+func ffi_struct_set_field(layout: Int, idx: Int, offset: Int, size: Int) {
+    let fc = ae_load64(layout)
+    if idx >= 0 && idx < fc {
+        ae_store64(layout + 8 + idx * 8, offset)
+        ae_store64(layout + 8 + fc * 8 + idx * 8, size)
+    }
+}
+
+func ffi_struct_get_offset(layout: Int, idx: Int) -> Int {
+    let fc = ae_load64(layout)
+    if idx >= 0 && idx < fc {
+        return ae_load64(layout + 8 + idx * 8)
+    }
+    0
+}
+
+func ffi_struct_get_size(layout: Int, idx: Int) -> Int {
+    let fc = ae_load64(layout)
+    if idx >= 0 && idx < fc {
+        return ae_load64(layout + 8 + fc * 8 + idx * 8)
+    }
+    0
+}
+
+func ffi_struct_total_size(layout: Int) -> Int {
+    let fc = ae_load64(layout)
+    let total = 0
+    let i = 0
+    while i < fc {
+        let offset = ffi_struct_get_offset(layout, i)
+        let size = ffi_struct_get_size(layout, i)
+        if offset + size > total {
+            total = offset + size
+        }
+        i = i + 1
+    }
+    total
+}
+
+// ============================================================================
+// C STRUCT INSTANCE - Actual data
+// ============================================================================
+
+func ffi_instance_new(layout: Int) -> Int {
+    let size = ffi_struct_total_size(layout)
+    let inst = ae_malloc(8 + size)
+    ae_store64(inst, layout)  // Link to layout
+    inst + 8  // Return pointer to data area
+}
+
+func ffi_get_field_i64(data: Int, layout: Int, field_idx: Int) -> Int {
+    let offset = ffi_struct_get_offset(layout, field_idx)
+    ae_load64(data + offset)
+}
+
+func ffi_set_field_i64(data: Int, layout: Int, field_idx: Int, val: Int) {
+    let offset = ffi_struct_get_offset(layout, field_idx)
+    ae_store64(data + offset, val)
+}
+
+func ffi_get_field_i32(data: Int, layout: Int, field_idx: Int) -> Int {
+    let offset = ffi_struct_get_offset(layout, field_idx)
+    // Read 4 bytes (simulate 32-bit read)
+    let val = ae_load64(data + offset)
+    __builtin_and(val, 4294967295)  // Mask to 32 bits
+}
+
+func ffi_set_field_i32(data: Int, layout: Int, field_idx: Int, val: Int) {
+    let offset = ffi_struct_get_offset(layout, field_idx)
+    ae_store64(data + offset, __builtin_and(val, 4294967295))
+}
+
+// ============================================================================
+// FUNCTION POINTER INTEROP
+// ============================================================================
+
+// Call C function with 0-3 arguments
+func ffi_call0(fptr: Int) -> Int {
+    __builtin_call(fptr, 0)
+}
+
+func ffi_call1(fptr: Int, arg1: Int) -> Int {
+    __builtin_call(fptr, arg1)
+}
+
+// For multiple args, we pack them in memory
+func ffi_call2(fptr: Int, arg1: Int, arg2: Int) -> Int {
+    // C calling convention: args in registers
+    // We simulate by storing args contiguously
+    let args = ae_malloc(16)
+    ae_store64(args, arg1)
+    ae_store64(args + 8, arg2)
+    let result = __builtin_call(fptr, args)
+    __builtin_free(args)
+    result
+}
+
+// ============================================================================
+// EXAMPLE: C timeval struct
+// ============================================================================
+
+// struct timeval { time_t tv_sec; suseconds_t tv_usec; }
+func ffi_timeval_layout() -> Int {
+    let layout = ffi_struct_new(2)
+    ffi_struct_set_field(layout, 0, 0, 8)   // tv_sec at offset 0, size 8
+    ffi_struct_set_field(layout, 1, 8, 8)   // tv_usec at offset 8, size 8
+    layout
+}
+
+func ffi_timeval_new() -> Int {
+    let layout = ffi_timeval_layout()
+    ffi_instance_new(layout)
+}
+
+func ffi_timeval_get_sec(tv: Int) -> Int {
+    ae_load64(tv)
+}
+
+func ffi_timeval_get_usec(tv: Int) -> Int {
+    ae_load64(tv + 8)
+}

@@ -1,0 +1,12 @@
+struct Res { x: Int }
+
+func Res_drop(r: Res) {
+    print(999)
+}
+
+func main() -> Int {
+    if 1 {
+        let r: Res = Res { x: 1 }
+    }
+    0
+}

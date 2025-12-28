@@ -1,0 +1,42 @@
+// AETHER INDESTRUCTIBLE - NEVER FAIL, NEVER CRASH, NEVER LAG
+// Bootstrap Stub Version
+
+import std
+
+// Configuration
+const MAX_RETRIES: Int = 1000000
+const WF_PENDING: Int = 0
+const WF_RUNNING: Int = 1
+const WF_COMPLETED: Int = 2
+const WF_FAILED: Int = 3
+
+// Workflow engine stubs
+func indestructible_init() {
+    // Stub
+}
+
+func never_fail(fn: Int, arg: Int) -> Int {
+    // Just run it directly for now
+    __builtin_call(fn, arg)
+}
+
+func workflow_run(name: Int, fn: Int, arg: Int) -> Int {
+    never_fail(fn, arg)
+}
+
+func activity(name: Int, fn: Int, arg: Int) -> Int {
+    never_fail(fn, arg)
+}
+
+func workflow_schedule(name: Int, fn: Int, arg: Int, delay_ms: Int) -> Int {
+    0 // Stub
+}
+
+func workflow_cancel(wf_id: Int) {}
+func workflow_status(wf_id: Int) -> Int { 0 }
+
+// Helpers
+func sleep(ms: Int) {}
+func now_ms() -> Int { 0 }
+func random_int() -> Int { 0 }
+

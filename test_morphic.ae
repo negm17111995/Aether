@@ -1,0 +1,15 @@
+// Test Morphic Runtime - REAL execution
+import std
+import std.morphic.ir
+
+func main() -> Int {
+    // Test: 10 + 5 = 15
+    let result1 = morphic_compute(10, 5, 0)
+    print(result1)
+    
+    // Test: 20 * 3 = 60
+    let result2 = morphic_compute(20, 3, 2)
+    print(result2)
+    
+    0
+}

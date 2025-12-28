@@ -1,0 +1,76 @@
+// Aether Collections - Bootstrap Compatible Version
+// Uses Int handles for all data structures. No generics.
+
+import std
+
+// Vec implementation is provided by std.aether
+// Aliases for compatibility if needed, but for now we trust std.
+
+// Collections provided by std:
+// - vec_new, vec_push, vec_len, vec_get, vec_set
+
+
+// HashMap - simple linear probe
+const MAP_BUCKETS: Int = 0
+const MAP_SIZE: Int = 8
+const MAP_CAP: Int = 16
+
+func map_new() -> Int {
+    let m = ae_malloc(24)
+    let buckets = ae_malloc(4096)  // 256 buckets * 16 bytes
+    ae_store64(m + MAP_BUCKETS, buckets)
+    ae_store64(m + MAP_SIZE, 0)
+    ae_store64(m + MAP_CAP, 256)
+    m
+}
+
+func hash_int(key: Int) -> Int {
+    let h = key
+    h = h * 2654435761
+    h
+}
+
+func map_insert(m: Int, key: Int, val: Int) {
+    let buckets = ae_load64(m + MAP_BUCKETS)
+    let cap = ae_load64(m + MAP_CAP)
+    let idx = (hash_int(key) % cap)
+    // Avoid negative index
+    if idx < 0 { idx = 0 - idx }
+    
+    // Linear probe stub - just overwrite for bootstrap simplicity
+    let offset = idx * 16
+    ae_store64(buckets + offset, key)
+    ae_store64(buckets + offset + 8, val)
+    
+    let size = ae_load64(m + MAP_SIZE)
+    ae_store64(m + MAP_SIZE, size + 1)
+}
+
+func map_get(m: Int, key: Int) -> Int {
+    let buckets = ae_load64(m + MAP_BUCKETS)
+    let cap = ae_load64(m + MAP_CAP)
+    let idx = (hash_int(key) % cap)
+    if idx < 0 { idx = 0 - idx }
+    
+    let offset = idx * 16
+    let stored_key = ae_load64(buckets + offset)
+    
+    if stored_key == key {
+        return ae_load64(buckets + offset + 8)
+    }
+    0
+}
+
+// Set - wrapper around map
+func set_new() -> Int {
+    map_new()
+}
+
+func set_add(s: Int, item: Int) {
+    map_insert(s, item, 1)
+}
+
+func set_contains(s: Int, item: Int) -> Bool {
+    if map_get(s, item) != 0 { return true }
+    false
+}

@@ -1,0 +1,162 @@
+// HOT-RELOADING - Live Code Updates (Erlang-style)
+// Change running code without restart
+
+import std
+
+// ============================================================================
+// CODE VERSION MANAGEMENT
+// ============================================================================
+
+const MAX_VERSIONS: Int = 16
+
+// Version Entry: [version_num, code_ptr, code_size, is_active]
+const VERSION_ENTRY_SIZE: Int = 32
+
+func version_table_new() -> Int {
+    let table = ae_malloc(8 + MAX_VERSIONS * VERSION_ENTRY_SIZE)
+    ae_store64(table, 0)  // count = 0
+    table
+}
+
+func version_table_count(table: Int) -> Int {
+    ae_load64(table)
+}
+
+func version_add(table: Int, code_ptr: Int, code_size: Int) -> Int {
+    let count = ae_load64(table)
+    if count >= MAX_VERSIONS { return 0 }
+    
+    let ver = count + 1
+    let offset = 8 + count * VERSION_ENTRY_SIZE
+    ae_store64(table + offset, ver)
+    ae_store64(table + offset + 8, code_ptr)
+    ae_store64(table + offset + 16, code_size)
+    ae_store64(table + offset + 24, 1)  // is_active = true
+    ae_store64(table, count + 1)
+    ver
+}
+
+func version_get_active(table: Int) -> Int {
+    let count = ae_load64(table)
+    let i = count - 1  // Start from latest
+    
+    while i >= 0 {
+        let offset = 8 + i * VERSION_ENTRY_SIZE
+        let active = ae_load64(table + offset + 24)
+        if active == 1 {
+            return ae_load64(table + offset + 8)  // Return code_ptr
+        }
+        i = i - 1
+    }
+    
+    0
+}
+
+func version_deactivate(table: Int, ver: Int) {
+    let count = ae_load64(table)
+    let i = 0
+    while i < count {
+        let offset = 8 + i * VERSION_ENTRY_SIZE
+        if ae_load64(table + offset) == ver {
+            ae_store64(table + offset + 24, 0)  // Deactivate
+            return
+        }
+        i = i + 1
+    }
+}
+
+// ============================================================================
+// STATE MIGRATION - Transfer state between versions
+// ============================================================================
+
+// State Layout: [version, data_ptr, data_size]
+func state_new(version: Int, data_size: Int) -> Int {
+    let state = ae_malloc(24 + data_size)
+    ae_store64(state, version)
+    ae_store64(state + 8, state + 24)  // data_ptr
+    ae_store64(state + 16, data_size)
+    state
+}
+
+func state_get_version(state: Int) -> Int {
+    ae_load64(state)
+}
+
+func state_get_data(state: Int) -> Int {
+    ae_load64(state + 8)
+}
+
+func state_get_size(state: Int) -> Int {
+    ae_load64(state + 16)
+}
+
+// Migrate state to new version (copy data)
+func state_migrate(old_state: Int, new_version: Int) -> Int {
+    let size = state_get_size(old_state)
+    let new_state = state_new(new_version, size)
+    
+    let old_data = state_get_data(old_state)
+    let new_data = state_get_data(new_state)
+    
+    // Copy data byte by byte
+    let i = 0
+    while i < size {
+        ae_store8(new_data + i, ae_load8(old_data + i))
+        i = i + 1
+    }
+    
+    new_state
+}
+
+// ============================================================================
+// HOT SWAP - Replace running code
+// ============================================================================
+
+// Module: [name_hash, version_table, current_state]
+func module_new(name_hash: Int) -> Int {
+    let mod = ae_malloc(24)
+    ae_store64(mod, name_hash)
+    ae_store64(mod + 8, version_table_new())
+    ae_store64(mod + 16, 0)  // no state yet
+    mod
+}
+
+func module_get_versions(mod: Int) -> Int {
+    ae_load64(mod + 8)
+}
+
+func module_get_state(mod: Int) -> Int {
+    ae_load64(mod + 16)
+}
+
+func module_set_state(mod: Int, state: Int) {
+    ae_store64(mod + 16, state)
+}
+
+// Hot reload: Add new version and migrate state
+func module_hot_reload(mod: Int, new_code: Int, new_size: Int) -> Int {
+    let versions = module_get_versions(mod)
+    let new_ver = version_add(versions, new_code, new_size)
+    
+    // Migrate state if exists
+    let old_state = module_get_state(mod)
+    if old_state != 0 {
+        let new_state = state_migrate(old_state, new_ver)
+        module_set_state(mod, new_state)
+    }
+    
+    new_ver
+}
+
+// Get current entry point
+func module_get_entry(mod: Int) -> Int {
+    let versions = module_get_versions(mod)
+    version_get_active(versions)
+}
+
+// Execute module's current code
+func module_execute(mod: Int, arg: Int) -> Int {
+    let entry = module_get_entry(mod)
+    if entry == 0 { return 0 }
+    __builtin_call(entry, arg)
+}

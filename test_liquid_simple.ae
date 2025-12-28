@@ -1,0 +1,1 @@
+struct Res { x: Int } func Res_drop(r: Res) { print(999) } func main() -> Int { let r: Res = Res { x: 1 } 0 }

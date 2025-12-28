@@ -1,0 +1,44 @@
+// Aether Network Library (Stub)
+// Satisfies import std.net
+
+import std
+
+// Socket constants
+const AF_INET: Int = 2
+const SOCK_STREAM: Int = 1
+const IPPROTO_TCP: Int = 6
+
+// Socket handle type
+struct Socket {
+    fd: Int
+}
+
+func socket_create() -> Socket {
+    // Stub
+    Socket { fd: 0 }
+}
+
+func socket_connect(s: Socket, addr: Int, port: Int) -> Int {
+    // Stub
+    0
+}
+
+func socket_bind(s: Socket, port: Int) -> Int {
+    0
+}
+
+func socket_listen(s: Socket) -> Int {
+    0
+}
+
+func socket_accept(s: Socket) -> Socket {
+    Socket { fd: 0 }
+}
+
+func socket_send(s: Socket, data: Int, len: Int) -> Int {
+    len
+}
+
+func socket_recv(s: Socket, buf: Int, cap: Int) -> Int {
+    0
+}

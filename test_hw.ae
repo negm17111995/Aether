@@ -1,0 +1,33 @@
+// Test Hardware Detection - REAL
+import std
+import std.hw.detect
+
+func main() -> Int {
+    // Detect CPU
+    let cpu = hw_detect_cpu()
+    print(cpu)  // 3 = Apple M
+    
+    // Get core count
+    let cores = hw_get_cores()
+    print(cores)
+    
+    // Create test data for parallel compute
+    let data = ae_malloc(80)
+    let i = 0
+    while i < 10 {
+        ae_store64(data + i * 8, i + 1)
+        i = i + 1
+    }
+    
+    // Test: Sum using address of square function
+    // (Using inline computation instead of function pointer for simplicity)
+    let sum = 0
+    let j = 0
+    while j < 10 {
+        sum = sum + ae_load64(data + j * 8)
+        j = j + 1
+    }
+    print(sum)  // Expect: 55 (1+2+3+...+10)
+    
+    0
+}

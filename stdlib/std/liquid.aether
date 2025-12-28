@@ -1,0 +1,70 @@
+// AETHER LIQUID AUTOMATON
+// Zero-Cost Liquid Ownership Runtime
+
+import std
+import std.runtime.safety
+
+// Liquid Header Layout (relative to user pointer)
+// [ -16 : RC (8 bytes) ]
+// [ -8  : Destructor (8 bytes) ]
+// [  0  : User Data ]
+
+func liquid_alloc(size: Int, dtor: Int) -> Int {
+    // Allocate extra 16 bytes for Liquid Header
+    let base = safe_alloc(size + 16)
+    
+    // safe_alloc returns pointer to User Data of its own header.
+    // We treating that as our base.
+    
+    // Init RC to 1
+    ae_store64(base, 1)
+    
+    // Init Destructor
+    ae_store64(base + 8, dtor)
+    
+    // Return pointer to user data (scoot over 16 bytes)
+    base + 16
+}
+
+func liquid_retain(ptr: Int) {
+    if ptr == 0 { return }
+    
+    // Header is at ptr - 16
+    let header = ptr - 16
+    let rc = ae_load64(header)
+    
+    // Increment
+    ae_store64(header, rc + 1)
+}
+
+func liquid_release(ptr: Int) {
+    if ptr == 0 { return }
+    
+    let header = ptr - 16
+    let rc = ae_load64(header)
+    
+    // Decrement
+    let new_rc = rc - 1
+    ae_store64(header, new_rc)
+    
+    if new_rc == 0 {
+        // Load Destructor
+        let dtor = ae_load64(header + 8)
+        
+        // Call struct destructor if exists
+        // Note: In bootstrap, we might simulate this or use a specialized opcode.
+        // For now, if dtor != 0 and we represent dtor as a function pointer:
+        if (dtor != 0) {
+            __builtin_call(dtor, ptr)
+        }
+        
+        // Free the memory (must point to the start of safe_alloc allocation)
+        // safe_alloc returned 'base' which is 'header'.
+        safe_free(header)
+    }
+}
+
+// Stub for untracked allocation (for compatibility)
+func liquid_leak(ptr: Int) {
+    // Do nothing (intentionally leak / hand off to manual management)
+}

@@ -1,8 +1,0 @@
-// Minimal test - decimal only
-func test() -> Int {
-    vec_push8(0, 207)
-    0
-}
-
-func vec_push8(v: Int, val: Int) {}
-func main() -> Int { 0 }

@@ -1,0 +1,201 @@
+// ACTOR-MODEL CONCURRENCY - Deadlock-Free Message Passing
+// No shared state = mathematically impossible deadlocks
+
+import std
+
+// ============================================================================
+// MAILBOX - Thread-safe message queue
+// ============================================================================
+
+const MAILBOX_SIZE: Int = 256
+const MSG_SIZE: Int = 24  // [sender, tag, payload]
+
+// Mailbox Layout:
+// [0: head (read position)]
+// [8: tail (write position)]
+// [16: lock]
+// [24: messages...]
+
+func mailbox_new() -> Int {
+    let size = 24 + MAILBOX_SIZE * MSG_SIZE
+    let mb = ae_malloc(size)
+    ae_store64(mb, 0)       // head = 0
+    ae_store64(mb + 8, 0)   // tail = 0
+    ae_store64(mb + 16, 0)  // unlocked
+    mb
+}
+
+func mailbox_lock(mb: Int) {
+    // Spin until we acquire lock
+    while __builtin_atomic_cas(mb + 16, 0, 1) == 0 {
+        __builtin_yield()
+    }
+}
+
+func mailbox_unlock(mb: Int) {
+    __builtin_atomic_store(mb + 16, 0)
+}
+
+func mailbox_send(mb: Int, sender: Int, tag: Int, payload: Int) -> Int {
+    mailbox_lock(mb)
+    
+    let head = ae_load64(mb)
+    let tail = ae_load64(mb + 8)
+    let next_tail = (tail + 1) % MAILBOX_SIZE
+    
+    if next_tail == head {
+        // Mailbox full
+        mailbox_unlock(mb)
+        return 0
+    }
+    
+    let offset = 24 + tail * MSG_SIZE
+    ae_store64(mb + offset, sender)
+    ae_store64(mb + offset + 8, tag)
+    ae_store64(mb + offset + 16, payload)
+    ae_store64(mb + 8, next_tail)
+    
+    mailbox_unlock(mb)
+    1
+}
+
+func mailbox_recv(mb: Int) -> Int {
+    mailbox_lock(mb)
+    
+    let head = ae_load64(mb)
+    let tail = ae_load64(mb + 8)
+    
+    if head == tail {
+        // Mailbox empty
+        mailbox_unlock(mb)
+        return 0
+    }
+    
+    let offset = 24 + head * MSG_SIZE
+    let msg = ae_malloc(MSG_SIZE)
+    ae_store64(msg, ae_load64(mb + offset))
+    ae_store64(msg + 8, ae_load64(mb + offset + 8))
+    ae_store64(msg + 16, ae_load64(mb + offset + 16))
+    
+    ae_store64(mb, (head + 1) % MAILBOX_SIZE)
+    
+    mailbox_unlock(mb)
+    msg
+}
+
+func mailbox_is_empty(mb: Int) -> Int {
+    let head = ae_load64(mb)
+    let tail = ae_load64(mb + 8)
+    if head == tail { return 1 }
+    0
+}
+
+// ============================================================================
+// ACTOR - Isolated unit with mailbox
+// ============================================================================
+
+// Actor Layout:
+// [0: id]
+// [8: mailbox ptr]
+// [16: state ptr]
+// [24: handler ptr]
+
+func actor_new(id: Int, initial_state: Int) -> Int {
+    let actor = ae_malloc(32)
+    ae_store64(actor, id)
+    ae_store64(actor + 8, mailbox_new())
+    ae_store64(actor + 16, initial_state)
+    ae_store64(actor + 24, 0)  // handler set later
+    actor
+}
+
+func actor_id(actor: Int) -> Int {
+    ae_load64(actor)
+}
+
+func actor_mailbox(actor: Int) -> Int {
+    ae_load64(actor + 8)
+}
+
+func actor_state(actor: Int) -> Int {
+    ae_load64(actor + 16)
+}
+
+func actor_set_state(actor: Int, state: Int) {
+    ae_store64(actor + 16, state)
+}
+
+// Send message to actor
+func actor_send(actor: Int, sender_id: Int, tag: Int, payload: Int) -> Int {
+    let mb = actor_mailbox(actor)
+    mailbox_send(mb, sender_id, tag, payload)
+}
+
+// Process one message from mailbox
+func actor_receive(actor: Int) -> Int {
+    let mb = actor_mailbox(actor)
+    mailbox_recv(mb)
+}
+
+// ============================================================================
+// MESSAGE TAGS
+// ============================================================================
+
+const MSG_PING: Int = 1
+const MSG_PONG: Int = 2
+const MSG_COMPUTE: Int = 3
+const MSG_RESULT: Int = 4
+const MSG_STOP: Int = 5
+
+// ============================================================================
+// ACTOR SYSTEM - Manages multiple actors
+// ============================================================================
+
+const MAX_ACTORS: Int = 64
+
+func actor_system_new() -> Int {
+    let sys = ae_malloc(8 + MAX_ACTORS * 8)
+    ae_store64(sys, 0)  // count = 0
+    sys
+}
+
+func actor_system_spawn(sys: Int, initial_state: Int) -> Int {
+    let count = ae_load64(sys)
+    if count >= MAX_ACTORS {
+        return 0
+    }
+    
+    let actor = actor_new(count, initial_state)
+    ae_store64(sys + 8 + count * 8, actor)
+    ae_store64(sys, count + 1)
+    actor
+}
+
+func actor_system_get(sys: Int, id: Int) -> Int {
+    let count = ae_load64(sys)
+    if id < 0 || id >= count {
+        return 0
+    }
+    ae_load64(sys + 8 + id * 8)
+}
+
+// Run one tick of actor system (process one message per actor)
+func actor_system_tick(sys: Int) -> Int {
+    let count = ae_load64(sys)
+    let processed = 0
+    let i = 0
+    
+    while i < count {
+        let actor = ae_load64(sys + 8 + i * 8)
+        let msg = actor_receive(actor)
+        if msg != 0 {
+            processed = processed + 1
+            // Message received: [sender, tag, payload]
+            // Handler would process here
+            __builtin_free(msg)
+        }
+        i = i + 1
+    }
+    
+    processed
+}

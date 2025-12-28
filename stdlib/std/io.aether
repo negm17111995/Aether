@@ -1,0 +1,52 @@
+// Aether I/O - Bootstrap Compatible Version
+// Uses Int for all types (bootstrap doesn't support String properly)
+
+import std
+
+// Console output
+func io_print(value: Int) {
+    print(value)
+}
+
+func io_print_str(ptr: Int) {
+    __builtin_print(ptr)
+}
+
+func io_println(value: Int) {
+    print(value)
+}
+
+// Console input (returns string pointer)
+func io_input() -> Int {
+    __builtin_input()
+}
+
+// File I/O (all use Int handles)
+func io_read_file(path: Int) -> Int {
+    __builtin_file_read(path)
+}
+
+func io_write_file(path: Int, content: Int) -> Int {
+    __builtin_file_write(path, content)
+}
+
+func io_append_file(path: Int, content: Int) -> Int {
+    __builtin_file_append(path, content)
+}
+
+func io_file_exists(path: Int) -> Int {
+    __builtin_file_exists(path)
+}
+
+// Directory operations
+func io_list_dir(path: Int) -> Int {
+    __builtin_dir_list(path)
+}
+
+func io_create_dir(path: Int) -> Int {
+    __builtin_dir_create(path)
+}
+
+func io_is_directory(path: Int) -> Int {
+    __builtin_is_dir(path)
+}

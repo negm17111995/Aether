@@ -1,6 +1,0 @@
-// Bootstrap-compatible stub
-// Original file preserved in stdlib_full/
-
-func ❌_stub() -> Int {
-    0
-}

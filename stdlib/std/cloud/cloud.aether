@@ -1,0 +1,69 @@
+// AETHER CLOUD - SHIM V5
+// Simplified: Handles and Offsets. No structs.
+// This bypasses any bugs in 'struct' parsing.
+
+// Constants
+const CLOUD_AWS: Int = 0
+const CLOUD_GCP: Int = 1
+const CLOUD_AZURE: Int = 2
+
+// CloudConfig Offsets
+const CFG_PROVIDER: Int = 0
+const CFG_REGION: Int = 8
+const CFG_CREDS: Int = 16
+const CFG_PROJ: Int = 24
+
+// ServerlessFunction Offsets
+const SL_HANDLER: Int = 0
+const SL_CONFIG: Int = 8
+const SL_RUNTIME: Int = 16
+
+func ServerlessFunction_deploy(self: Int, provider: Int) -> Int {
+    0
+}
+
+// Storage Offsets
+const ST_BACKEND: Int = 0
+
+func Storage_get(self: Int, key: Int) -> Int {
+    0
+}
+
+func Storage_put(self: Int, key: Int, value: Int) -> Int {
+    0
+}
+
+// Database Offsets
+const DB_CONN: Int = 0
+
+func Database_connect(url: Int) -> Int {
+    0
+}
+
+func Database_query(self: Int, sql: Int, params: Int) -> Int {
+    0
+}
+
+// MessageQueue Offsets
+const MQ_BACKEND: Int = 0
+
+func MessageQueue_send(self: Int, message: Int) -> Int {
+    0
+}
+
+// Cache Offsets
+const CH_BACKEND: Int = 0
+
+func Cache_get(self: Int, key: Int) -> Int {
+    0
+}
+
+func Cache_set(self: Int, key: Int, val: Int, ttl: Int) {
+}
+
+// Deployment Offsets
+const DEP_CONFIG: Int = 0
+
+func Deployment_deploy(self: Int) -> Int {
+    0
+}

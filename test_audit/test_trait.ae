@@ -1,0 +1,14 @@
+// TEST: Trait (simplified)
+trait Printable {
+    func show(self) -> Int
+}
+
+struct Number {
+    value: Int,
+}
+
+func main() -> Int {
+    let n = Number { value: 77 }
+    print(n.value)
+    0
+}

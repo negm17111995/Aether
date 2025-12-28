@@ -1,0 +1,282 @@
+// AETHER MORPHIC RUNTIME - REAL IMPLEMENTATION
+// Bytecode VM that actually executes code
+
+import std
+
+// ============================================================================
+// OPCODES - For real execution
+// ============================================================================
+
+const OP_NOP: Int = 0
+const OP_LOAD_IMM: Int = 1   // Load immediate value
+const OP_LOAD_REG: Int = 2   // Load from register
+const OP_STORE: Int = 3      // Store to register
+const OP_ADD: Int = 4
+const OP_SUB: Int = 5
+const OP_MUL: Int = 6
+const OP_DIV: Int = 7
+const OP_CMP_EQ: Int = 8
+const OP_CMP_LT: Int = 9
+const OP_JMP: Int = 10
+const OP_JZ: Int = 11        // Jump if zero
+const OP_JNZ: Int = 12       // Jump if not zero
+const OP_CALL: Int = 13
+const OP_RET: Int = 14
+const OP_HALT: Int = 15
+const OP_PRINT: Int = 16
+
+// ============================================================================
+// VM STATE - Real registers and memory
+// ============================================================================
+
+const VM_NUM_REGS: Int = 16
+const VM_STACK_SIZE: Int = 1024
+const VM_CODE_SIZE: Int = 4096
+
+// VM layout:
+// [  0 : PC (program counter)  ]
+// [  8 : SP (stack pointer)    ]
+// [ 16 : FLAGS                 ]
+// [ 24 : Registers (16 * 8)    ]
+// [152 : Stack (1024 * 8)      ]
+// [8344: Code (4096 * 8)       ]
+
+const VM_PC: Int = 0
+const VM_SP: Int = 8
+const VM_FLAGS: Int = 16
+const VM_REGS: Int = 24
+const VM_STACK: Int = 152
+const VM_CODE: Int = 8344
+
+func vm_new() -> Int {
+    let size = VM_CODE + VM_CODE_SIZE * 8
+    let vm = ae_malloc(size)
+    
+    // Initialize
+    ae_store64(vm + VM_PC, 0)
+    ae_store64(vm + VM_SP, 0)
+    ae_store64(vm + VM_FLAGS, 0)
+    
+    // Zero registers
+    let i = 0
+    while i < VM_NUM_REGS {
+        ae_store64(vm + VM_REGS + i * 8, 0)
+        i = i + 1
+    }
+    
+    vm
+}
+
+// Register access
+func vm_get_reg(vm: Int, r: Int) -> Int {
+    ae_load64(vm + VM_REGS + r * 8)
+}
+
+func vm_set_reg(vm: Int, r: Int, val: Int) {
+    ae_store64(vm + VM_REGS + r * 8, val)
+}
+
+// Program counter
+func vm_get_pc(vm: Int) -> Int { ae_load64(vm + VM_PC) }
+func vm_set_pc(vm: Int, pc: Int) { ae_store64(vm + VM_PC, pc) }
+
+// Load code into VM
+func vm_load_code(vm: Int, code: Int, count: Int) {
+    let i = 0
+    while i < count {
+        let instr = ae_load64(code + i * 8)
+        ae_store64(vm + VM_CODE + i * 8, instr)
+        i = i + 1
+    }
+}
+
+// Encode instruction: [op:8][dest:8][src1:8][src2:8][imm:32]
+func encode_instr(op: Int, dest: Int, src1: Int, src2: Int, imm: Int) -> Int {
+    let result = op
+    result = result + dest * 256
+    result = result + src1 * 65536
+    result = result + src2 * 16777216
+    result = result + imm * 4294967296
+    result
+}
+
+// Decode instruction parts
+func decode_op(instr: Int) -> Int { instr % 256 }
+func decode_dest(instr: Int) -> Int { (instr / 256) % 256 }
+func decode_src1(instr: Int) -> Int { (instr / 65536) % 256 }
+func decode_src2(instr: Int) -> Int { (instr / 16777216) % 256 }
+func decode_imm(instr: Int) -> Int { instr / 4294967296 }
+
+// ============================================================================
+// EXECUTION ENGINE - Actually runs code
+// ============================================================================
+
+func vm_step(vm: Int) -> Int {
+    let pc = vm_get_pc(vm)
+    let instr = ae_load64(vm + VM_CODE + pc * 8)
+    
+    let op = decode_op(instr)
+    let dest = decode_dest(instr)
+    let src1 = decode_src1(instr)
+    let src2 = decode_src2(instr)
+    let imm = decode_imm(instr)
+    
+    if op == OP_NOP {
+        vm_set_pc(vm, pc + 1)
+    }
+    
+    if op == OP_LOAD_IMM {
+        vm_set_reg(vm, dest, imm)
+        vm_set_pc(vm, pc + 1)
+    }
+    
+    if op == OP_LOAD_REG {
+        let val = vm_get_reg(vm, src1)
+        vm_set_reg(vm, dest, val)
+        vm_set_pc(vm, pc + 1)
+    }
+    
+    if op == OP_ADD {
+        let a = vm_get_reg(vm, src1)
+        let b = vm_get_reg(vm, src2)
+        vm_set_reg(vm, dest, a + b)
+        vm_set_pc(vm, pc + 1)
+    }
+    
+    if op == OP_SUB {
+        let a = vm_get_reg(vm, src1)
+        let b = vm_get_reg(vm, src2)
+        vm_set_reg(vm, dest, a - b)
+        vm_set_pc(vm, pc + 1)
+    }
+    
+    if op == OP_MUL {
+        let a = vm_get_reg(vm, src1)
+        let b = vm_get_reg(vm, src2)
+        vm_set_reg(vm, dest, a * b)
+        vm_set_pc(vm, pc + 1)
+    }
+    
+    if op == OP_DIV {
+        let a = vm_get_reg(vm, src1)
+        let b = vm_get_reg(vm, src2)
+        if b != 0 {
+            vm_set_reg(vm, dest, a / b)
+        }
+        vm_set_pc(vm, pc + 1)
+    }
+    
+    if op == OP_CMP_EQ {
+        let a = vm_get_reg(vm, src1)
+        let b = vm_get_reg(vm, src2)
+        if a == b {
+            vm_set_reg(vm, dest, 1)
+        } else {
+            vm_set_reg(vm, dest, 0)
+        }
+        vm_set_pc(vm, pc + 1)
+    }
+    
+    if op == OP_CMP_LT {
+        let a = vm_get_reg(vm, src1)
+        let b = vm_get_reg(vm, src2)
+        if a < b {
+            vm_set_reg(vm, dest, 1)
+        } else {
+            vm_set_reg(vm, dest, 0)
+        }
+        vm_set_pc(vm, pc + 1)
+    }
+    
+    if op == OP_JMP {
+        vm_set_pc(vm, imm)
+    }
+    
+    if op == OP_JZ {
+        let cond = vm_get_reg(vm, src1)
+        if cond == 0 {
+            vm_set_pc(vm, imm)
+        } else {
+            vm_set_pc(vm, pc + 1)
+        }
+    }
+    
+    if op == OP_JNZ {
+        let cond = vm_get_reg(vm, src1)
+        if cond != 0 {
+            vm_set_pc(vm, imm)
+        } else {
+            vm_set_pc(vm, pc + 1)
+        }
+    }
+    
+    if op == OP_PRINT {
+        let val = vm_get_reg(vm, src1)
+        print(val)
+        vm_set_pc(vm, pc + 1)
+    }
+    
+    if op == OP_HALT {
+        return 0  // Stop execution
+    }
+    
+    1  // Continue
+}
+
+// Run until halt
+func vm_run(vm: Int) -> Int {
+    let running = 1
+    let steps = 0
+    let max_steps = 100000
+    
+    while running == 1 && steps < max_steps {
+        running = vm_step(vm)
+        steps = steps + 1
+    }
+    
+    steps
+}
+
+// ============================================================================
+// HIGH-LEVEL API
+// ============================================================================
+
+// Create and run a simple program
+func morphic_compute(a: Int, b: Int, op: Int) -> Int {
+    let vm = vm_new()
+    
+    // Build program: R0 = a, R1 = b, R2 = R0 op R1, print R2, halt
+    let code = ae_malloc(40)  // 5 instructions
+    
+    // LOAD_IMM R0, a
+    ae_store64(code, encode_instr(OP_LOAD_IMM, 0, 0, 0, a))
+    
+    // LOAD_IMM R1, b
+    ae_store64(code + 8, encode_instr(OP_LOAD_IMM, 1, 0, 0, b))
+    
+    // OP R2, R0, R1
+    if op == 0 {
+        ae_store64(code + 16, encode_instr(OP_ADD, 2, 0, 1, 0))
+    }
+    if op == 1 {
+        ae_store64(code + 16, encode_instr(OP_SUB, 2, 0, 1, 0))
+    }
+    if op == 2 {
+        ae_store64(code + 16, encode_instr(OP_MUL, 2, 0, 1, 0))
+    }
+    if op == 3 {
+        ae_store64(code + 16, encode_instr(OP_DIV, 2, 0, 1, 0))
+    }
+    
+    // PRINT R2
+    ae_store64(code + 24, encode_instr(OP_PRINT, 0, 2, 0, 0))
+    
+    // HALT
+    ae_store64(code + 32, encode_instr(OP_HALT, 0, 0, 0, 0))
+    
+    vm_load_code(vm, code, 5)
+    vm_run(vm)
+    
+    // Return result from R2
+    vm_get_reg(vm, 2)
+}

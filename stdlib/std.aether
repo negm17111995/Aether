@@ -1,351 +1,99 @@
-// ═══════════════════════════════════════════════════════════════════════════════
-// AETHER STANDARD LIBRARY - Unified Entry Point
-// ═══════════════════════════════════════════════════════════════════════════════
-// Every module. Perfectly connected. One import.
+// AETHER STANDARD LIBRARY
+// Bootstrap-compatible version - direct exports
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// CORE MODULES
+// MATH
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Core types: Option, Result, primitives
-pub mod core {
-    pub use super::_core::*
+func ae_abs(x: Int) -> Int {
+    if x < 0 { return 0 - x }
+    x
 }
 
-/// Input/Output: Console, files
-pub mod io {
-    pub use super::_io::*
+func ae_min(a: Int, b: Int) -> Int {
+    if a < b { return a }
+    b
 }
 
-/// Collections: Vec, Map, Set, Queue, Stack
-pub mod collections {
-    pub use super::_collections::*
+func ae_max(a: Int, b: Int) -> Int {
+    if a > b { return a }
+    b
 }
 
-/// String utilities
-pub mod string {
-    pub use super::_string::*
-}
-
-/// Mathematics
-pub mod math {
-    pub use super::_math::*
-}
-
-/// Time and duration
-pub mod time {
-    pub use super::_time::*
+func ae_clamp(x: Int, lo: Int, hi: Int) -> Int {
+    ae_min(ae_max(x, lo), hi)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// NETWORKING
+// MEMORY (using bootstrap builtins)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Networking: TCP, UDP, HTTP, WebSocket, TLS, DNS
-pub mod net {
-    pub use super::_net::*
-    
-    /// HTTP client and server
-    pub mod http {
-        pub use super::http::*
-    }
-    
-    /// WebSocket client and server
-    pub mod websocket {
-        pub use super::websocket::*
-    }
-    
-    /// TLS/SSL
-    pub mod tls {
-        pub use super::tls::*
-    }
-    
-    /// DNS resolution
-    pub mod dns {
-        pub use super::dns::*
-    }
+func ae_malloc(size: Int) -> Int {
+    __builtin_malloc(size)
+}
+
+func ae_store64(addr: Int, val: Int) {
+    __builtin_store64(addr, val)
+}
+
+func ae_load64(addr: Int) -> Int {
+    __builtin_load64(addr)
+}
+
+func ae_store8(addr: Int, val: Int) {
+    __builtin_store8(addr, val)
+}
+
+func ae_load8(addr: Int) -> Int {
+    __builtin_load8(addr)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// DATABASE
+// VECTOR (dynamic array)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Database: Embedded, ORM, GraphQL, Migrations
-pub mod db {
-    pub use super::_db::*
-    
-    /// Migration system
-    pub mod migrations {
-        pub use super::migrations::*
-    }
-    
-    /// GraphQL integration
-    pub mod graphql {
-        pub use super::graphql::*
-    }
+func vec_new() -> Int {
+    let v = ae_malloc(24)
+    let data = ae_malloc(1024)
+    ae_store64(v, data)
+    ae_store64(v + 8, 0)
+    ae_store64(v + 16, 1024)
+    v
+}
+
+func vec_len(v: Int) -> Int {
+    ae_load64(v + 8)
+}
+
+func vec_push(v: Int, val: Int) {
+    let len = ae_load64(v + 8)
+    let data = ae_load64(v)
+    ae_store64(data + len * 8, val)
+    ae_store64(v + 8, len + 1)
+}
+
+func vec_get(v: Int, i: Int) -> Int {
+    ae_load64(ae_load64(v) + i * 8)
+}
+
+func vec_set(v: Int, i: Int, val: Int) {
+    ae_store64(ae_load64(v) + i * 8, val)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// WEB DEVELOPMENT
+// ASSERTIONS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Frontend: Components, state, routing, SSR
-pub mod web {
-    pub use super::_web::*
-    
-    /// UI components (better than Tailwind + React)
-    pub mod ui {
-        pub use super::ui::*
-    }
-    
-    /// Frontend framework
-    pub mod frontend {
-        pub use super::frontend::*
+func assert(cond: Bool) {
+    if !cond {
+        print(0 - 1)
     }
 }
 
-/// Backend: API server, auth, jobs, validation
-pub mod backend {
-    pub use super::_backend::*
-    
-    /// Authentication and authorization
-    pub mod auth {
-        pub use super::auth::*
-    }
-    
-    /// Background jobs
-    pub mod jobs {
-        pub use super::jobs::*
-    }
-    
-    /// Request validation
-    pub mod validation {
-        pub use super::validation::*
+func assert_eq(a: Int, b: Int) {
+    if a != b {
+        print(a)
+        print(b)
+        print(0 - 1)
     }
 }
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// CLOUD & SERVERLESS
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/// Cloud: AWS, GCP, Azure, Cloudflare, Vercel
-pub mod cloud {
-    pub use super::_cloud::*
-}
-
-/// Firebase: Auth, Firestore, Storage, Functions, Messaging
-pub mod firebase {
-    pub use super::_firebase::*
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// ARTIFICIAL INTELLIGENCE
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/// Neural: Tensors, auto-diff, neural networks
-pub mod neuro {
-    pub use super::_neuro::*
-}
-
-/// AGI: Cognitive architecture, reasoning, memory, goals
-pub mod agi {
-    pub use super::_agi::*
-    
-    /// Memory systems
-    pub mod memory {
-        pub use super::memory::*
-    }
-    
-    /// Reasoning engine
-    pub mod reasoning {
-        pub use super::reasoning::*
-    }
-    
-    /// ASI capabilities
-    pub mod asi {
-        pub use super::asi::*
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// RUNTIME & SAFETY
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/// Runtime: Allocators, event loop, supervisors
-pub mod runtime {
-    pub use super::_runtime::*
-    
-    /// Memory allocators
-    pub mod alloc {
-        pub use super::alloc::*
-    }
-    
-    /// Fault tolerance
-    pub mod supervisor {
-        pub use super::supervisor::*
-    }
-    
-    /// Formal verification
-    pub mod verified {
-        pub use super::verified::*
-    }
-}
-
-/// Platform: Cross-platform APIs
-pub mod platform {
-    pub use super::_platform::*
-    
-    /// Environment variables
-    pub mod env {
-        pub use super::env::*
-    }
-    
-    /// Process management
-    pub mod process {
-        pub use super::process::*
-    }
-    
-    /// System info
-    pub mod sys {
-        pub use super::sys::*
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// ADVANCED
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/// Concurrency: Fibers, channels, parallel
-pub mod concurrent {
-    pub use super::fiber::*
-    pub use super::channel::*
-    pub use super::parallel::*
-}
-
-/// Serialization: JSON, YAML, TOML, MessagePack, Protocol Buffers
-pub mod serde {
-    pub use super::json::*
-    pub use super::yaml::*
-    pub use super::toml::*
-    pub use super::msgpack::*
-    pub use super::protobuf::*
-}
-
-/// Cryptography
-pub mod crypto {
-    pub use super::hash::*
-    pub use super::cipher::*
-    pub use super::sign::*
-}
-
-/// Compression
-pub mod compress {
-    pub use super::gzip::*
-    pub use super::zstd::*
-    pub use super::lz4::*
-}
-
-/// Regular expressions
-pub mod regex {
-    pub use super::_regex::*
-}
-
-/// Random number generation
-pub mod random {
-    pub use super::_random::*
-}
-
-/// UUID generation
-pub mod uuid {
-    pub use super::_uuid::*
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// SPECIALIZED DOMAINS
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/// Quantum computing primitives
-pub mod quantum {
-    pub use super::_quantum::*
-}
-
-/// Biological computing
-pub mod bio {
-    pub use super::_bio::*
-}
-
-/// Hardware interfaces
-pub mod hardware {
-    pub use super::_hardware::*
-}
-
-/// Compiler infrastructure
-pub mod compiler {
-    pub use super::_compiler::*
-}
-
-/// Mathematical proofs
-pub mod proof {
-    pub use super::_proof::*
-}
-
-/// Consciousness modeling
-pub mod consciousness {
-    pub use super::_consciousness::*
-}
-
-/// Complexity theory
-pub mod complexity {
-    pub use super::_complexity::*
-}
-
-/// Evolution simulation
-pub mod evolution {
-    pub use super::_evolution::*
-}
-
-/// Silicon/chip design
-pub mod silicon {
-    pub use super::_silicon::*
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// PRELUDE - Auto-imported
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/// Automatically imported in every Aether file
-pub mod prelude {
-    // Core types
-    pub use core::{Option, Some, None}
-    pub use core::{Result, Ok, Err}
-    pub use core::{bool, true, false}
-    pub use core::{i8, i16, i32, i64, i128}
-    pub use core::{u8, u16, u32, u64, u128}
-    pub use core::{f32, f64}
-    pub use core::{str, String, char}
-    
-    // Collections
-    pub use collections::{Vec, Map, Set}
-    
-    // IO
-    pub use io::{print, println, eprint, eprintln}
-    
-    // Common traits
-    pub use core::{Clone, Copy, Debug, Default, Eq, Hash, Ord}
-    pub use core::{Iterator, IntoIterator}
-    pub use core::{From, Into, TryFrom, TryInto}
-    pub use core::{AsRef, AsMut}
-    pub use core::{Drop}
-    
-    // Macros
-    pub use core::{assert, assert_eq, assert_ne}
-    pub use core::{dbg, todo, unreachable}
-    pub use core::{format, vec, map, set}
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// VERSION & METADATA
-// ═══════════════════════════════════════════════════════════════════════════════
-
-pub const VERSION: str = "0.1.0"
-pub const EDITION: str = "2024"
