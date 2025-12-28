@@ -1,0 +1,132 @@
+// Aether Core - Bootstrap Compatible Version
+// All functions use Int handles only. No generics, enums, or structs.
+
+// Numeric operations
+func abs(x: Int) -> Int {
+    if x < 0 { 0 - x } else { x }
+}
+
+func min(a: Int, b: Int) -> Int {
+    if a < b { a } else { b }
+}
+
+func max(a: Int, b: Int) -> Int {
+    if a > b { a } else { b }
+}
+
+func clamp(value: Int, min_val: Int, max_val: Int) -> Int {
+    if value < min_val {
+        min_val
+    } else if value > max_val {
+        max_val
+    } else {
+        value
+    }
+}
+
+func sign(x: Int) -> Int {
+    if x < 0 { 0 - 1 }
+    else if x > 0 { 1 }
+    else { 0 }
+}
+
+func is_even(x: Int) -> Bool {
+    x % 2 == 0
+}
+
+func is_odd(x: Int) -> Bool {
+    x % 2 != 0
+}
+
+// Array operations (use vec_* from runtime)
+func first(arr: Int) -> Int {
+    if vec_len(arr) > 0 { vec_get(arr, 0) } else { 0 }
+}
+
+func last(arr: Int) -> Int {
+    let n = vec_len(arr)
+    if n > 0 { vec_get(arr, n - 1) } else { 0 }
+}
+
+func is_empty(arr: Int) -> Bool {
+    vec_len(arr) == 0
+}
+
+func sum(arr: Int) -> Int {
+    let total = 0
+    let i = 0
+    while i < vec_len(arr) {
+        total = total + vec_get(arr, i)
+        i = i + 1
+    }
+    total
+}
+
+func product(arr: Int) -> Int {
+    let result = 1
+    let i = 0
+    while i < vec_len(arr) {
+        result = result * vec_get(arr, i)
+        i = i + 1
+    }
+    result
+}
+
+func contains(arr: Int, target: Int) -> Bool {
+    let i = 0
+    while i < vec_len(arr) {
+        if vec_get(arr, i) == target { return true }
+        i = i + 1
+    }
+    false
+}
+
+func count(arr: Int, target: Int) -> Int {
+    let n = 0
+    let i = 0
+    while i < vec_len(arr) {
+        if vec_get(arr, i) == target { n = n + 1 }
+        i = i + 1
+    }
+    n
+}
+
+// Range
+func range(n: Int) -> Int {
+    let result = vec_new()
+    let i = 0
+    while i < n {
+        vec_push(result, i)
+        i = i + 1
+    }
+    result
+}
+
+func range_from(start: Int, end: Int) -> Int {
+    let result = vec_new()
+    let i = start
+    while i < end {
+        vec_push(result, i)
+        i = i + 1
+    }
+    result
+}
+
+// Assertions
+func assert(condition: Bool) {
+    if !condition {
+        __builtin_panic()
+    }
+}
+
+func assert_eq(left: Int, right: Int) {
+    if left != right {
+        __builtin_panic()
+    }
+}
+
+// Extern vec functions (defined in runtime/vec.aether)
+func vec_new() -> Int { __builtin_vec_new() }
+func vec_len(v: Int) -> Int { __builtin_vec_len(v) }
+func vec_get(v: Int, i: Int) -> Int { __builtin_vec_get(v, i) }
+func vec_push(v: Int, val: Int) { __builtin_vec_push(v, val) }

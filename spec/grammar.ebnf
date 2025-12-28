@@ -1,0 +1,149 @@
+(* Aether Language Grammar - Full Spec v0.1 *)
+
+Program       = { Item } ;
+Item          = ImportDecl | Directive | Decl | Statement ;
+
+(* Module system *)
+ImportDecl    = "import" Path [ "as" Identifier ] [ ";" ] ;
+Directive     = "#" Identifier [ "(" [ ArgList ] ")" ] ;
+
+(* Declarations *)
+Decl          = FunctionDecl | StructDecl | EnumDecl | TraitDecl | ImplDecl
+              | ConstDecl | TypeAlias | RuleDecl | ModelDecl ;
+
+ModelDecl     = "model" Identifier "{" { FieldDecl } "}" ;
+ConstDecl     = "const" Identifier [ ":" TypeRef ] "=" Expression [ ";" ] ;
+TypeAlias     = "type" Identifier "=" TypeRef [ ";" ] ;
+
+FunctionDecl  = { FuncQualifier } "func" Identifier
+                "(" [ ParameterList ] ")" [ "->" TypeRef ] Block ;
+FunctionSig   = { FuncQualifier } "func" Identifier
+                "(" [ ParameterList ] ")" [ "->" TypeRef ] [ ";" ] ;
+FuncQualifier = "async" | "grad" | "lowlevel" | "neuro" | "durable"
+              | "inline" | "extern" ;
+
+StructDecl    = "struct" Identifier "{" { FieldDecl } "}" ;
+EnumDecl      = "enum" Identifier "{" { EnumVariant } "}" ;
+EnumVariant   = Identifier [ "(" [ TypeList ] ")" ] [ "=" Integer ] ;
+TraitDecl     = "trait" Identifier "{" { FunctionSig } "}" ;
+ImplDecl      = "impl" Identifier [ "for" TypeRef ] "{" { FunctionDecl } "}" ;
+
+FieldDecl     = Identifier ":" TypeRef { Attribute } [ "," ] ;
+Attribute     = "@" Identifier [ "(" [ ArgList ] ")" ] ;
+
+RuleDecl      = "rule" Identifier "(" [ ParameterList ] ")" "=>" Expression [ ";" ] ;
+
+(* Statements *)
+Statement     = VariableDecl | Assignment | IfStatement | WhileStatement
+              | ForStatement | MatchStatement | ReturnStatement | BreakStatement
+              | ContinueStatement | DeferStatement | YieldStatement
+              | SpawnStatement | ParallelStatement | DurableBlock | SymphonyBlock
+              | NeuroStatement | ComptimeBlock | EvolveBlock | Block
+              | ExpressionStatement ;
+
+VariableDecl  = ("let" | "var") Identifier [ ":" TypeRef ]
+                [ "=" Expression ] [ ";" ] ;
+Assignment    = LValue AssignmentOp Expression [ ";" ] ;
+AssignmentOp  = "=" | "+=" | "-=" | "*=" | "/=" | "%="
+              | "&=" | "|=" | "^=" | "<<=" | ">>=" ;
+LValue        = Identifier { Selector } ;
+
+IfStatement   = "if" Expression Block [ "else" (IfStatement | Block) ] ;
+WhileStatement= "while" Expression Block ;
+ForStatement  = "for" Identifier "in" RangeExpr Block ;
+RangeExpr     = Expression (".." | "..=") Expression ;
+MatchStatement= "match" Expression "{" { MatchArm } "}" ;
+MatchArm      = Pattern "=>" (Block | Expression) [ "," ] ;
+
+ReturnStatement = "return" [ Expression ] [ ";" ] ;
+BreakStatement  = "break" [ ";" ] ;
+ContinueStatement = "continue" [ ";" ] ;
+DeferStatement  = "defer" Block ;
+YieldStatement  = "yield" [ Expression ] [ ";" ] ;
+
+SpawnStatement  = "spawn" Expression [ ";" ] ;
+ParallelStatement = "parallel" Identifier "in" RangeExpr Block ;
+
+DurableBlock   = "durable" [ "(" StorageTarget ")" ] Block ;
+StorageTarget  = "nvme" | "disk" | "memory_shadow" | "cloud" ;
+
+SymphonyBlock  = "symphony" Block ;
+NeuroStatement = "neuro" ( VariableDecl | ExpressionStatement ) ;
+ComptimeBlock  = "comptime" Block ;
+EvolveBlock    = "evolve" "(" EvolveArgs ")" Block ;
+EvolveArgs     = [ "target" ":" Identifier ] [ "," "duration" ":" Duration ] ;
+Duration       = Integer ("ms" | "s" | "m" | "h" | "d") ;
+
+Block          = "{" { Statement } "}" | INDENT { Statement } DEDENT ;
+ExpressionStatement = Expression [ ";" ] ;
+
+(* Expressions *)
+Expression     = LogicalOr ;
+LogicalOr      = LogicalAnd { "or" LogicalAnd } ;
+LogicalAnd     = Equality { "and" Equality } ;
+Equality       = Relational { ("==" | "!=") Relational } ;
+Relational     = Shift { ("<" | "<=" | ">" | ">=") Shift } ;
+Shift          = Additive { ("<<" | ">>") Additive } ;
+Additive       = Multiplicative { ("+" | "-") Multiplicative } ;
+Multiplicative = Unary { ("*" | "/" | "%") Unary } ;
+Unary          = ("!" | "-" | "+" | "~" | "*" | "&") Unary | Postfix ;
+Postfix        = Primary { Selector | Call | Index } ;
+Selector       = "." Identifier ;
+Call           = "(" [ ArgList ] ")" ;
+Index          = "[" [ ArgList ] "]" ;
+
+Primary        = Literal | Identifier | "(" Expression ")"
+               | ArrayLiteral | TupleLiteral | StructLiteral | Lambda ;
+Lambda         = "|" [ ParameterList ] "|" ( Expression | Block ) ;
+
+ArgList        = Argument { "," Argument } [ "," ] ;
+Argument       = [ Identifier ":" ] Expression ;
+ParameterList  = Parameter { "," Parameter } [ "," ] ;
+Parameter      = Identifier [ ":" TypeRef ] [ "=" Expression ] ;
+TypeList       = TypeRef { "," TypeRef } [ "," ] ;
+
+(* Types *)
+TypeRef        = TypeAtom { TypeSuffix } ;
+TypeAtom       = Identifier | BuiltinType | TensorType | SynapseType
+               | "(" TypeRef ")" | TupleType | FnType ;
+TypeSuffix     = PtrType | SliceType | ArrayType | OptionalType | CapabilityType ;
+
+PtrType        = "*" [ "const" ] ;
+SliceType      = "[" "]" ;
+ArrayType      = "[" Integer "]" ;
+OptionalType   = "?" ;
+CapabilityType = "@" Identifier [ "(" [ ArgList ] ")" ] ;
+
+TupleType      = "(" [ TypeList ] ")" ;
+FnType         = "func" "(" [ TypeList ] ")" [ "->" TypeRef ] ;
+
+BuiltinType    = "int" | "u8" | "u16" | "u32" | "u64" | "i8" | "i16"
+               | "i32" | "i64" | "f16" | "f32" | "f64" | "bool" | "str"
+               | "uuid" | "byte" ;
+TensorType     = ("tnsr" | "tensor") [ "<" TypeRef "," Shape ">" ] ;
+SynapseType    = "synapse" [ "<" TypeRef ">" ] ;
+Shape          = "[" Integer { "," Integer } "]" ;
+
+(* Patterns *)
+Pattern        = "_" | Literal | Identifier | TuplePattern | StructPattern | EnumPattern ;
+TuplePattern   = "(" [ Pattern { "," Pattern } ] ")" ;
+StructPattern  = Identifier "{" [ FieldPattern { "," FieldPattern } ] "}" ;
+FieldPattern   = Identifier ":" Pattern ;
+EnumPattern    = Identifier [ "(" [ Pattern { "," Pattern } ] ")" ] ;
+
+(* Literals and paths *)
+ArrayLiteral   = "[" [ ArgList ] "]" ;
+TupleLiteral   = "(" [ ArgList ] ")" ;
+StructLiteral  = Identifier "{" [ FieldInit { "," FieldInit } ] "}" ;
+FieldInit      = Identifier ":" Expression ;
+
+Literal        = Integer | Float | String | Bool | "null" ;
+Path           = Identifier { "." Identifier } ;
+
+Identifier     = IDENT ;
+Integer        = INT ;
+Float          = FLOAT ;
+String         = STRING ;
+Bool           = "true" | "false" ;
+
+(* Lexer tokens not defined here: IDENT, INT, FLOAT, STRING, INDENT, DEDENT. *)

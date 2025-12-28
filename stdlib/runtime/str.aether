@@ -1,0 +1,176 @@
+//! ═══════════════════════════════════════════════════════════════════════════════
+//! AETHER PURE RUNTIME - STRING OPERATIONS
+//! ═══════════════════════════════════════════════════════════════════════════════
+//! String manipulation in pure Aether
+
+import std.runtime.alloc
+import std.runtime.vec
+
+// ============================================================================
+// STRING OPERATIONS
+// ============================================================================
+
+/// Get string length (null-terminated)
+func str_len(s: Int) -> Int {
+    let i = 0
+    while peek8(s + i) != 0 {
+        i = i + 1
+    }
+    i
+}
+
+/// Compare two strings for equality
+func str_eq(a: Int, b: Int) -> Int {
+    let i = 0
+    while 1 {
+        let ca = peek8(a + i)
+        let cb = peek8(b + i)
+        
+        if ca != cb {
+            return 0
+        }
+        
+        if ca == 0 {
+            return 1
+        }
+        
+        i = i + 1
+    }
+    0
+}
+
+/// Copy string to new allocation
+func str_dup(s: Int) -> Int {
+    let len = str_len(s)
+    let new_s = malloc(len + 1)
+    
+    let i = 0
+    while i <= len {
+        poke8(new_s + i, peek8(s + i))
+        i = i + 1
+    }
+    
+    new_s
+}
+
+/// Concatenate two strings
+func str_concat(a: Int, b: Int) -> Int {
+    let len_a = str_len(a)
+    let len_b = str_len(b)
+    let total = len_a + len_b
+    
+    let new_s = malloc(total + 1)
+    
+    let i = 0
+    while i < len_a {
+        poke8(new_s + i, peek8(a + i))
+        i = i + 1
+    }
+    
+    let j = 0
+    while j <= len_b {
+        poke8(new_s + len_a + j, peek8(b + j))
+        j = j + 1
+    }
+    
+    new_s
+}
+
+/// Get character at index
+func str_char_at(s: Int, idx: Int) -> Int {
+    peek8(s + idx)
+}
+
+/// Find substring
+/// Returns: index of first occurrence, or -1 if not found
+func str_find(haystack: Int, needle: Int) -> Int {
+    let hay_len = str_len(haystack)
+    let needle_len = str_len(needle)
+    
+    if needle_len > hay_len {
+        return -1
+    }
+    
+    let i = 0
+    while i <= hay_len - needle_len {
+        let match = 1
+        let j = 0
+        while j < needle_len {
+            if peek8(haystack + i + j) != peek8(needle + j) {
+                match = 0
+                j = needle_len  // break
+            }
+            j = j + 1
+        }
+        
+        if match == 1 {
+            return i
+        }
+        
+        i = i + 1
+    }
+    
+    -1
+}
+
+/// Convert integer to string
+func int_to_str(n: Int) -> Int {
+    if n == 0 {
+        let s = malloc(2)
+        poke8(s, 48)  // '0'
+        poke8(s + 1, 0)
+        return s
+    }
+    
+    let is_neg = 0
+    let num = n
+    if n < 0 {
+        is_neg = 1
+        num = 0 - n
+    }
+    
+    // Count digits
+    let temp = num
+    let digits = 0
+    while temp > 0 {
+        digits = digits + 1
+        temp = temp / 10
+    }
+    
+    let len = digits
+    if is_neg == 1 {
+        len = len + 1
+    }
+    
+    let s = malloc(len + 1)
+    poke8(s + len, 0)  // null terminator
+    
+    let i = len - 1
+    temp = num
+    while temp > 0 {
+        poke8(s + i, 48 + (temp % 10))  // '0' + digit
+        temp = temp / 10
+        i = i - 1
+    }
+    
+    if is_neg == 1 {
+        poke8(s, 45)  // '-'
+    }
+    
+    s
+}
+
+/// Print integer to stdout
+func print_int(n: Int) {
+    let s = int_to_str(n)
+    let len = str_len(s)
+    sys_write(1, s, len)
+}
+
+/// Print newline to stdout
+func print_newline() {
+    let nl = malloc(2)
+    poke8(nl, 10)  // '\n'
+    poke8(nl + 1, 0)
+    sys_write(1, nl, 1)
+}

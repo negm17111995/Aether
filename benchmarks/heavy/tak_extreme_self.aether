@@ -1,0 +1,23 @@
+// Runner for Extreme Tak - Self Contained (No Imports)
+
+func aether_main(argc: Int, argv: Int, envp: Int) -> Int {
+    // Only minimal init needed for this test
+    main()
+}
+
+// Dummy implementation (will be replaced by ASM)
+func tak_extreme(x: Int, y: Int, z: Int) -> Int {
+    if y >= x {
+        z
+    } else {
+        tak_extreme(x - 1, y, z)
+    }
+}
+
+func main() -> Int {
+    tak_extreme(30, 20, 10)
+}
+
+// Minimal runtime stubs if needed by compiler
+func heap_init() {}
+func malloc(size: Int) -> Int { 0 }

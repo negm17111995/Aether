@@ -1,0 +1,17 @@
+// STRESS TEST - Stack Depth (Aether with TCO)
+// Uses tail recursion - should NEVER overflow!
+
+func recurse(depth: Int) -> Int {
+    if depth % 100000 == 0 {
+        print_int(depth)
+    }
+    recurse(depth + 1)  // Tail call - becomes jump
+}
+
+func print_int(n: Int) {
+    __builtin_print_int(n)
+}
+
+func main() -> Int {
+    recurse(0)
+}

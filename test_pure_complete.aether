@@ -1,0 +1,97 @@
+// Pure Aether Self-Contained Test
+// This file includes everything needed - no external dependencies
+
+// ============================================================================
+// ENTRY POINT
+// ============================================================================
+
+func aether_main(argc: Int, argv: Int, envp: Int) -> Int {
+    // Initialize heap
+    heap_init()
+    
+    // Run the actual test
+    let result = main()
+    
+    // Exit
+    sys_exit(result)
+    result
+}
+
+// ============================================================================
+// RUNTIME FUNCTIONS
+// ============================================================================
+
+var heap_base: Int = 0
+var heap_pos: Int = 0
+var heap_end: Int = 0
+
+func heap_init() {
+    // mmap 64MB heap
+    heap_base = sys_mmap(67108864)
+    heap_pos = heap_base
+    heap_end = heap_base + 67108864
+}
+
+func malloc(size: Int) -> Int {
+    let aligned = (size + 7) & -8
+    let ptr = heap_pos
+    heap_pos = heap_pos + aligned
+    ptr
+}
+
+func sys_exit(code: Int) {
+    // Direct syscall
+    __syscall1(1, code)
+}
+
+func sys_write(fd: Int, buf: Int, len: Int) -> Int {
+    __syscall3(4, fd, buf, len)
+}
+
+func sys_mmap(size: Int) -> Int {
+    // mmap(NULL, size, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANON, -1, 0)
+    __syscall6(197, 0, size, 3, 4098, -1, 0)
+}
+
+// ============================================================================
+// USER MAIN FUNCTION
+// ============================================================================
+
+func main() -> Int {
+    // Allocate buffer
+    let buf = malloc(100)
+    
+    // Write "Hello Pure Aether!\n" to stdout
+    let h = 72   // H
+    let e = 101  // e
+    let l = 108  // l
+    let o = 111  // o
+    let space = 32
+    let p = 80   // P
+    let u = 117  // u
+    let r = 114  // r
+    let a = 65   // A
+    let t = 116  // t
+    let excl = 33  // !
+    let nl = 10  // \n
+    
+    // Build "Hello!" in buffer
+    poke8(buf, h)
+    poke8(buf + 1, e)
+    poke8(buf + 2, l)
+    poke8(buf + 3, l)
+    poke8(buf + 4, o)
+    poke8(buf + 5, excl)
+    poke8(buf + 6, nl)
+    
+    // Write to stdout
+    sys_write(1, buf, 7)
+    
+    // Return 42 to prove we ran
+    42
+}
+
+func poke8(addr: Int, val: Int) {
+    // Store byte
+    __store8(addr, val)
+}

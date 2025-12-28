@@ -1,0 +1,124 @@
+//! ═══════════════════════════════════════════════════════════════════════════════
+//! AETHER SECURITY - ULTIMATE PROTECTION
+//! ═══════════════════════════════════════════════════════════════════════════════
+//! Built-in security primitives - no external dependencies
+//! - Constant-time comparisons
+//! - Secure random generation  
+//! - Memory wiping
+//! - Bounds checking
+
+import std.runtime.syscall
+
+// ============================================================================
+// SECURE MEMORY
+// ============================================================================
+
+/// Securely wipe memory (prevents compiler optimization)
+func secure_wipe(ptr: Int, len: Int) {
+    let i = 0
+    while i < len {
+        poke8(ptr + i, 0)
+        i = i + 1
+    }
+    // Memory barrier to prevent optimization
+    __memory_barrier()
+}
+
+/// Constant-time comparison (prevents timing attacks)
+func secure_compare(a: Int, b: Int, len: Int) -> Int {
+    let result = 0
+    let i = 0
+    while i < len {
+        let xa = peek8(a + i)
+        let xb = peek8(b + i)
+        result = result | (xa ^ xb)
+        i = i + 1
+    }
+    // Returns 1 if equal, 0 if different
+    if result == 0 { 1 } else { 0 }
+}
+
+/// Secure random bytes (from OS entropy)
+func secure_random(buf: Int, len: Int) -> Int {
+    // macOS: getentropy syscall
+    __syscall2(244, buf, len)  // SYS_getentropy
+}
+
+/// Generate secure random Int
+func secure_random_int() -> Int {
+    let buf = malloc(8)
+    secure_random(buf, 8)
+    let val = peek(buf)
+    free(buf)
+    val
+}
+
+// ============================================================================
+// BOUNDS CHECKING
+// ============================================================================
+
+/// Safe array access with bounds check
+func safe_get(arr: Int, idx: Int, len: Int) -> Int {
+    if idx < 0 || idx >= len {
+        // Bounds violation - return 0 instead of crashing
+        return 0
+    }
+    peek(arr + idx * 8)
+}
+
+/// Safe array write with bounds check
+func safe_set(arr: Int, idx: Int, len: Int, val: Int) -> Int {
+    if idx < 0 || idx >= len {
+        return 0  // Failed
+    }
+    poke(arr + idx * 8, val)
+    1  // Success
+}
+
+// ============================================================================
+// NULL SAFETY
+// ============================================================================
+
+/// Check if pointer is valid (non-null, non-zero)
+func is_valid(ptr: Int) -> Int {
+    if ptr == 0 { 0 } else { 1 }
+}
+
+/// Safe dereference - returns default on null
+func safe_deref(ptr: Int, default_val: Int) -> Int {
+    if ptr == 0 {
+        default_val
+    } else {
+        peek(ptr)
+    }
+}
+
+// ============================================================================
+// STACK PROTECTION
+// ============================================================================
+
+const STACK_CANARY_VALUE: Int = 0xDEADBEEFCAFEBABE
+
+/// Push stack canary
+func stack_canary_push(sp: Int) -> Int {
+    poke(sp, STACK_CANARY_VALUE)
+    sp + 8
+}
+
+/// Check stack canary (returns 1 if valid)
+func stack_canary_check(sp: Int) -> Int {
+    if peek(sp) == STACK_CANARY_VALUE { 1 } else { 0 }
+}
+
+// ============================================================================
+// PANIC HANDLER
+// ============================================================================
+
+/// Safe panic that doesn't crash - returns to safe state
+func safe_panic(msg: Int) {
+    // Log error
+    sys_write(2, msg, str_len(msg))
+    
+    // Don't actually exit - return to caller
+    // This allows recovery
+}

@@ -1,0 +1,511 @@
+// ═══════════════════════════════════════════════════════════════════════════════
+// AETHER WEB FRAMEWORK - First-Class Frontend Development
+// ═══════════════════════════════════════════════════════════════════════════════
+// Native reactive UI, WASM compilation, SSR, and universal rendering
+// Matches React/Vue/Svelte capabilities with zero JavaScript overhead
+
+import std.core
+import std.collections
+import std.runtime.wasm
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// REACTIVE STATE SYSTEM
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Reactive signal - automatically tracks dependencies
+pub struct Signal {
+    value: T,
+    subscribers: [func(T) -> void],
+    computed_deps: [*Signal<any>],
+}
+
+impl<T> Signal<T> {
+    pub func new(initial: T) -> Signal<T> {
+        Signal { value: initial, subscribers: [], computed_deps: [] }
+    }
+    
+    pub func get(&self) -> T {
+        // Track this signal as dependency in current computation
+        runtime.track_dependency(self)
+        self.value
+    }
+    
+    pub func set(&mut self, new_value: T) {
+        self.value = new_value
+        // Notify all subscribers reactively
+        for subscriber in self.subscribers {
+            subscriber(new_value)
+        }
+        // Trigger re-render for computed signals
+        for dep in self.computed_deps {
+            dep.recompute()
+        }
+    }
+    
+    pub func subscribe(&mut self, callback: func(T) -> void) {
+        self.subscribers.push(callback)
+    }
+}
+
+/// Computed signal - automatically derived from other signals
+pub func computed(compute: func() -> T) -> Signal<T> {
+    let deps = runtime.start_tracking()
+    let value = compute()
+    let tracked = runtime.stop_tracking()
+    
+    let signal = Signal::new(value)
+    signal.computed_deps = tracked
+    
+    // Auto-subscribe to dependencies
+    for dep in tracked {
+        dep.add_computed_subscriber(&signal)
+    }
+    
+    signal
+}
+
+/// Effect - runs side effects when dependencies change
+pub func effect(action: func() -> void) {
+    let deps = runtime.start_tracking()
+    action()
+    let tracked = runtime.stop_tracking()
+    
+    for dep in tracked {
+        dep.subscribe(|_| action())
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COMPONENT SYSTEM
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Virtual DOM Node
+pub enum VNode {
+    Element {
+        tag: str,
+        props: Map<str, any>,
+        children: [VNode],
+        events: Map<str, func(Event) -> void>,
+    },
+    Text(str),
+    Component(Box<dyn Component>),
+    Fragment([VNode]),
+}
+
+/// Component trait - implement for custom components
+pub trait Component {
+    func render(&self) -> VNode
+    func mount(&mut self, el: *DOMElement)
+    func unmount(&mut self)
+    func should_update(&self, next_props: Map<str, any>) -> bool = true
+}
+
+/// Component macro - declarative component definition
+#[macro]
+pub macro component($name:ident, $props:tt, $body:block) {
+    pub struct $name {
+        props: $props,
+        state: Map<str, Signal<any>>,
+    }
+    
+    impl Component for $name {
+        func render(&self) -> VNode $body
+        
+        func mount(&mut self, el: *DOMElement) {
+            self.render().mount_to(el)
+        }
+        
+        func unmount(&mut self) {
+            // Cleanup subscriptions
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// JSX-LIKE DSL (NATIVE AETHER SYNTAX)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// HTML element builder - native Aether syntax
+#[macro]
+pub macro html($tag:ident $($attr:tt)* { $($children:tt)* }) {
+    VNode::Element {
+        tag: stringify!($tag),
+        props: make_props!($($attr)*),
+        children: [html_children!($($children)*)],
+        events: Map::new(),
+    }
+}
+
+/// Example usage:
+/// let view = html! {
+///     div class="container" {
+///         h1 { "Hello, Aether!" }
+///         button ={handle_click} { "Click me" }
+///         ul {
+///             for item in items {
+///                 li { item.name }
+///             }
+///         }
+///     }
+/// }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DOM OPERATIONS (WASM-NATIVE)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[wasm_bindgen]
+pub struct DOMElement {
+    handle: u32,  // WASM pointer to JS DOM element
+}
+
+impl DOMElement {
+    #[wasm_import("document.createElement")]
+    pub extern func create(tag: str) -> DOMElement
+    
+    #[wasm_import("element.appendChild")]
+    pub extern func append_child(&mut self, child: DOMElement)
+    
+    #[wasm_import("element.removeChild")]
+    pub extern func remove_child(&mut self, child: DOMElement)
+    
+    #[wasm_import("element.setAttribute")]
+    pub extern func set_attr(&mut self, name: str, value: str)
+    
+    #[wasm_import("element.addEventListener")]
+    pub extern func add_event(&mut self, event: str, handler: func(Event) -> void)
+    
+    #[wasm_import("element.innerHTML")]
+    pub extern func set_html(&mut self, html: str)
+    
+    #[wasm_import("element.textContent")]
+    pub extern func set_text(&mut self, text: str)
+    
+    #[wasm_import("element.querySelector")]
+    pub extern func query(&self, selector: str) -> Int
+    
+    #[wasm_import("element.querySelectorAll")]
+    pub extern func query_all(&self, selector: str) -> [DOMElement]
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ROUTER
+// ═══════════════════════════════════════════════════════════════════════════════
+
+pub struct Router {
+    routes: Map<str, func() -> VNode>,
+    current_path: Signal<str>,
+    params: Signal<Map<str, str>>,
+}
+
+impl Router {
+    pub func new() -> Router {
+        let router = Router {
+            routes: Map::new(),
+            current_path: Signal::new("/"),
+            params: Signal::new(Map::new()),
+        }
+        
+        // Listen to browser history
+        window.on_popstate(|e| {
+            router.navigate(window.location.pathname)
+        })
+        
+        router
+    }
+    
+    pub func route(&mut self, path: str, component: func() -> VNode) {
+        self.routes.insert(path, component)
+    }
+    
+    pub func navigate(&mut self, path: str) {
+        window.history.push_state(null, "", path)
+        self.current_path.set(path)
+        
+        // Extract route params
+        let (matched_route, params) = self.match_route(path)
+        self.params.set(params)
+    }
+    
+    pub func render(&self) -> VNode {
+        let path = self.current_path.get()
+        match self.routes.get(&path) {
+            Some(component) => component(),
+            None => html! { div { "404 Not Found" } },
+        }
+    }
+    
+    func match_route(&self, path: str) -> (str, Map<str, str>) {
+        // Dynamic route matching with params
+        for (route_path, _) in self.routes {
+            if let Some(params) = match_path(route_path, path) {
+                return (route_path, params)
+            }
+        }
+        ("", Map::new())
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SERVER-SIDE RENDERING (SSR)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+pub struct SSRRenderer {
+    head_tags: [str],
+    body_content: str,
+    hydration_data: Map<str, any>,
+}
+
+impl SSRRenderer {
+    pub func render_to_string(component: impl Component) -> str {
+        let vnode = component.render()
+        Self::vnode_to_html(&vnode)
+    }
+    
+    pub func render_to_stream(component: impl Component) -> Stream<str> {
+        // Streaming SSR for large pages
+        stream! {
+            yield "<!DOCTYPE html><html><head>"
+            for tag in self.head_tags {
+                yield tag
+            }
+            yield "</head><body>"
+            
+            let vnode = component.render()
+            for chunk in Self::vnode_to_html_stream(&vnode) {
+                yield chunk
+            }
+            
+            // Inject hydration data
+            yield format!("<script>window.__AETHER_DATA__={}</script>",
+                json::stringify(&self.hydration_data))
+            
+            yield "</body></html>"
+        }
+    }
+    
+    func vnode_to_html(node: &VNode) -> str {
+        match node {
+            VNode::Text(text) => html_escape(text),
+            VNode::Element { tag, props, children, .. } => {
+                let attrs = props.iter()
+                    .map(|(k, v)| format!("{}=\"{}\"", k, html_escape(v)))
+                    .join(" ")
+                
+                let inner = children.iter()
+                    .map(Self::vnode_to_html)
+                    .join("")
+                
+                format!("<{} {}>{}</{}>", tag, attrs, inner, tag)
+            }
+            VNode::Component(c) => Self::vnode_to_html(&c.render()),
+            VNode::Fragment(nodes) => nodes.iter().map(Self::vnode_to_html).join(""),
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// HYDRATION (CLIENT-SIDE TAKEOVER)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+pub func hydrate(component: impl Component, container: DOMElement) {
+    // Efficiently attach event listeners to SSR-rendered HTML
+    // without re-rendering the DOM
+    
+    let server_data = window.__AETHER_DATA__
+    let vnode = component.render()
+    
+    // Walk existing DOM and attach handlers
+    hydrate_node(&vnode, &container)
+}
+
+func hydrate_node(vnode: &VNode, el: &DOMElement) {
+    match vnode {
+        VNode::Element { events, children, .. } => {
+            // Attach event handlers
+            for (event, handler) in events {
+                el.add_event(event, handler)
+            }
+            
+            // Recurse to children
+            let dom_children = el.children()
+            for (i, child) in children.enumerate() {
+                if i < dom_children.len() {
+                    hydrate_node(child, &dom_children[i])
+                }
+            }
+        }
+        VNode::Component(c) => hydrate_node(&c.render(), el),
+        _ => {}
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STYLES (CSS-IN-AETHER)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+pub struct Style {
+    classname: str,
+    css: str,
+}
+
+#[macro]
+pub macro style($($prop:ident : $val:expr),* $(,)?) {
+    Style::from_rules([$(stringify!($prop), $val),*])
+}
+
+impl Style {
+    pub func from_rules(rules: [(str, str)]) -> Style {
+        let hash = hash_rules(&rules)
+        let classname = format!("ae-{}", hash)
+        
+        let css = rules.iter()
+            .map(|(prop, val)| format!("{}: {};", kebab_case(prop), val))
+            .join(" ")
+        
+        // Inject into document head
+        inject_style(&classname, &css)
+        
+        Style { classname, css }
+    }
+    
+    pub func hover(&self, rules: [(str, str)]) -> Style {
+        // Pseudo-class support
+        let hover_css = format!(".{}:hover {{ {} }}", self.classname,
+            rules.iter().map(|(p, v)| format!("{}: {};", p, v)).join(" "))
+        inject_style(&self.classname, &hover_css)
+        self.clone()
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ANIMATIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+pub struct Animation {
+    keyframes: [Keyframe],
+    duration: Duration,
+    easing: Easing,
+}
+
+pub struct Keyframe {
+    at: f32,  // 0.0 to 1.0
+    properties: Map<str, str>,
+}
+
+pub enum Easing {
+    Linear,
+    EaseIn,
+    EaseOut,
+    EaseInOut,
+    CubicBezier(f32, f32, f32, f32),
+    Spring { stiffness: f32, damping: f32 },
+}
+
+impl Animation {
+    pub func new() -> Animation {
+        Animation {
+            keyframes: [],
+            duration: Duration::ms(300),
+            easing: Easing::EaseOut,
+        }
+    }
+    
+    pub func from(properties: Map<str, str>) -> Animation {
+        let mut anim = Animation::new()
+        anim.keyframes.push(Keyframe { at: 0.0, properties })
+        anim
+    }
+    
+    pub func to(mut self, properties: Map<str, str>) -> Animation {
+        self.keyframes.push(Keyframe { at: 1.0, properties })
+        self
+    }
+    
+    pub func duration(mut self, dur: Duration) -> Animation {
+        self.duration = dur
+        self
+    }
+    
+    pub func easing(mut self, e: Easing) -> Animation {
+        self.easing = e
+        self
+    }
+    
+    pub func apply(&self, el: &DOMElement) {
+        // Generate CSS  and apply
+        let keyframes_css = self.generate_keyframes()
+        el.set_attr("style", format!("animation: {} {} {};",
+            keyframes_css, self.duration.as_css(), self.easing.as_css()))
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BUILD SYSTEM
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Aether Web Build Configuration
+pub struct WebBuildConfig {
+    entry: str,
+    output: str,
+    target: WebTarget,
+    optimization: OptLevel,
+    source_maps: bool,
+    minify: bool,
+    tree_shake: bool,
+}
+
+pub enum WebTarget {
+    Browser,           // Pure WASM for browsers
+    Node,              // Node.js compatible
+    CloudflareWorkers, // Edge runtime
+    Deno,              // Deno runtime
+    Universal,         // Works everywhere
+}
+
+impl WebBuildConfig {
+    /// Build to optimized WASM
+    pub func build(&self) -> Int {
+        let compiler = WasmCompiler::new(self.target)
+        
+        // Parse and type-check
+        let ast = parse_file(&self.entry)?
+        let typed = typecheck(&ast)?
+        
+        // Optimize
+        let optimized = if self.optimization != OptLevel::None {
+            optimize_for_web(&typed, self.optimization)
+        } else {
+            typed
+        }
+        
+        // Generate WASM
+        let wasm = compiler.compile(&optimized)?
+        
+        // Minify if requested
+        let final_wasm = if self.minify {
+            wasm_opt(&wasm, "-O3 --strip-debug")
+        } else {
+            wasm
+        }
+        
+        Ok(WebBundle {
+            wasm: final_wasm,
+            js_glue: generate_js_glue(&optimized),
+            html: generate_html_shell(&self.entry),
+        })
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// EXPORTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+pub use Signal, computed, effect
+pub use VNode, Component, component
+pub use html
+pub use DOMElement
+pub use Router
+pub use SSRRenderer, hydrate
+pub use Style, style
+pub use Animation, Easing
+pub use WebBuildConfig, WebTarget

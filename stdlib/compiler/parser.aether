@@ -1,0 +1,413 @@
+//! Aether Parser - Primitive Style (Stage 0)
+//!
+//! Recursive descent Pratt parser producing Int-handle AST.
+//! STRICTLY PRIMITIVE: No structs, no enums.
+
+use prelude::*
+use collections::*
+use compiler::lexer::*
+
+// ============================================================================
+// AST NODE TYPES (CONSTANTS)
+// ============================================================================
+
+const NODE_PROGRAM: Int = 100
+const NODE_FUNC_DECL: Int = 101
+const NODE_STRUCT_DECL: Int = 102
+const NODE_ENUM_DECL: Int = 103
+const NODE_USE: Int = 104
+const NODE_CONST: Int = 105
+
+const NODE_BLOCK: Int = 110
+const NODE_LET: Int = 111
+const NODE_RETURN: Int = 112
+const NODE_IF: Int = 113
+const NODE_WHILE: Int = 114
+const NODE_FOR: Int = 115
+const NODE_ASSIGN: Int = 116
+const NODE_EXPR_STMT: Int = 117
+const NODE_BREAK: Int = 118
+const NODE_CONTINUE: Int = 119
+
+const NODE_INT_LIT: Int = 130
+const NODE_FLOAT_LIT: Int = 131
+const NODE_STRING_LIT: Int = 132
+const NODE_BOOL_LIT: Int = 133
+const NODE_VAR: Int = 134
+const NODE_BINARY: Int = 135
+const NODE_CALL: Int = 136
+const NODE_INDEX: Int = 137
+const NODE_FIELD: Int = 138
+const NODE_ARRAY: Int = 139
+const NODE_TUPLE: Int = 140
+
+// Type expressions
+const TYPE_INT: Int = 150
+const TYPE_FLOAT: Int = 151
+const TYPE_BOOL: Int = 152
+const TYPE_STRING: Int = 153
+const TYPE_ARRAY: Int = 154
+const TYPE_NAMED: Int = 155
+
+// Binary Ops
+const OP_ADD: Int = 0
+const OP_SUB: Int = 1
+const OP_MUL: Int = 2
+const OP_EQ: Int = 3
+
+// ============================================================================
+// PARSER STATE
+// ============================================================================
+// [0] tokens (Vec)
+// [1] current (Int)
+
+func parser_new(tokens: Int) -> Int {
+    let p = vec_new()
+    vec_push(p, tokens)
+    vec_push(p, 0)
+    p
+}
+
+func parser_tokens(p: Int) -> Int { vec_get(p, 0) }
+func parser_current(p: Int) -> Int { vec_get(p, 1) }
+func parser_set_current(p: Int, v: Int) { vec_set(p, 1, v) }
+
+func at_end(p: Int) -> Bool {
+    let t = parser_peek(p)
+    token_type(t) == TOK_EOF
+}
+
+func parser_peek(p: Int) -> Int {
+    let tokens = parser_tokens(p)
+    let cur = parser_current(p)
+    vec_get(tokens, cur)
+}
+
+func parser_advance(p: Int) -> Int {
+    if !at_end(p) {
+        parser_set_current(p, parser_current(p) + 1)
+    }
+    let tokens = parser_tokens(p)
+    vec_get(tokens, parser_current(p) - 1)
+}
+
+func check(p: Int, typ: Int) -> Bool {
+    if at_end(p) { return false }
+    token_type(parser_peek(p)) == typ
+}
+
+func match_token(p: Int, typ: Int) -> Bool {
+    if check(p, typ) {
+        parser_advance(p)
+        true
+    } else {
+        false
+    }
+}
+
+func expect(p: Int, typ: Int) -> Int {
+    if check(p, typ) {
+        parser_advance(p)
+    } else {
+        0
+    }
+}
+
+// ============================================================================
+// PARSING
+// ============================================================================
+
+func parse_program(p: Int) -> Int {
+    let decls = vec_new()
+    while !at_end(p) {
+        if match_token(p, TOK_NEWLINE) { continue }
+        
+        let decl = parse_declaration(p)
+        if decl != 0 {
+            vec_push(decls, decl)
+        } else {
+            match_token(p, TOK_ERROR) 
+            if at_end(p) { break }
+        }
+    }
+    
+    let node = vec_new()
+    vec_push(node, NODE_PROGRAM)
+    vec_push(node, decls)
+    node
+}
+
+func parse_declaration(p: Int) -> Int {
+    while check(p, TOK_AT) {
+        parser_advance(p)
+        expect(p, TOK_IDENT)
+    }
+    
+    let tok = parser_peek(p)
+    let text = token_lexeme(tok)
+    
+    if text == "func" {
+        parse_function(p)
+    } else if text == "struct" {
+        parse_struct(p)
+    } else if text == "use" {
+        parse_use(p)
+    } else if text == "type" {
+        parse_type_alias(p)
+    } else {
+        0
+    }
+}
+
+func parse_function(p: Int) -> Int {
+    expect(p, TOK_KEYWORD) 
+    let name_tok = expect(p, TOK_IDENT)
+    let name = token_lexeme(name_tok)
+    
+    if match_token(p, TOK_LT) {
+        while !check(p, TOK_GT) {
+            expect(p, TOK_IDENT)
+            if !match_token(p, TOK_COMMA) { break }
+        }
+        expect(p, TOK_GT)
+    }
+    
+    expect(p, TOK_LPAREN)
+    let params = vec_new()
+    while !check(p, TOK_RPAREN) {
+        let pname = token_lexeme(expect(p, TOK_IDENT))
+        expect(p, TOK_COLON)
+        let ptype = parse_type(p)
+        
+        let param_node = vec_new()
+        vec_push(param_node, pname)
+        vec_push(param_node, ptype)
+        vec_push(params, param_node)
+        
+        if !match_token(p, TOK_COMMA) { break }
+    }
+    expect(p, TOK_RPAREN)
+    
+    let ret_type = 0
+    if match_token(p, TOK_ARROW) {
+        ret_type = parse_type(p)
+    }
+    
+    expect(p, TOK_LBRACE)
+    let body = parse_block(p)
+    expect(p, TOK_RBRACE)
+    
+    let node = vec_new()
+    vec_push(node, NODE_FUNC_DECL)
+    vec_push(node, name)
+    vec_push(node, params)
+    vec_push(node, ret_type)
+    vec_push(node, body)
+    node
+}
+
+func parse_block(p: Int) -> Int {
+    let stmts = vec_new()
+    while !check(p, TOK_RBRACE) && !at_end(p) {
+        if match_token(p, TOK_NEWLINE) { continue }
+        let s = parse_statement(p)
+        if s != 0 { vec_push(stmts, s) }
+    }
+    let node = vec_new()
+    vec_push(node, NODE_BLOCK)
+    vec_push(node, stmts)
+    node
+}
+
+func parse_statement(p: Int) -> Int {
+    let tok = parser_peek(p)
+    let text = token_lexeme(tok)
+    
+    if text == "let" {
+        parser_advance(p)
+        let name = token_lexeme(expect(p, TOK_IDENT))
+        let typ = 0
+        if match_token(p, TOK_COLON) { typ = parse_type(p) }
+        expect(p, TOK_EQ)
+        let expr = parse_expression(p)
+        
+        let node = vec_new()
+        vec_push(node, NODE_LET)
+        vec_push(node, name)
+        vec_push(node, typ)
+        vec_push(node, expr)
+        node
+    } else if text == "return" {
+        parser_advance(p)
+        let val = 0
+        if !check(p, TOK_NEWLINE) && !check(p, TOK_RBRACE) {
+            val = parse_expression(p)
+        }
+        let node = vec_new()
+        vec_push(node, NODE_RETURN)
+        vec_push(node, val)
+        node
+    } else if text == "if" {
+        parser_advance(p)
+        let cond = parse_expression(p)
+        expect(p, TOK_LBRACE)
+        let then_b = parse_block(p)
+        expect(p, TOK_RBRACE)
+        let else_b = 0
+        let next_tok = parser_peek(p)
+        if token_lexeme(next_tok) == "else" {
+            parser_advance(p)
+            expect(p, TOK_LBRACE)
+            else_b = parse_block(p)
+            expect(p, TOK_RBRACE)
+        }
+        let node = vec_new()
+        vec_push(node, NODE_IF)
+        vec_push(node, cond)
+        vec_push(node, then_b)
+        vec_push(node, else_b)
+        node
+    } else {
+        let expr = parse_expression(p)
+        let node = vec_new()
+        vec_push(node, NODE_EXPR_STMT)
+        vec_push(node, expr)
+        node
+    }
+}
+
+// ----------------------------------------------------------------------------
+// EXPRESSION PARSING (PRATT)
+// ----------------------------------------------------------------------------
+
+func parse_expression(p: Int) -> Int {
+    parse_precedence(p, 0)
+}
+
+func parse_precedence(p: Int, min_prec: Int) -> Int {
+    let left = parse_primary(p)
+    
+    while true {
+        let tok = parser_peek(p)
+        let prec = get_precedence(token_type(tok))
+        
+        if prec < min_prec { break }
+        
+        parser_advance(p) // consume op
+        let op = token_to_binop(token_type(tok))
+        let right = parse_precedence(p, prec + 1)
+        
+        let node = vec_new()
+        vec_push(node, NODE_BINARY)
+        vec_push(node, left)
+        vec_push(node, op)
+        vec_push(node, right)
+        left = node
+    }
+    
+    left
+}
+
+func get_precedence(typ: Int) -> Int {
+    if typ == TOK_EQEQ { return 1 }
+    if typ == TOK_PLUS { return 2 }
+    if typ == TOK_MINUS { return 2 }
+    if typ == TOK_STAR { return 3 }
+    if typ == TOK_SLASH { return 3 }
+    -1
+}
+
+func token_to_binop(typ: Int) -> Int {
+    if typ == TOK_PLUS { return OP_ADD }
+    if typ == TOK_MINUS { return OP_SUB }
+    if typ == TOK_STAR { return OP_MUL }
+    if typ == TOK_EQEQ { return OP_EQ }
+    0
+}
+
+func parse_primary(p: Int) -> Int {
+    let tok = parser_peek(p)
+    let typ = token_type(tok)
+    
+    if typ == TOK_INT_LIT {
+        parser_advance(p)
+        let node = vec_new()
+        vec_push(node, NODE_INT_LIT)
+        vec_push(node, parse_int(token_lexeme(tok)))
+        node
+    } else if typ == TOK_IDENT {
+        parser_advance(p)
+        if check(p, TOK_LPAREN) {
+            parser_advance(p)
+            let args = vec_new()
+            while !check(p, TOK_RPAREN) {
+                vec_push(args, parse_expression(p))
+                if !match_token(p, TOK_COMMA) { break }
+            }
+            expect(p, TOK_RPAREN)
+            
+            let node = vec_new()
+            vec_push(node, NODE_CALL)
+            vec_push(node, token_lexeme(tok)) 
+            vec_push(node, args)
+            node
+        } else {
+            let node = vec_new()
+            vec_push(node, NODE_VAR)
+            vec_push(node, token_lexeme(tok))
+            node
+        }
+    } else {
+        parser_advance(p)
+        0
+    }
+}
+
+func parse_type(p: Int) -> Int {
+    let tok = parser_advance(p)
+    let text = token_lexeme(tok)
+    
+    if text == "Int" { return TYPE_INT }
+    if text == "String" { return TYPE_STRING }
+    TYPE_INT 
+}
+
+func parse_struct(p: Int) -> Int {
+    expect(p, TOK_KEYWORD) 
+    expect(p, TOK_IDENT)
+    expect(p, TOK_LBRACE)
+    while !check(p, TOK_RBRACE) {
+        expect(p, TOK_IDENT)
+        expect(p, TOK_COLON)
+        parse_type(p)
+        match_token(p, TOK_COMMA)
+    }
+    expect(p, TOK_RBRACE)
+    0
+}
+
+func parse_use(p: Int) -> Int {
+    expect(p, TOK_KEYWORD)
+    while check(p, TOK_IDENT) {
+        parser_advance(p)
+        if !match_token(p, TOK_COLONCOLON) { break }
+    }
+    0
+}
+
+func parse_type_alias(p: Int) -> Int {
+    expect(p, TOK_KEYWORD)
+    expect(p, TOK_IDENT)
+    expect(p, TOK_EQ)
+    parse_type(p)
+    0
+}
+
+// ============================================================================
+// ENTRY
+// ============================================================================
+
+func parse(tokens: Int) -> Int {
+    let p = parser_new(tokens)
+    parse_program(p)
+}

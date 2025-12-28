@@ -1,0 +1,124 @@
+//! ═══════════════════════════════════════════════════════════════════════════════
+//! AETHER PURE RUNTIME - MEMORY ALLOCATOR
+//! ═══════════════════════════════════════════════════════════════════════════════
+//! Simple bump allocator with mmap backend - NO malloc/libc dependency
+//! This powers vec, map, and all heap allocations.
+
+import std.runtime.syscall
+
+// ============================================================================
+// HEAP STATE (Global Variables)
+// ============================================================================
+
+// Note: These are initialized to 0 by the loader
+var heap_start: Int = 0
+var heap_pos: Int = 0
+var heap_end: Int = 0
+
+const HEAP_BLOCK_SIZE: Int = 1048576  // 1MB per block
+const ALIGNMENT: Int = 8               // 8-byte alignment
+
+// ============================================================================
+// CORE ALLOCATOR
+// ============================================================================
+
+/// Allocate `size` bytes of memory
+/// Returns: pointer to allocated memory (8-byte aligned)
+func malloc(size: Int) -> Int {
+    // Initialize heap on first call
+    if heap_start == 0 {
+        heap_start = sys_mmap(HEAP_BLOCK_SIZE)
+        if heap_start == -1 {
+            // mmap failed - catastrophic
+            sys_exit(1)
+        }
+        heap_pos = heap_start
+        heap_end = heap_start + HEAP_BLOCK_SIZE
+    }
+    
+    // Align size to 8 bytes
+    let aligned_size = (size + ALIGNMENT - 1) & ~(ALIGNMENT - 1)
+    
+    // Check if we need more memory
+    if heap_pos + aligned_size > heap_end {
+        // Allocate new block
+        let new_block_size = HEAP_BLOCK_SIZE
+        if aligned_size > new_block_size {
+            // Large allocation - get exact size
+            let new_block = sys_mmap(aligned_size)
+            if new_block == -1 {
+                sys_exit(1)
+            }
+            return new_block
+        }
+        
+        let new_block = sys_mmap(new_block_size)
+        if new_block == -1 {
+            sys_exit(1)
+        }
+        heap_pos = new_block
+        heap_end = new_block + new_block_size
+    }
+    
+    // Bump allocate
+    let ptr = heap_pos
+    heap_pos = heap_pos + aligned_size
+    
+    ptr
+}
+
+/// Free memory (no-op in bump allocator)
+/// Future: implement free list
+func free(ptr: Int) {
+    // Bump allocator doesn't free
+    // This is fine for short-lived compiler processes
+}
+
+/// Reallocate memory
+func realloc(ptr: Int, old_size: Int, new_size: Int) -> Int {
+    let new_ptr = malloc(new_size)
+    
+    // Copy old data
+    let copy_size = old_size
+    if new_size < old_size {
+        // Shrinking - only copy new_size
+        let i = 0
+        while i < new_size {
+            poke8(new_ptr + i, peek8(ptr + i))
+            i = i + 1
+        }
+    } else {
+        // Growing - copy all old data
+        let i = 0
+        while i < old_size {
+            poke8(new_ptr + i, peek8(ptr + i))
+            i = i + 1
+        }
+    }
+    
+    new_ptr
+}
+
+// ============================================================================
+// MEMORY ACCESS PRIMITIVES
+// ============================================================================
+
+/// Read 8 bytes from address
+func peek(addr: Int) -> Int {
+    __builtin_peek(addr)
+}
+
+/// Write 8 bytes to address
+func poke(addr: Int, val: Int) {
+    __builtin_poke(addr, val)
+}
+
+/// Read 1 byte from address
+func peek8(addr: Int) -> Int {
+    __builtin_peek8(addr)
+}
+
+/// Write 1 byte to address
+func poke8(addr: Int, val: Int) {
+    __builtin_poke8(addr, val)
+}

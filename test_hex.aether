@@ -1,0 +1,4 @@
+func main() -> Int {
+    let x = 0xCF
+    x
+}

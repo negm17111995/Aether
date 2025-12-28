@@ -1,0 +1,198 @@
+// ═══════════════════════════════════════════════════════════════════════════════
+// AETHER ARGUMENTS - Default Parameters & Named Arguments
+// ═══════════════════════════════════════════════════════════════════════════════
+// Ergonomic function arguments
+
+// ============================================================================
+// ARGUMENT BUILDER
+// ============================================================================
+
+// Args layout: [count, capacity, names, values, defaults, has_value]
+const ARGS_COUNT: Int = 0
+const ARGS_CAP: Int = 8
+const ARGS_NAMES: Int = 16
+const ARGS_VALUES: Int = 24
+const ARGS_DEFAULTS: Int = 32
+const ARGS_HAS: Int = 40
+
+// Create new argument builder
+func args_new(capacity: Int) -> Int {
+    let a = __builtin_malloc(48)
+    __builtin_store64(a + ARGS_COUNT, 0)
+    __builtin_store64(a + ARGS_CAP, capacity)
+    __builtin_store64(a + ARGS_NAMES, __builtin_malloc(capacity * 8))
+    __builtin_store64(a + ARGS_VALUES, __builtin_malloc(capacity * 8))
+    __builtin_store64(a + ARGS_DEFAULTS, __builtin_malloc(capacity * 8))
+    __builtin_store64(a + ARGS_HAS, __builtin_malloc(capacity))
+    a
+}
+
+// Define argument with default value
+func args_define(a: Int, name: Int, default_val: Int) {
+    let count = __builtin_load64(a + ARGS_COUNT)
+    let names = __builtin_load64(a + ARGS_NAMES)
+    let defaults = __builtin_load64(a + ARGS_DEFAULTS)
+    let has = __builtin_load64(a + ARGS_HAS)
+    
+    __builtin_store64(names + count * 8, name)
+    __builtin_store64(defaults + count * 8, default_val)
+    __builtin_store8(has + count, 0)  // Not set yet
+    
+    __builtin_store64(a + ARGS_COUNT, count + 1)
+}
+
+// Set named argument
+func args_set(a: Int, name: Int, value: Int) {
+    let count = __builtin_load64(a + ARGS_COUNT)
+    let names = __builtin_load64(a + ARGS_NAMES)
+    let values = __builtin_load64(a + ARGS_VALUES)
+    let has = __builtin_load64(a + ARGS_HAS)
+    
+    let i = 0
+    while i < count {
+        let n = __builtin_load64(names + i * 8)
+        if n == name {
+            __builtin_store64(values + i * 8, value)
+            __builtin_store8(has + i, 1)
+            return
+        }
+        i = i + 1
+    }
+}
+
+// Set positional argument
+func args_set_pos(a: Int, pos: Int, value: Int) {
+    let values = __builtin_load64(a + ARGS_VALUES)
+    let has = __builtin_load64(a + ARGS_HAS)
+    
+    __builtin_store64(values + pos * 8, value)
+    __builtin_store8(has + pos, 1)
+}
+
+// Get argument value (uses default if not set)
+func args_get(a: Int, name: Int) -> Int {
+    let count = __builtin_load64(a + ARGS_COUNT)
+    let names = __builtin_load64(a + ARGS_NAMES)
+    let values = __builtin_load64(a + ARGS_VALUES)
+    let defaults = __builtin_load64(a + ARGS_DEFAULTS)
+    let has = __builtin_load64(a + ARGS_HAS)
+    
+    let i = 0
+    while i < count {
+        let n = __builtin_load64(names + i * 8)
+        if n == name {
+            let is_set = __builtin_load8(has + i)
+            if is_set == 1 {
+                return __builtin_load64(values + i * 8)
+            } else {
+                return __builtin_load64(defaults + i * 8)
+            }
+        }
+        i = i + 1
+    }
+    0
+}
+
+// Get argument by position
+func args_get_pos(a: Int, pos: Int) -> Int {
+    let values = __builtin_load64(a + ARGS_VALUES)
+    let defaults = __builtin_load64(a + ARGS_DEFAULTS)
+    let has = __builtin_load64(a + ARGS_HAS)
+    
+    let is_set = __builtin_load8(has + pos)
+    if is_set == 1 {
+        __builtin_load64(values + pos * 8)
+    } else {
+        __builtin_load64(defaults + pos * 8)
+    }
+}
+
+// ============================================================================
+// FLUENT BUILDER PATTERN
+// ============================================================================
+
+// Chainable argument setting
+func with(a: Int, name: Int, value: Int) -> Int {
+    args_set(a, name, value)
+    a
+}
+
+// Example usage:
+// let args = args_new(5)
+// args_define(args, "host", "localhost")
+// args_define(args, "port", 8080)
+// args_define(args, "timeout", 30)
+// 
+// Call with named args:
+// with(with(with(args, "host", "example.com"), "port", 443), "timeout", 60)
+// 
+// Or positional:
+// args_set_pos(args, 0, "example.com")
+
+// ============================================================================
+// DESTRUCTURING HELPERS
+// ============================================================================
+
+// Tuple destructuring
+// let (a, b, c) = tuple
+// Becomes: let _t = tuple; let a = tuple_get(_t, 0); let b = tuple_get(_t, 1); ...
+
+func tuple_new(count: Int) -> Int {
+    let t = __builtin_malloc(8 + count * 8)
+    __builtin_store64(t, count)
+    t
+}
+
+func tuple_set(t: Int, idx: Int, val: Int) {
+    __builtin_store64(t + 8 + idx * 8, val)
+}
+
+func tuple_get(t: Int, idx: Int) -> Int {
+    __builtin_load64(t + 8 + idx * 8)
+}
+
+func tuple_len(t: Int) -> Int {
+    __builtin_load64(t)
+}
+
+// Create 2-tuple
+func pair(a: Int, b: Int) -> Int {
+    let t = tuple_new(2)
+    tuple_set(t, 0, a)
+    tuple_set(t, 1, b)
+    t
+}
+
+// Create 3-tuple
+func triple(a: Int, b: Int, c: Int) -> Int {
+    let t = tuple_new(3)
+    tuple_set(t, 0, a)
+    tuple_set(t, 1, b)
+    tuple_set(t, 2, c)
+    t
+}
+
+// Destructure pair
+func fst(t: Int) -> Int { tuple_get(t, 0) }
+func snd(t: Int) -> Int { tuple_get(t, 1) }
+
+// ============================================================================
+// STRUCT DESTRUCTURING HELPERS
+// ============================================================================
+
+// For: let { name, age } = person
+// Becomes: let name = struct_get(person, "name"); let age = struct_get(person, "age")
+
+func struct_get_field(s: Int, field_name: Int) -> Int {
+    // Field lookup by name (simplified - real impl uses field table)
+    0
+}
+
+// ============================================================================
+// PATTERN MATCHING HELPERS
+// ============================================================================
+
+// Match guard helper
+func when(condition: Bool, then_val: Int, else_val: Int) -> Int {
+    if condition { then_val } else { else_val }
+}

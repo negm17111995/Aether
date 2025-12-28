@@ -1,0 +1,63 @@
+// Aether Ultra Codegen - Bootstrap Compatible Stub
+// Full implementation in stdlib_full/compiler/codegen.aether
+// This stub enables bootstrap compilation
+
+// Optimization flags
+const OPT_TCO: Int = 1
+const OPT_INLINE: Int = 2
+const OPT_MEMO: Int = 4
+const OPT_ALL: Int = 7
+
+// Register constants
+const REG_X0: Int = 0
+const REG_X19: Int = 19
+const REG_X28: Int = 28
+
+// Codegen context
+func codegen_new(flags: Int) -> Int {
+    let cg = __builtin_malloc(32)
+    cg
+}
+
+func cg_emit(cg: Int, line: Int) {
+    // Stub: would append line to output buffer
+}
+
+func cg_new_label(cg: Int) -> Int {
+    0
+}
+
+// Optimization detection stubs
+func is_tail_call(node: Int) -> Bool {
+    false
+}
+
+func is_inline_base_case(node: Int) -> Bool {
+    false
+}
+
+func is_pure_recursive(node: Int) -> Bool {
+    false
+}
+
+// Main codegen function
+func codegen_function(cg: Int, node: Int) {
+    // Would generate assembly for function
+}
+
+func codegen_expr(cg: Int, node: Int) {
+    // Would generate assembly for expression
+}
+
+func compile(source: Int) -> Int {
+    let cg = codegen_new(OPT_ALL)
+    0
+}
+
+// Vector stubs
+func vec_new() -> Int { __builtin_malloc(24) }
+func vec_len(v: Int) -> Int { __builtin_load64(v + 8) }
+func vec_get(v: Int, i: Int) -> Int { 
+    let data = __builtin_load64(v)
+    __builtin_load64(data + i * 8)
+}

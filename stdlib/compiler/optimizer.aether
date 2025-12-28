@@ -1,0 +1,224 @@
+// Aether Ultra Optimizer - Optimization Passes
+// Transforms AST for optimal codegen
+
+// ============================================================================
+// OPTIMIZATION PASSES
+// ============================================================================
+
+// Pass 1: Tail Call Detection
+// Marks calls in tail position for TCO
+func pass_tco(ast: Int) -> Int {
+    transform_functions(ast, mark_tail_calls)
+}
+
+func mark_tail_calls(func_node: Int) -> Int {
+    let body = get_func_body(func_node)
+    mark_tails_in_expr(body, true)
+    func_node
+}
+
+func mark_tails_in_expr(node: Int, is_tail: Bool) {
+    let typ = node_type(node)
+    
+    if typ == AST_CALL && is_tail {
+        set_node_flag(node, FLAG_TAIL_CALL)
+    } else if typ == AST_IF {
+        let then_branch = get_then(node)
+        let else_branch = get_else(node)
+        mark_tails_in_expr(then_branch, is_tail)
+        mark_tails_in_expr(else_branch, is_tail)
+    } else if typ == AST_RETURN {
+        let expr = get_return_expr(node)
+        mark_tails_in_expr(expr, true)
+    }
+}
+
+// Pass 2: Register Promotion
+// Moves stack variables to registers where possible
+func pass_register_promote(ast: Int) -> Int {
+    transform_functions(ast, promote_to_registers)
+}
+
+func promote_to_registers(func_node: Int) -> Int {
+    let locals = collect_locals(func_node)
+    let local_count = vec_len(locals)
+    
+    // If <= 10 locals, all can fit in x19-x28
+    if local_count <= 10 {
+        let i = 0
+        while i < local_count {
+            let local = vec_get(locals, i)
+            set_register(local, 19 + i)  // x19, x20, ...
+            i = i + 1
+        }
+    }
+    func_node
+}
+
+// Pass 3: Inline Simple Functions
+// Inlines base case checks and small functions
+func pass_inline(ast: Int) -> Int {
+    transform_functions(ast, inline_base_cases)
+}
+
+func inline_base_cases(func_node: Int) -> Int {
+    let body = get_func_body(func_node)
+    
+    // Look for pattern: if (simple_cond) { return simple } else { recurse }
+    if is_if_return_pattern(body) {
+        set_node_flag(func_node, FLAG_INLINE_BASE)
+    }
+    func_node
+}
+
+func is_if_return_pattern(node: Int) -> Bool {
+    let typ = node_type(node)
+    if typ != AST_IF {
+        return false
+    }
+    
+    let then_branch = get_then(node)
+    let then_type = node_type(then_branch)
+    
+    // Check if 'then' is a simple return (variable or literal)
+    if then_type == AST_RETURN {
+        let ret_expr = get_return_expr(then_branch)
+        let ret_type = node_type(ret_expr)
+        return ret_type == AST_IDENT || ret_type == AST_INT_LIT || ret_type == AST_PARAM
+    }
+    false
+}
+
+// Pass 4: Memoization Injection
+// Adds memoization to pure recursive functions
+func pass_memoize(ast: Int) -> Int {
+    transform_functions(ast, inject_memoization)
+}
+
+func inject_memoization(func_node: Int) -> Int {
+    if !is_pure_function(func_node) {
+        return func_node
+    }
+    if !is_recursive(func_node) {
+        return func_node
+    }
+    
+    // Mark for memo table generation
+    set_node_flag(func_node, FLAG_MEMOIZE)
+    
+    // Parameters determine memo table size
+    let params = get_func_params(func_node)
+    let param_count = vec_len(params)
+    set_memo_dimensions(func_node, param_count)
+    
+    func_node
+}
+
+func is_pure_function(node: Int) -> Bool {
+    // A function is pure if it:
+    // 1. Has no print/write statements
+    // 2. Only mutates local variables
+    // 3. Only calls other pure functions or itself
+    let body = get_func_body(node)
+    !contains_impure(body)
+}
+
+func contains_impure(node: Int) -> Bool {
+    let typ = node_type(node)
+    
+    // Impure operations
+    if typ == AST_PRINT { return true }
+    if typ == AST_WRITE { return true }
+    if typ == AST_ASSIGN_GLOBAL { return true }
+    
+    // Check children
+    let children = get_children(node)
+    let i = 0
+    while i < vec_len(children) {
+        if contains_impure(vec_get(children, i)) {
+            return true
+        }
+        i = i + 1
+    }
+    false
+}
+
+func is_recursive(func_node: Int) -> Bool {
+    let name = get_func_name(func_node)
+    let body = get_func_body(func_node)
+    contains_call_to(body, name)
+}
+
+func contains_call_to(node: Int, target: String) -> Bool {
+    let typ = node_type(node)
+    
+    if typ == AST_CALL {
+        let callee = get_call_target(node)
+        if callee == target {
+            return true
+        }
+    }
+    
+    let children = get_children(node)
+    let i = 0
+    while i < vec_len(children) {
+        if contains_call_to(vec_get(children, i), target) {
+            return true
+        }
+        i = i + 1
+    }
+    false
+}
+
+// ============================================================================
+// MAIN OPTIMIZER
+// ============================================================================
+
+func optimize(ast: Int) -> Int {
+    // Run all optimization passes
+    let optimized = ast
+    optimized = pass_tco(optimized)
+    optimized = pass_register_promote(optimized)
+    optimized = pass_inline(optimized)
+    optimized = pass_memoize(optimized)
+    optimized
+}
+
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+
+const AST_CALL: Int = 102
+const AST_IF: Int = 101
+const AST_RETURN: Int = 103
+const AST_IDENT: Int = 105
+const AST_INT_LIT: Int = 104
+const AST_PARAM: Int = 106
+const AST_PRINT: Int = 110
+const AST_WRITE: Int = 111
+const AST_ASSIGN_GLOBAL: Int = 112
+
+const FLAG_TAIL_CALL: Int = 1
+const FLAG_INLINE_BASE: Int = 2
+const FLAG_MEMOIZE: Int = 4
+
+func node_type(n: Int) -> Int { __builtin_load64(n) }
+func get_func_body(n: Int) -> Int { __builtin_load64(n + 24) }
+func get_func_name(n: Int) -> Int { __builtin_load64(n + 8) }
+func get_func_params(n: Int) -> Int { __builtin_load64(n + 16) }
+func get_then(n: Int) -> Int { __builtin_load64(n + 16) }
+func get_else(n: Int) -> Int { __builtin_load64(n + 24) }
+func get_return_expr(n: Int) -> Int { __builtin_load64(n + 8) }
+func get_children(n: Int) -> Int { __builtin_load64(n + 32) }
+func get_call_target(n: Int) -> Int { __builtin_load64(n + 8) }
+func set_node_flag(n: Int, f: Int) { __builtin_store64(n + 40, f) }
+func set_register(n: Int, r: Int) { __builtin_store64(n + 48, r) }
+func set_memo_dimensions(n: Int, d: Int) { __builtin_store64(n + 56, d) }
+func collect_locals(n: Int) -> Int { vec_new() }
+func transform_functions(ast: Int, f: Int) -> Int { ast }
+
+func vec_new() -> Int { __builtin_malloc(24) }
+func vec_len(v: Int) -> Int { __builtin_load64(v + 8) }
+func vec_get(v: Int, i: Int) -> Int { 
+    __builtin_load64(__builtin_load64(v) + i * 8)
+}

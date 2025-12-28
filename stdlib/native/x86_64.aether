@@ -1,0 +1,7 @@
+//! x86_64 Stub for Bootstrap
+import std.collections
+use std.collections::vec_new
+
+func x86_codegen_generate(c: Int, ast: Int) -> Int {
+    vec_new()
+}

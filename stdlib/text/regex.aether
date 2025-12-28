@@ -1,0 +1,79 @@
+//! ═══════════════════════════════════════════════════════════════════════════════
+//! AETHER REGEX - PATTERN MATCHING
+//! ═══════════════════════════════════════════════════════════════════════════════
+
+import std.runtime.vec
+import std.runtime.str
+
+// ============================================================================
+// REGEX OPERATIONS
+// ============================================================================
+
+/// Compile regex pattern
+func regex_compile(pattern: Int) -> Int {
+    let rx = malloc(64)
+    __regex_compile(pattern, rx)
+    rx
+}
+
+/// Check if string matches pattern
+func regex_match(rx: Int, text: Int) -> Int {
+    __regex_match(rx, text, 0)
+}
+
+/// Find first match, return start/end positions
+func regex_find(rx: Int, text: Int) -> Int {
+    let match = malloc(16)
+    let found = __regex_find(rx, text, match)
+    if found == 1 { match } else { 0 }
+}
+
+/// Find all matches
+func regex_find_all(rx: Int, text: Int) -> Int {
+    let matches = vec_new()
+    let offset = 0
+    let text_len = str_len(text)
+    
+    while offset < text_len {
+        let match = malloc(16)
+        let found = __regex_find(rx, text + offset, match)
+        if found == 0 { break }
+        vec_push(matches, match)
+        offset = offset + peek(match + 8)  // end position
+    }
+    
+    matches
+}
+
+/// Replace matches with replacement string
+func regex_replace(rx: Int, text: Int, replacement: Int) -> Int {
+    __regex_replace(rx, text, replacement)
+}
+
+/// Replace all matches
+func regex_replace_all(rx: Int, text: Int, replacement: Int) -> Int {
+    __regex_replace_all(rx, text, replacement)
+}
+
+/// Split string by pattern
+func regex_split(rx: Int, text: Int) -> Int {
+    let parts = vec_new()
+    __regex_split(rx, text, parts)
+    parts
+}
+
+// ============================================================================
+// COMMON PATTERNS
+// ============================================================================
+
+func pattern_email() -> Int { regex_compile("[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}") }
+func pattern_phone() -> Int { regex_compile("\\+?[0-9]{10,15}") }
+func pattern_url() -> Int { regex_compile("https?://[a-zA-Z0-9.-]+(/[a-zA-Z0-9._~:/?#@!$&'()*+,;=-]*)?") }
+func pattern_ipv4() -> Int { regex_compile("\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}") }
+func pattern_uuid() -> Int { regex_compile("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}") }
+
+/// Validate email
+func is_email(text: Int) -> Int { regex_match(pattern_email(), text) }
+
+/// Validate URL
+func is_url(text: Int) -> Int { regex_match(pattern_url(), text) }

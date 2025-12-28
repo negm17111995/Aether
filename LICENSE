@@ -1,0 +1,129 @@
+# Business Source License 1.1
+
+## Licensor
+Negm (negm17111995)
+
+## Licensed Work
+Aether Programming Language
+Copyright © 2024 Negm
+
+## Change Date
+2028-12-28 (Four years from initial release)
+
+## Change License
+Apache License, Version 2.0
+
+---
+
+## Terms
+
+The Licensor hereby grants you the right to copy, modify, create derivative works, redistribute, and make non-production use of the Licensed Work.
+
+### Additional Use Grant
+
+You may make **production use** of the Licensed Work, provided that:
+
+1. **Individual Use**: You are an individual using Aether for personal projects
+2. **Small Business**: Your organization has **annual revenue less than $1,000,000 USD** AND **fewer than 50 employees**
+3. **Non-Profit**: You are a registered non-profit organization
+4. **Educational**: You are an educational institution or student
+5. **Open Source**: Your project is licensed under an OSI-approved open source license
+
+### Commercial License Required
+
+You **MUST** obtain a commercial license from the Licensor if:
+
+- Your organization has **annual revenue of $1,000,000 USD or more**, OR
+- Your organization has **50 or more employees**, AND
+- You are using Aether in **production** for commercial purposes
+
+### What is "Production Use"?
+
+Production use means deploying or running the Licensed Work in a commercial environment that:
+- Serves customers or end-users
+- Generates revenue directly or indirectly
+- Processes business-critical workloads
+
+### What is NOT "Production Use"?
+
+- Development and testing
+- Personal projects
+- Hobby projects
+- Internal evaluation
+- Proof of concepts
+- Academic research
+
+---
+
+## Commercial Licensing
+
+### Pricing Tiers
+
+| Tier | Revenue | Employees | Annual License |
+|------|---------|-----------|----------------|
+| **Startup** | $1M - $10M | 50-200 | Contact for pricing |
+| **Business** | $10M - $100M | 200-1000 | Contact for pricing |
+| **Enterprise** | $100M+ | 1000+ | Contact for pricing |
+
+### Contact
+
+📧 **negm17111995@gmail.com**
+🌐 **https://github.com/negm17111995/Aether**
+
+---
+
+## Change Date Provisions
+
+Effective on the **Change Date** (2028-12-28), or the fourth anniversary of the first publicly available distribution of a specific version of the Licensed Work under this License, whichever comes first, the Licensor hereby grants you rights under the terms of the **Change License** (Apache License 2.0).
+
+After the Change Date, you may use the Licensed Work under the terms of Apache License 2.0 without any of the restrictions above.
+
+---
+
+## Notices
+
+1. You must retain all copyright notices and license information in all copies
+2. You must clearly state any modifications you make
+3. You must not remove or alter any license or copyright headers
+
+---
+
+## No Warranty
+
+THE LICENSED WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED.
+
+---
+
+## Limitation of Liability
+
+IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY DAMAGES ARISING FROM THE USE OF THE LICENSED WORK.
+
+---
+
+## Summary
+
+| Use Case | License Required? |
+|----------|-------------------|
+| Personal projects | ✅ Free |
+| Learning/Education | ✅ Free |
+| Startups under $1M | ✅ Free |
+| Open Source projects | ✅ Free |
+| Non-profits | ✅ Free |
+| Companies $1M+ revenue | 💰 Commercial License |
+| Companies 50+ employees | 💰 Commercial License |
+| After 2028-12-28 | ✅ Free (Apache 2.0) |
+
+---
+
+## Why BSL?
+
+This license ensures:
+- **Everyone can use** Aether freely for personal, educational, and small business use
+- **Large companies pay fairly** for the value they receive
+- **Open source eventually** - After 4 years, becomes fully open Apache 2.0
+- **Transparent rules** - No hidden gotchas, everyone knows where they stand
+
+---
+
+*This license is based on the Business Source License 1.1 template.*
+*For questions: negm17111995@gmail.com*

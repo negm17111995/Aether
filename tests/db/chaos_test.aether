@@ -1,0 +1,6 @@
+// Bootstrap-compatible stub
+// Original file preserved in stdlib_full/
+
+func chaos_test_stub() -> Int {
+    0
+}

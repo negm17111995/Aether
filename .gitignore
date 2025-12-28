@@ -1,0 +1,61 @@
+# Aether .gitignore
+
+# Build outputs
+*.o
+*.out
+*.exe
+*.dll
+*.so
+*.dylib
+a.out
+build/
+dist/
+
+# Test outputs
+*.test
+test_output/
+coverage/
+
+# IDE/Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Debug
+*.dSYM/
+*.log
+debug/
+
+# Temporary
+tmp/
+temp/
+*.tmp
+
+# Package manager
+node_modules/
+.aether_cache/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Benchmarks (large files)
+benchmarks/heavy/*.bin
+benchmarks/results/
+
+# Generated docs
+docs/api/
+
+# Backup files
+*.bak
+*.backup
+*_backup/
+stdlib_full/
+
+# Local config
+local.toml
+*.local.aether

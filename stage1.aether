@@ -1,0 +1,31 @@
+//! Stage 1 Aether Compiler Entry Point
+//!
+//! This is the source code for the self-hosted Aether compiler.
+//! It is compiled by the C bootstrap compiler (Stage 0).
+
+// import/use removed - all functions are in concatenated file
+
+func main() {
+    // For MVP bootstrap, we hardcode compilation of a test file
+    // or we implement basic argument parsing if runtime supports it.
+    // Bootstrap runtime provides `argc` `argv`? 
+    // `bootstrap/runtime.c` implementation of `main` calls `_main`.
+    // It doesn't pass args to `_main` in current `runtime.c` probably.
+    
+    // Let's assume we compile a fixed file "input.ae" to "output" for now.
+    println("Aether Stage 1 Compiler starting...")
+    
+    let c = compiler_new(detect_host_target())
+    
+    // In a real scenario we read file content.
+    // primitive IO stub needed to read file?
+    // `compile` takes source STRING.
+    // We need `read_file_to_string`.
+    
+    let source = "func main() { let x = 42; }" // Fixed source for test
+    
+    // We just want to prove we can RUN the compiler and generate code.
+    compile_to_file(c, source, "memory_source")
+    
+    println("Compilation finished.")
+}

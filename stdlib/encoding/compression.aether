@@ -1,0 +1,105 @@
+//! ═══════════════════════════════════════════════════════════════════════════════
+//! AETHER COMPRESSION - GZIP, ZLIB, LZ4, ZSTD
+//! ═══════════════════════════════════════════════════════════════════════════════
+
+import std.runtime.vec
+
+// ============================================================================
+// GZIP (Most compatible)
+// ============================================================================
+
+/// Compress data with gzip
+func gzip_compress(data: Int, len: Int) -> Int {
+    let output = vec_new8()
+    __gzip_compress(data, len, output)
+    output
+}
+
+/// Decompress gzip data
+func gzip_decompress(data: Int, len: Int) -> Int {
+    let output = vec_new8()
+    __gzip_decompress(data, len, output)
+    output
+}
+
+// ============================================================================
+// ZLIB (Standard compression)
+// ============================================================================
+
+func zlib_compress(data: Int, len: Int, level: Int) -> Int {
+    let output = vec_new8()
+    __zlib_compress(data, len, level, output)
+    output
+}
+
+func zlib_decompress(data: Int, len: Int) -> Int {
+    let output = vec_new8()
+    __zlib_decompress(data, len, output)
+    output
+}
+
+// ============================================================================
+// LZ4 (Ultra fast)
+// ============================================================================
+
+func lz4_compress(data: Int, len: Int) -> Int {
+    let output = vec_new8()
+    __lz4_compress(data, len, output)
+    output
+}
+
+func lz4_decompress(data: Int, len: Int) -> Int {
+    let output = vec_new8()
+    __lz4_decompress(data, len, output)
+    output
+}
+
+// ============================================================================
+// ZSTD (Best ratio + speed)
+// ============================================================================
+
+func zstd_compress(data: Int, len: Int, level: Int) -> Int {
+    let output = vec_new8()
+    __zstd_compress(data, len, level, output)
+    output
+}
+
+func zstd_decompress(data: Int, len: Int) -> Int {
+    let output = vec_new8()
+    __zstd_decompress(data, len, output)
+    output
+}
+
+// ============================================================================
+// BASE64 (Encoding)
+// ============================================================================
+
+func base64_encode(data: Int, len: Int) -> Int {
+    let output_len = (len + 2) / 3 * 4
+    let output = malloc(output_len + 1)
+    __base64_encode(data, len, output)
+    output
+}
+
+func base64_decode(data: Int) -> Int {
+    let output = vec_new8()
+    __base64_decode(data, output)
+    output
+}
+
+// ============================================================================
+// HEX (Encoding)
+// ============================================================================
+
+func hex_encode(data: Int, len: Int) -> Int {
+    let output = malloc(len * 2 + 1)
+    __hex_encode(data, len, output)
+    output
+}
+
+func hex_decode(data: Int) -> Int {
+    let len = str_len(data) / 2
+    let output = malloc(len)
+    __hex_decode(data, output)
+    output
+}

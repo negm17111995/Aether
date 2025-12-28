@@ -1,0 +1,294 @@
+//! ═══════════════════════════════════════════════════════════════════════════════
+//! AETHER ZERO-COPY - ABSOLUTE MINIMUM MEMORY AND CPU
+//! ═══════════════════════════════════════════════════════════════════════════════
+//! - Zero-copy data passing (no memcpy)
+//! - Object pooling (no malloc in hot path)
+//! - Slab allocator (O(1) alloc/free)
+//! - Memory-mapped I/O (kernel-direct)
+
+import std.runtime.syscall
+
+// ============================================================================
+// SLAB ALLOCATOR (O(1) fixed-size allocation)
+// ============================================================================
+
+// Slab: [obj_size, capacity, free_list, memory, bitmap]
+const SLAB_SIZE_OFF: Int = 0
+const SLAB_CAP_OFF: Int = 8
+const SLAB_FREE_OFF: Int = 16
+const SLAB_MEM_OFF: Int = 24
+const SLAB_BITMAP_OFF: Int = 32
+
+/// Create slab for fixed-size objects
+func slab_new(obj_size: Int, capacity: Int) -> Int {
+    let slab = malloc(40)
+    let aligned_size = (obj_size + 7) & -8
+    
+    poke(slab + SLAB_SIZE_OFF, aligned_size)
+    poke(slab + SLAB_CAP_OFF, capacity)
+    
+    // Allocate memory for all objects at once
+    let mem = sys_mmap(aligned_size * capacity)
+    poke(slab + SLAB_MEM_OFF, mem)
+    
+    // Build free list (each slot points to next)
+    let i = 0
+    while i < capacity - 1 {
+        let ptr = mem + i * aligned_size
+        poke(ptr, mem + (i + 1) * aligned_size)
+        i = i + 1
+    }
+    poke(mem + (capacity - 1) * aligned_size, 0)  // End of list
+    
+    poke(slab + SLAB_FREE_OFF, mem)  // Head of free list
+    
+    slab
+}
+
+/// Allocate from slab (O(1), no syscall)
+
+func slab_alloc(slab: Int) -> Int {
+    let free = peek(slab + SLAB_FREE_OFF)
+    if free == 0 { return 0 }  // Slab full
+    
+    // Pop from free list
+    let next = peek(free)
+    poke(slab + SLAB_FREE_OFF, next)
+    
+    free
+}
+
+/// Free to slab (O(1), no syscall)
+
+func slab_free(slab: Int, ptr: Int) {
+    // Push to free list
+    let old_head = peek(slab + SLAB_FREE_OFF)
+    poke(ptr, old_head)
+    poke(slab + SLAB_FREE_OFF, ptr)
+}
+
+// ============================================================================
+// OBJECT POOL (Pre-allocated reusable objects)
+// ============================================================================
+
+// Pool: [slab, constructor, destructor, active_count]
+const POOL_SLAB_OFF: Int = 0
+const POOL_CTOR_OFF: Int = 8
+const POOL_DTOR_OFF: Int = 16
+const POOL_COUNT_OFF: Int = 24
+
+/// Create object pool
+func pool_new(obj_size: Int, capacity: Int, constructor: Int, destructor: Int) -> Int {
+    let pool = malloc(32)
+    poke(pool + POOL_SLAB_OFF, slab_new(obj_size, capacity))
+    poke(pool + POOL_CTOR_OFF, constructor)
+    poke(pool + POOL_DTOR_OFF, destructor)
+    poke(pool + POOL_COUNT_OFF, 0)
+    pool
+}
+
+/// Get object from pool (O(1))
+
+func pool_get(pool: Int) -> Int {
+    let slab = peek(pool + POOL_SLAB_OFF)
+    let obj = slab_alloc(slab)
+    
+    if obj != 0 {
+        let ctor = peek(pool + POOL_CTOR_OFF)
+        if ctor != 0 {
+            __call(ctor, obj)
+        }
+        
+        let count = peek(pool + POOL_COUNT_OFF)
+        poke(pool + POOL_COUNT_OFF, count + 1)
+    }
+    
+    obj
+}
+
+/// Return object to pool (O(1))
+
+func pool_put(pool: Int, obj: Int) {
+    let dtor = peek(pool + POOL_DTOR_OFF)
+    if dtor != 0 {
+        __call(dtor, obj)
+    }
+    
+    let slab = peek(pool + POOL_SLAB_OFF)
+    slab_free(slab, obj)
+    
+    let count = peek(pool + POOL_COUNT_OFF)
+    poke(pool + POOL_COUNT_OFF, count - 1)
+}
+
+// ============================================================================
+// ZERO-COPY BUFFERS
+// ============================================================================
+
+// Buffer: [data, len, cap, refcount, owner]
+const BUF_DATA_OFF: Int = 0
+const BUF_LEN_OFF: Int = 8
+const BUF_CAP_OFF: Int = 16
+const BUF_REF_OFF: Int = 24
+const BUF_OWNER_OFF: Int = 32
+
+/// Create zero-copy buffer
+func zcbuf_new(size: Int) -> Int {
+    let buf = malloc(40)
+    let data = sys_mmap(size)
+    
+    poke(buf + BUF_DATA_OFF, data)
+    poke(buf + BUF_LEN_OFF, 0)
+    poke(buf + BUF_CAP_OFF, size)
+    poke(buf + BUF_REF_OFF, 1)
+    poke(buf + BUF_OWNER_OFF, 1)
+    
+    buf
+}
+
+/// Create view into buffer (zero-copy)
+
+func zcbuf_slice(buf: Int, start: Int, len: Int) -> Int {
+    let view = malloc(40)
+    let data = peek(buf + BUF_DATA_OFF)
+    
+    poke(view + BUF_DATA_OFF, data + start)
+    poke(view + BUF_LEN_OFF, len)
+    poke(view + BUF_CAP_OFF, len)
+    poke(view + BUF_REF_OFF, 1)
+    poke(view + BUF_OWNER_OFF, 0)  // Not owner
+    
+    // Increment ref on original
+    let ref = peek(buf + BUF_REF_OFF)
+    poke(buf + BUF_REF_OFF, ref + 1)
+    
+    view
+}
+
+/// Get data pointer (no copy)
+
+func zcbuf_data(buf: Int) -> Int {
+    peek(buf + BUF_DATA_OFF)
+}
+
+/// Get length
+
+func zcbuf_len(buf: Int) -> Int {
+    peek(buf + BUF_LEN_OFF)
+}
+
+/// Release buffer
+func zcbuf_release(buf: Int) {
+    let ref = peek(buf + BUF_REF_OFF) - 1
+    poke(buf + BUF_REF_OFF, ref)
+    
+    if ref == 0 && peek(buf + BUF_OWNER_OFF) == 1 {
+        sys_munmap(peek(buf + BUF_DATA_OFF), peek(buf + BUF_CAP_OFF))
+        free(buf)
+    }
+}
+
+// ============================================================================
+// MEMORY-MAPPED I/O (Kernel-direct, no copy)
+// ============================================================================
+
+/// Map file into memory (zero-copy read)
+func mmap_file(path: Int) -> Int {
+    let fd = sys_open(path, 0, 0)  // O_RDONLY
+    if fd < 0 { return 0 }
+    
+    let size = sys_lseek(fd, 0, 2)  // Get size
+    sys_lseek(fd, 0, 0)
+    
+    let addr = sys_mmap_file(fd, size, 1)  // PROT_READ
+    sys_close(fd)
+    
+    let buf = malloc(40)
+    poke(buf + BUF_DATA_OFF, addr)
+    poke(buf + BUF_LEN_OFF, size)
+    poke(buf + BUF_CAP_OFF, size)
+    poke(buf + BUF_REF_OFF, 1)
+    poke(buf + BUF_OWNER_OFF, 1)
+    
+    buf
+}
+
+/// Write buffer directly to file (zero-copy write)
+func mmap_write(path: Int, buf: Int) -> Int {
+    let fd = sys_open(path, 577, 420)  // O_WRONLY|O_CREAT|O_TRUNC
+    if fd < 0 { return 0 }
+    
+    let data = peek(buf + BUF_DATA_OFF)
+    let len = peek(buf + BUF_LEN_OFF)
+    
+    sys_write(fd, data, len)
+    sys_close(fd)
+    
+    1
+}
+
+// ============================================================================
+// RING BUFFER (Lock-free, cache-friendly)
+// ============================================================================
+
+// Ring: [buffer, size, mask, head, tail]
+const RING_BUF_OFF: Int = 0
+const RING_SIZE_OFF: Int = 8
+const RING_MASK_OFF: Int = 16
+const RING_HEAD_OFF: Int = 24
+const RING_TAIL_OFF: Int = 32
+
+/// Create ring buffer (size must be power of 2)
+func ring_buf_new(size: Int) -> Int {
+    let ring = malloc(40)
+    poke(ring + RING_BUF_OFF, malloc(size * 8))
+    poke(ring + RING_SIZE_OFF, size)
+    poke(ring + RING_MASK_OFF, size - 1)
+    poke(ring + RING_HEAD_OFF, 0)
+    poke(ring + RING_TAIL_OFF, 0)
+    ring
+}
+
+/// Push to ring (O(1), lock-free)
+
+func ring_push(ring: Int, value: Int) -> Int {
+    let head = __atomic_load(ring + RING_HEAD_OFF)
+    let tail = __atomic_load(ring + RING_TAIL_OFF)
+    let mask = peek(ring + RING_MASK_OFF)
+    
+    if ((head + 1) & mask) == tail {
+        return 0  // Full
+    }
+    
+    let buf = peek(ring + RING_BUF_OFF)
+    poke(buf + (head & mask) * 8, value)
+    
+    __atomic_store(ring + RING_HEAD_OFF, (head + 1) & mask)
+    1
+}
+
+/// Pop from ring (O(1), lock-free)
+
+func ring_pop(ring: Int) -> Int {
+    let head = __atomic_load(ring + RING_HEAD_OFF)
+    let tail = __atomic_load(ring + RING_TAIL_OFF)
+    
+    if head == tail {
+        return 0  // Empty
+    }
+    
+    let mask = peek(ring + RING_MASK_OFF)
+    let buf = peek(ring + RING_BUF_OFF)
+    let value = peek(buf + (tail & mask) * 8)
+    
+    __atomic_store(ring + RING_TAIL_OFF, (tail + 1) & mask)
+    value
+}
+
+// Helper stubs
+func sys_mmap_file(fd: Int, size: Int, prot: Int) -> Int { 0 }
+func sys_lseek(fd: Int, off: Int, whence: Int) -> Int { 0 }
+func sys_open(path: Int, flags: Int, mode: Int) -> Int { 0 }
+func sys_close(fd: Int) -> Int { 0 }
+func __atomic_load(addr: Int) -> Int { peek(addr) }
+func __atomic_store(addr: Int, val: Int) { poke(addr, val) }

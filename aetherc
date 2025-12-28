@@ -1,0 +1,37 @@
+#!/bin/bash
+# Aether Compiler - Universal Wrapper
+# Works on: macOS ARM64, macOS x86_64, Linux ARM64, Linux x86_64
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+AETHER_HOME="${SCRIPT_DIR}"
+
+# Detect platform
+OS="$(uname -s)"
+ARCH="$(uname -m)"
+
+echo "Aether Compiler v1.0.0"
+echo "Platform: ${OS} ${ARCH}"
+echo ""
+
+# Select correct binary
+if [ "$OS" = "Darwin" ]; then
+    if [ "$ARCH" = "arm64" ]; then
+        COMPILER="${AETHER_HOME}/bootstrap/aetherc_native"
+    else
+        COMPILER="${AETHER_HOME}/bootstrap/aetherc"
+    fi
+elif [ "$OS" = "Linux" ]; then
+    COMPILER="${AETHER_HOME}/bootstrap/aetherc"
+else
+    echo "Error: Unsupported platform: ${OS}"
+    exit 1
+fi
+
+if [ ! -f "$COMPILER" ]; then
+    echo "Error: Compiler not found: $COMPILER"
+    exit 1
+fi
+
+# Run compiler
+exec "$COMPILER" "$@"
+

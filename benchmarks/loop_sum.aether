@@ -1,0 +1,14 @@
+func loop_sum(n: Int) -> Int {
+    let sum = 0
+    let i = 0
+    while i < n {
+        sum = sum + i
+        i = i + 1
+    }
+    return sum
+}
+
+func main() -> Int {
+    let res = loop_sum(100000000)
+    return res
+}

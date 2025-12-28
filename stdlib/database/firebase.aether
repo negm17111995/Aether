@@ -1,0 +1,258 @@
+//! ═══════════════════════════════════════════════════════════════════════════════
+//! AETHER FIREBASE - READ, WRITE, AMEND DATA
+//! ═══════════════════════════════════════════════════════════════════════════════
+//! Full Firebase DataConnect support
+//! - Realtime Database
+//! - Firestore
+//! - Authentication
+
+import std.runtime.http
+import std.runtime.json
+
+// ============================================================================
+// FIREBASE CONNECTION
+// ============================================================================
+
+/// Firebase configuration
+struct FirebaseConfig {
+    project_id: Int,      // String pointer
+    api_key: Int,
+    auth_domain: Int,
+    database_url: Int
+}
+
+/// Initialize Firebase
+func firebase_init(config: Int) -> Int {
+    let fb = malloc(40)
+    poke(fb, config)
+    poke(fb + 8, 0)   // auth token
+    poke(fb + 16, 0)  // user id
+    fb
+}
+
+// ============================================================================
+// FIRESTORE OPERATIONS
+// ============================================================================
+
+/// Read document from Firestore
+/// collection: "users"
+/// doc_id: "user123"
+/// Returns: JSON document
+func firestore_read(fb: Int, collection: Int, doc_id: Int) -> Int {
+    let config = peek(fb)
+    let project = peek(config)
+    let token = peek(fb + 8)
+    
+    // Build URL: https://firestore.googleapis.com/v1/projects/{project}/databases/(default)/documents/{collection}/{doc}
+    let url = str_concat7(
+        "https://firestore.googleapis.com/v1/projects/",
+        project, "/databases/(default)/documents/",
+        collection, "/", doc_id, "")
+    
+    let response = http_get(url, [
+        header("Authorization", str_concat("Bearer ", token))
+    ])
+    
+    if response.status == 200 {
+        return parse_json(response.body)
+    }
+    0  // Error
+}
+
+/// Write document to Firestore
+func firestore_write(fb: Int, collection: Int, doc_id: Int, data: Int) -> Int {
+    let config = peek(fb)
+    let project = peek(config)
+    let token = peek(fb + 8)
+    
+    let url = str_concat7(
+        "https://firestore.googleapis.com/v1/projects/",
+        project, "/databases/(default)/documents/",
+        collection, "/", doc_id, "")
+    
+    let body = firestore_encode(data)
+    
+    let response = http_patch(url, body, [
+        header("Authorization", str_concat("Bearer ", token)),
+        header("Content-Type", "application/json")
+    ])
+    
+    response.status == 200
+}
+
+/// Update specific fields in document
+func firestore_update(fb: Int, collection: Int, doc_id: Int, fields: Int) -> Int {
+    let config = peek(fb)
+    let project = peek(config)
+    let token = peek(fb + 8)
+    
+    // Build field mask from updates
+    let field_names = get_field_names(fields)
+    let mask = str_join(field_names, ",")
+    
+    let url = str_concat9(
+        "https://firestore.googleapis.com/v1/projects/",
+        project, "/databases/(default)/documents/",
+        collection, "/", doc_id,
+        "?updateMask.fieldPaths=", mask, "")
+    
+    let body = firestore_encode(fields)
+    
+    let response = http_patch(url, body, [
+        header("Authorization", str_concat("Bearer ", token)),
+        header("Content-Type", "application/json")
+    ])
+    
+    response.status == 200
+}
+
+/// Delete document
+func firestore_delete(fb: Int, collection: Int, doc_id: Int) -> Int {
+    let config = peek(fb)
+    let project = peek(config)
+    let token = peek(fb + 8)
+    
+    let url = str_concat7(
+        "https://firestore.googleapis.com/v1/projects/",
+        project, "/databases/(default)/documents/",
+        collection, "/", doc_id, "")
+    
+    let response = http_delete(url, [
+        header("Authorization", str_concat("Bearer ", token))
+    ])
+    
+    response.status == 200
+}
+
+/// Query collection with filters
+func firestore_query(fb: Int, collection: Int, filters: Int) -> Int {
+    let config = peek(fb)
+    let project = peek(config)
+    let token = peek(fb + 8)
+    
+    let url = str_concat5(
+        "https://firestore.googleapis.com/v1/projects/",
+        project, "/databases/(default)/documents:runQuery", "", "")
+    
+    let query = build_query(collection, filters)
+    
+    let response = http_post(url, query, [
+        header("Authorization", str_concat("Bearer ", token)),
+        header("Content-Type", "application/json")
+    ])
+    
+    if response.status == 200 {
+        return parse_query_results(response.body)
+    }
+    vec_new()  // Empty results on error
+}
+
+// ============================================================================
+// REALTIME DATABASE
+// ============================================================================
+
+/// Read from Realtime Database
+func rtdb_read(fb: Int, path: Int) -> Int {
+    let config = peek(fb)
+    let db_url = peek(config + 24)
+    let token = peek(fb + 8)
+    
+    let url = str_concat4(db_url, "/", path, ".json?auth=", token)
+    
+    let response = http_get(url, [])
+    
+    if response.status == 200 {
+        return parse_json(response.body)
+    }
+    0
+}
+
+/// Write to Realtime Database
+func rtdb_write(fb: Int, path: Int, data: Int) -> Int {
+    let config = peek(fb)
+    let db_url = peek(config + 24)
+    let token = peek(fb + 8)
+    
+    let url = str_concat4(db_url, "/", path, ".json?auth=", token)
+    let body = json_stringify(data)
+    
+    let response = http_put(url, body, [
+        header("Content-Type", "application/json")
+    ])
+    
+    response.status == 200
+}
+
+/// Update specific fields in Realtime Database
+func rtdb_update(fb: Int, path: Int, updates: Int) -> Int {
+    let config = peek(fb)
+    let db_url = peek(config + 24)
+    let token = peek(fb + 8)
+    
+    let url = str_concat4(db_url, "/", path, ".json?auth=", token)
+    let body = json_stringify(updates)
+    
+    let response = http_patch(url, body, [
+        header("Content-Type", "application/json")
+    ])
+    
+    response.status == 200
+}
+
+// ============================================================================
+// FIREBASE AUTH
+// ============================================================================
+
+/// Sign in with email and password
+func firebase_signin(fb: Int, email: Int, password: Int) -> Int {
+    let config = peek(fb)
+    let api_key = peek(config + 8)
+    
+    let url = str_concat(
+        "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=",
+        api_key)
+    
+    let body = json_stringify(json_obj([
+        json_field("email", email),
+        json_field("password", password),
+        json_field("returnSecureToken", 1)
+    ]))
+    
+    let response = http_post(url, body, [
+        header("Content-Type", "application/json")
+    ])
+    
+    if response.status == 200 {
+        let data = parse_json(response.body)
+        let token = json_get(data, "idToken")
+        let uid = json_get(data, "localId")
+        poke(fb + 8, token)
+        poke(fb + 16, uid)
+        return 1
+    }
+    0
+}
+
+// ============================================================================
+// HELPERS
+// ============================================================================
+
+func firestore_encode(data: Int) -> Int {
+    // Convert Aether data to Firestore format
+    json_stringify(data)
+}
+
+func build_query(collection: Int, filters: Int) -> Int {
+    // Build Firestore structured query
+    json_stringify(filters)
+}
+
+func parse_query_results(body: Int) -> Int {
+    // Parse Firestore query response
+    parse_json(body)
+}
+
+func get_field_names(obj: Int) -> Int {
+    // Extract field names from object
+    vec_new()
+}

@@ -1,0 +1,107 @@
+// ═══════════════════════════════════════════════════════════════════════════════
+// AETHER PURE ENTRY POINT - macOS ARM64
+// ═══════════════════════════════════════════════════════════════════════════════
+// 100% Pure Aether - generates equivalent assembly through native codegen
+// No external assembly files required
+
+// ============================================================================
+// ENTRY POINT
+// ============================================================================
+
+// The _main function is called by the OS with:
+//   x0 = argc (argument count)
+//   x1 = argv (argument vector pointer)
+//   x2 = envp (environment pointer)
+
+func main() -> Int {
+    // Call user's main function
+    let result = aether_user_main()
+    
+    // Exit with result code
+    __syscall1(1, result)  // SYS_exit = 1
+    
+    0
+}
+
+// Placeholder for user's main - will be replaced by linker
+func aether_user_main() -> Int {
+    0
+}
+
+// ============================================================================
+// SYSCALL INTRINSICS (Pure Aether with builtin code generation)
+// ============================================================================
+
+// These functions compile to inline syscall instructions
+// The compiler generates: mov x16, num; svc #0x80; ret
+
+func __syscall1(num: Int, arg1: Int) -> Int {
+    __builtin_syscall1(num, arg1)
+}
+
+func __syscall2(num: Int, arg1: Int, arg2: Int) -> Int {
+    __builtin_syscall2(num, arg1, arg2)
+}
+
+func __syscall3(num: Int, arg1: Int, arg2: Int, arg3: Int) -> Int {
+    __builtin_syscall3(num, arg1, arg2, arg3)
+}
+
+func __syscall6(num: Int, a1: Int, a2: Int, a3: Int, a4: Int, a5: Int, a6: Int) -> Int {
+    __builtin_syscall6(num, a1, a2, a3, a4, a5, a6)
+}
+
+// ============================================================================
+// MEMORY INTRINSICS (Pure Aether)
+// ============================================================================
+
+// Store byte at address
+func __store8(addr: Int, val: Int) {
+    __builtin_store8(addr, val)
+}
+
+// Load byte from address
+func __load8(addr: Int) -> Int {
+    __builtin_load8(addr)
+}
+
+// Store 64-bit value at address
+func __store64(addr: Int, val: Int) {
+    __builtin_store64(addr, val)
+}
+
+// Load 64-bit value from address
+func __load64(addr: Int) -> Int {
+    __builtin_load64(addr)
+}
+
+// ============================================================================
+// MEMORY ALLOCATION (Pure Aether using mmap)
+// ============================================================================
+
+// macOS syscall numbers
+const SYS_EXIT: Int = 1
+const SYS_WRITE: Int = 4
+const SYS_MMAP: Int = 197
+
+// Allocate memory using mmap syscall
+func __malloc(size: Int) -> Int {
+    // mmap(NULL, size, PROT_READ|PROT_WRITE, MAP_ANON|MAP_PRIVATE, -1, 0)
+    // PROT_READ|PROT_WRITE = 3
+    // MAP_ANON|MAP_PRIVATE = 0x1002
+    __syscall6(SYS_MMAP, 0, size, 3, 4098, 0 - 1, 0)
+}
+
+// Print to stdout (for debugging)
+func __print(msg: Int, len: Int) {
+    __syscall3(SYS_WRITE, 1, msg, len)
+}
+
+// Exit program
+func __exit(code: Int) {
+    __syscall1(SYS_EXIT, code)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 100% PURE AETHER - NO ASSEMBLY FILES REQUIRED
+// ═══════════════════════════════════════════════════════════════════════════════

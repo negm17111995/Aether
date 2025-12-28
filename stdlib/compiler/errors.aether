@@ -1,0 +1,187 @@
+//! ═══════════════════════════════════════════════════════════════════════════════
+//! AETHER ERROR MESSAGES - BEAUTIFUL, HELPFUL DIAGNOSTICS
+//! ═══════════════════════════════════════════════════════════════════════════════
+//! Errors tell you:
+//! 1. WHAT went wrong
+//! 2. WHERE it happened (file:line:column)
+//! 3. WHY it's wrong
+//! 4. HOW to fix it
+
+import std.runtime.str
+
+// ============================================================================
+// ERROR MESSAGE TEMPLATES
+// ============================================================================
+
+/// Generate beautiful error message with code snippet
+func format_error(file: Int, line: Int, col: Int, source: Int, 
+                  error_msg: Int, suggestion: Int) -> Int {
+    // Example output:
+    //
+    // error[E0001]: Type mismatch
+    //   --> src/main.aether:15:10
+    //    |
+    // 15 |     let count: Int = "hello"
+    //    |                      ^^^^^^^ expected `Int`, found `String`
+    //    |
+    //    = help: Use `parse_int("hello")` to convert String to Int
+    //
+    
+    let output = vec_new8()
+    
+    // Error header (red)
+    append_str(output, "\x1b[31merror\x1b[0m: ")
+    append_str(output, error_msg)
+    append_str(output, "\n")
+    
+    // Location
+    append_str(output, "  \x1b[34m-->\x1b[0m ")
+    append_str(output, file)
+    append_str(output, ":")
+    append_int(output, line)
+    append_str(output, ":")
+    append_int(output, col)
+    append_str(output, "\n")
+    
+    // Separator
+    append_str(output, "   \x1b[34m|\x1b[0m\n")
+    
+    // Line number and source
+    append_int_padded(output, line, 3)
+    append_str(output, " \x1b[34m|\x1b[0m ")
+    append_line(output, source, line)
+    append_str(output, "\n")
+    
+    // Pointer to error
+    append_str(output, "   \x1b[34m|\x1b[0m ")
+    append_spaces(output, col - 1)
+    append_str(output, "\x1b[31m^^^^\x1b[0m")
+    append_str(output, "\n")
+    
+    // Suggestion (cyan)
+    if suggestion != 0 {
+        append_str(output, "   \x1b[34m|\x1b[0m\n")
+        append_str(output, "   \x1b[34m= \x1b[36mhelp\x1b[0m: ")
+        append_str(output, suggestion)
+        append_str(output, "\n")
+    }
+    
+    append_str(output, "\n")
+    
+    output
+}
+
+// ============================================================================
+// COMMON ERROR MESSAGES WITH FIXES
+// ============================================================================
+
+func err_undefined_variable(name: Int) -> Int {
+    __str_concat("Undefined variable: `", name, "`")
+}
+
+func fix_undefined_variable(name: Int, similar: Int) -> Int {
+    if similar != 0 {
+        __str_concat("Did you mean `", similar, "`?")
+    } else {
+        __static_str("Declare the variable with `let` before using it")
+    }
+}
+
+func err_type_mismatch(expected: Int, actual: Int) -> Int {
+    __str_concat4("Type mismatch: expected `", expected, "`, found `", actual, "`")
+}
+
+func fix_type_mismatch(expected: Int, actual: Int) -> Int {
+    if str_eq(expected, "Int") && str_eq(actual, "String") {
+        return __static_str("Use `parse_int(value)` to convert String to Int")
+    }
+    if str_eq(expected, "String") && str_eq(actual, "Int") {
+        return __static_str("Use `str(value)` to convert Int to String")
+    }
+    if str_eq(expected, "Bool") && str_eq(actual, "Int") {
+        return __static_str("Use `value != 0` to convert Int to Bool")
+    }
+    __static_str("Check your types")
+}
+
+func err_null_deref() -> Int {
+    __static_str("Possible null pointer dereference")
+}
+
+func fix_null_deref(name: Int) -> Int {
+    __str_concat("Add null check: `if ", name, " != null { ... }`")
+}
+
+func err_bounds_overflow(index: Int, size: Int) -> Int {
+    __str_concat4("Array index ", int_to_str(index), 
+        " out of bounds (array size: ", int_to_str(size), ")")
+}
+
+func fix_bounds_overflow() -> Int {
+    __static_str("Check `index < len(array)` before accessing")
+}
+
+func err_missing_return(func_name: Int) -> Int {
+    __str_concat("Function `", func_name, "` must return a value")
+}
+
+func fix_missing_return() -> Int {
+    __static_str("Add a return statement at the end of the function")
+}
+
+func err_unused_variable(name: Int) -> Int {
+    __str_concat("Unused variable: `", name, "`")
+}
+
+func fix_unused_variable(name: Int) -> Int {
+    __str_concat("Remove unused variable or prefix with `_`: `_", name, "`")
+}
+
+func err_unreachable_code() -> Int {
+    __static_str("Unreachable code")
+}
+
+func fix_unreachable_code() -> Int {
+    __static_str("Remove this code or check your logic")
+}
+
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+
+func append_str(v: Int, s: Int) {
+    let len = str_len(s)
+    let i = 0
+    while i < len {
+        vec_push8(v, peek8(s + i))
+        i = i + 1
+    }
+}
+
+func append_int(v: Int, n: Int) {
+    let s = int_to_str(n)
+    append_str(v, s)
+}
+
+func append_int_padded(v: Int, n: Int, width: Int) {
+    let s = int_to_str(n)
+    let len = str_len(s)
+    let padding = width - len
+    while padding > 0 {
+        vec_push8(v, 32)  // space
+        padding = padding - 1
+    }
+    append_str(v, s)
+}
+
+func append_spaces(v: Int, count: Int) {
+    while count > 0 {
+        vec_push8(v, 32)
+        count = count - 1
+    }
+}
+
+func append_line(v: Int, source: Int, line_num: Int) {
+    // Find line in source and append it
+    // Implementation would walk source to find line
+}

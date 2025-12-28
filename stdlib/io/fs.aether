@@ -1,0 +1,188 @@
+//! ═══════════════════════════════════════════════════════════════════════════════
+//! AETHER FILE SYSTEM - READ, WRITE, WATCH FILES
+//! ═══════════════════════════════════════════════════════════════════════════════
+
+import std.runtime.syscall
+import std.runtime.vec
+
+// ============================================================================
+// FILE OPERATIONS
+// ============================================================================
+
+/// Read entire file to string
+func read_file(path: Int) -> Int {
+    let fd = sys_open(path, 0, 0)  // O_RDONLY
+    if fd < 0 { return 0 }
+    
+    let size = sys_lseek(fd, 0, 2)  // SEEK_END
+    sys_lseek(fd, 0, 0)  // SEEK_SET
+    
+    let buf = malloc(size + 1)
+    sys_read(fd, buf, size)
+    poke8(buf + size, 0)  // null terminate
+    sys_close(fd)
+    
+    buf
+}
+
+/// Read file as bytes
+func read_bytes(path: Int) -> Int {
+    let fd = sys_open(path, 0, 0)
+    if fd < 0 { return 0 }
+    
+    let size = sys_lseek(fd, 0, 2)
+    sys_lseek(fd, 0, 0)
+    
+    let buf = malloc(size)
+    sys_read(fd, buf, size)
+    sys_close(fd)
+    
+    let result = malloc(16)
+    poke(result, buf)
+    poke(result + 8, size)
+    result
+}
+
+/// Write string to file
+func write_file(path: Int, content: Int) -> Int {
+    let fd = sys_open(path, 577, 420)  // O_WRONLY|O_CREAT|O_TRUNC, 0644
+    if fd < 0 { return 0 }
+    
+    let len = str_len(content)
+    sys_write(fd, content, len)
+    sys_close(fd)
+    1
+}
+
+/// Write bytes to file
+func write_bytes(path: Int, data: Int, len: Int) -> Int {
+    let fd = sys_open(path, 577, 420)
+    if fd < 0 { return 0 }
+    
+    sys_write(fd, data, len)
+    sys_close(fd)
+    1
+}
+
+/// Append to file
+func append_file(path: Int, content: Int) -> Int {
+    let fd = sys_open(path, 1089, 420)  // O_WRONLY|O_CREAT|O_APPEND
+    if fd < 0 { return 0 }
+    
+    let len = str_len(content)
+    sys_write(fd, content, len)
+    sys_close(fd)
+    1
+}
+
+/// Check if file exists
+func exists(path: Int) -> Int {
+    sys_access(path, 0) == 0
+}
+
+/// Delete file
+func delete(path: Int) -> Int {
+    sys_unlink(path) == 0
+}
+
+/// Rename/move file
+func rename(old_path: Int, new_path: Int) -> Int {
+    sys_rename(old_path, new_path) == 0
+}
+
+/// Copy file
+func copy(src: Int, dst: Int) -> Int {
+    let data = read_bytes(src)
+    if data == 0 { return 0 }
+    write_bytes(dst, peek(data), peek(data + 8))
+}
+
+// ============================================================================
+// DIRECTORY OPERATIONS
+// ============================================================================
+
+/// Create directory
+func mkdir(path: Int) -> Int {
+    sys_mkdir(path, 493) == 0  // 0755
+}
+
+/// Create directory with parents
+func mkdir_p(path: Int) -> Int {
+    // TODO: Create parent directories
+    mkdir(path)
+}
+
+/// Remove directory (must be empty)
+func rmdir(path: Int) -> Int {
+    sys_rmdir(path) == 0
+}
+
+/// List directory contents
+func readdir(path: Int) -> Int {
+    let entries = vec_new()
+    __readdir(path, entries)
+    entries
+}
+
+/// Walk directory tree
+func walk(path: Int, callback: Int) {
+    let entries = readdir(path)
+    let i = 0
+    while i < vec_len(entries) {
+        let entry = vec_get(entries, i)
+        __call(callback, entry)
+        
+        if is_dir(entry) {
+            walk(entry, callback)
+        }
+        i = i + 1
+    }
+}
+
+// ============================================================================
+// FILE INFO
+// ============================================================================
+
+/// Get file size
+func file_size(path: Int) -> Int {
+    let stat = malloc(128)
+    if sys_stat(path, stat) < 0 { return -1 }
+    peek(stat + 48)  // st_size offset
+}
+
+/// Check if path is directory
+func is_dir(path: Int) -> Int {
+    let stat = malloc(128)
+    if sys_stat(path, stat) < 0 { return 0 }
+    let mode = peek(stat + 4)  // st_mode offset
+    (mode & 0x4000) != 0
+}
+
+/// Check if path is file
+func is_file(path: Int) -> Int {
+    let stat = malloc(128)
+    if sys_stat(path, stat) < 0 { return 0 }
+    let mode = peek(stat + 4)
+    (mode & 0x8000) != 0
+}
+
+/// Get file modification time
+func mtime(path: Int) -> Int {
+    let stat = malloc(128)
+    if sys_stat(path, stat) < 0 { return -1 }
+    peek(stat + 72)  // st_mtime offset
+}
+
+// ============================================================================
+// TEMPORARY FILES
+// ============================================================================
+
+/// Create temporary file
+func temp_file() -> Int {
+    __mktemp("/tmp/aether_XXXXXX")
+}
+
+/// Create temporary directory
+func temp_dir() -> Int {
+    __mkdtemp("/tmp/aether_XXXXXX")
+}

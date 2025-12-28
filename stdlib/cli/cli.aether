@@ -1,0 +1,750 @@
+//! ═══════════════════════════════════════════════════════════════════════════════
+//! AETHER CLI - One Command to Deploy Anywhere
+//! ═══════════════════════════════════════════════════════════════════════════════
+//! Build | Run | Deploy | Debug - All in one place
+//! "From code to production in seconds."
+
+import std.core
+import std.io
+import std.native.codegen_native
+import std.native.arm64
+import std.native.x86_64
+import std.native.macho
+import std.native.elf
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CLI COMMANDS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+pub func main(args: [String]) {
+    if len(args) < 2 {
+        print_help()
+        return
+    }
+    
+    let command = &args[1]
+    let rest = args[2..]
+    
+    match command.as_str() {
+        "new" => cmd_new(&rest),
+        "run" => cmd_run(&rest),
+        "build" => cmd_build(&rest),
+        "deploy" => cmd_deploy(&rest),
+        "test" => cmd_test(&rest),
+        "debug" => cmd_debug(&rest),
+        "check" => cmd_check(&rest),
+        "fmt" => cmd_fmt(&rest),
+        "doc" => cmd_doc(&rest),
+        "clean" => cmd_clean(&rest),
+        "help" | "--help" | "-h" => print_help(),
+        "version" | "--version" | "-v" => print_version(),
+        _ => {
+            println(f"❌ Unknown command: {command}")
+            print_help()
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// NEW - Create Project
+// ═══════════════════════════════════════════════════════════════════════════════
+
+func cmd_new(args: &[String]) {
+    if len(args) < 1 {
+        println("❌ Usage: aetherc new <project-name>")
+        return
+    }
+    
+    let name = &args[0]
+    
+    println(f"🎉 Creating new Aether project: {name}")
+    println("")
+    
+    // Create directories
+    create_dir(name)?
+    create_dir(f"{name}/src")?
+    create_dir(f"{name}/public")?
+    create_dir(f"{name}/tests")?
+    
+    // Create main.aether
+    write_file(f"{name}/src/main.aether", f"
+//! {name} - Built with Aether
+//! Run: aetherc run
+
+import web::*
+import ui::*
+
+func main() {{
+    println(\"🚀 {name} is running!\")
+    
+    AetherApp::new(\"{name}\")
+        .port(8080)
+        .get(\"/\", home_page)
+        .get(\"/api/health\", health_check)
+        .run()
+}}
+
+func home_page(_req: Request) -> Response {{
+    Response::html(document(\"{name}\",
+        div()
+            .style(Style::new()
+                .h_screen().flex().items_center().justify_center()
+                .gradient(\"#0f0f10\", \"#1a1a2e\"))
+            .child(
+                Card().glass().child(
+                    h1().style(Style::new()
+                        .text_5xl().font_bold()
+                        .gradient(\"#6366f1\", \"#a855f7\"))
+                        .text(\"Welcome to {name}!\")
+                        .build()
+                ).child(
+                    p().style(Style::new().color(\"#a1a1aa\").mt(\"1rem\"))
+                        .text(\"Built with Aether ⚡\")
+                        .build()
+                ).child(
+                    Button(\"Get Started\").primary().large().build()
+                ).build()
+            )
+            .build()
+    ))
+}}
+
+func health_check(_req: Request) -> Response {{
+    Response::json(json!({{ \"status\": \"ok\", \"version\": \"1.0.0\" }}))
+}}
+")
+    
+    // Create aether.toml (project config)
+    write_file(f"{name}/aether.toml", f"
+[project]
+name = \"{name}\"
+version = \"0.1.0\"
+authors = []
+
+[build]
+target = \"native\"      # native | wasm | both
+optimization = \"release\" # debug | release
+
+[deploy]
+platform = \"auto\"      # auto | firebase | cloudrun | aws
+region = \"us-central1\"
+
+[dependencies]
+# Add dependencies here
+")
+    
+    // Create .gitignore
+    write_file(f"{name}/.gitignore", "
+/target
+/build
+*.o
+.DS_Store
+.env
+")
+    
+    // Create README
+    write_file(f"{name}/README.md", f"
+# {name}
+
+Built with [Aether](https://aether-lang.dev) ⚡
+
+## Quick Start
+
+```bash
+# Run locally
+aetherc run
+
+# Build for production
+aetherc build --release
+
+# Deploy
+aetherc deploy
+```
+
+## Project Structure
+
+```
+{name}/
+├── src/
+│   └── main.aether     # Entry point
+├── public/             # Static files
+├── tests/              # Test files
+└── aether.toml         # Project config
+```
+")
+    
+    println("✅ Project created!")
+    println("")
+    println("   Next steps:")
+    println(f"   cd {name}")
+    println("   aetherc run")
+    println("")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// RUN - Compile and Execute
+// ═══════════════════════════════════════════════════════════════════════════════
+
+func cmd_run(args: &[String]) {
+    let file = if len(args) > 0 { &args[0] } else { "src/main.aether" }
+    
+    println(f"🔄 Compiling {file}...")
+    
+    let start = now()
+    
+    // Compile to native
+    match compile_native(file, "debug") {
+        binary_path => {
+            let compile_time = now() - start
+            println(f"✅ Compiled in {compile_time}ms")
+            println("")
+            
+            // Run the binary
+            println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            run_binary(binary_path)
+        },
+        0 => {
+            println("❌ Compilation failed:")
+            for err in errors {
+                print_error(&err)
+            }
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BUILD - Compile for Production
+// ═══════════════════════════════════════════════════════════════════════════════
+
+func cmd_build(args: &[String]) {
+    let mut target = "native"
+    let mut opt_level = "release"
+    let mut output = 0
+    
+    // Parse args
+    let i = 0
+    while i < len(args) {
+        match args[i].as_str() {
+            "--target" | "-t" => {
+                i += 1
+                if i < len(args) { target = &args[i] }
+            },
+            "--debug" => opt_level = "debug",
+            "--release" => opt_level = "release",
+            "-o" | "--output" => {
+                i += 1
+                if i < len(args) { output = args[i].clone() }
+            },
+            _ => {}
+        }
+        i += 1
+    }
+    
+    println(f"🔨 Building for {target} ({opt_level})...")
+    
+    let start = now()
+    
+    match target {
+        "native" => {
+            let os = detect_os()
+            let arch = detect_arch()
+            println(f"   Target: {os}-{arch}")
+            
+            match compile_native("src/main.aether", opt_level) {
+                path => {
+                    let time = now() - start
+                    let size = file_size(&path)
+                    println(f"✅ Built in {time}ms")
+                    println(f"📦 Output: {path} ({format_size(size)})")
+                },
+                0 => print_errors(e)
+            }
+        },
+        "wasm" => {
+            println("   Target: WebAssembly")
+            
+            match compile_wasm("src/main.aether", opt_level) {
+                path => {
+                    let time = now() - start
+                    let size = file_size(&path)
+                    println(f"✅ Built in {time}ms")
+                    println(f"📦 Output: {path} ({format_size(size)})")
+                },
+                0 => print_errors(e)
+            }
+        },
+        "both" => {
+            cmd_build(&["--target", "native"])
+            cmd_build(&["--target", "wasm"])
+        },
+        _ => println(f"❌ Unknown target: {target}")
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DEPLOY - One Command Deploy
+// ═══════════════════════════════════════════════════════════════════════════════
+
+func cmd_deploy(args: &[String]) {
+    let mut platform = "auto"
+    
+    // Parse args
+    for i in 0..len(args) {
+        match args[i].as_str() {
+            "--firebase" => platform = "firebase",
+            "--cloudrun" | "--gcp" => platform = "cloudrun",
+            "--aws" | "--lambda" => platform = "lambda",
+            "--vercel" => platform = "vercel",
+            "--fly" => platform = "fly",
+            _ => {}
+        }
+    }
+    
+    // Auto-detect platform
+    if platform == "auto" {
+        platform = detect_deploy_platform()
+    }
+    
+    println(f"🚀 Deploying to {platform}...")
+    println("")
+    
+    match platform {
+        "firebase" => deploy_firebase(),
+        "cloudrun" => deploy_cloudrun(),
+        "lambda" => deploy_lambda(),
+        "vercel" => deploy_vercel(),
+        "fly" => deploy_fly(),
+        _ => println(f"❌ Unknown platform: {platform}")
+    }
+}
+
+func deploy_firebase() {
+    println("📦 Building for Firebase...")
+    
+    // Build native for Cloud Functions
+    compile_native("src/main.aether", "release")?
+    
+    // Generate firebase.json if not exists
+    if !file_exists("firebase.json") {
+        write_file("firebase.json", r#"{
+  "hosting": {
+    "public": "public",
+    "rewrites": [
+      { "source": "**", "function": "app" }
+    ]
+  },
+  "functions": {
+    "runtime": "provided"
+  }
+}"#)
+    }
+    
+    println("☁️ Deploying to Firebase...")
+    run_shell("firebase deploy")
+    
+    println("")
+    println("✅ Deployed successfully!")
+    println("🌐 URL: https://your-project.web.app")
+}
+
+func deploy_cloudrun() {
+    println("📦 Building Docker image...")
+    
+    // Build native ARM64 for Cloud Run
+    compile_native("src/main.aether", "release")?
+    
+    // Generate Dockerfile
+    write_file("Dockerfile", r#"
+FROM gcr.io/distroless/static:nonroot
+COPY target/release/app /app
+ENV PORT=8080
+ENTRYPOINT ["/app"]
+"#)
+    
+    println("☁️ Deploying to Cloud Run...")
+    let project = env_var("GOOGLE_CLOUD_PROJECT").unwrap_or("your-project")
+    run_shell(f"gcloud run deploy app --source . --project {project} --region us-central1 --allow-unauthenticated")
+    
+    println("")
+    println("✅ Deployed successfully!")
+}
+
+func deploy_lambda() {
+    println("📦 Building for Lambda...")
+    
+    // Build native ARM64 for Graviton
+    compile_native_target("src/main.aether", "release", "linux-arm64")?
+    
+    // Package
+    run_shell("zip -j function.zip target/release/bootstrap")
+    
+    println("☁️ Deploying to AWS Lambda...")
+    run_shell("aws lambda update-function-code --function-name app --zip-file fileb://function.zip")
+    
+    println("")
+    println("✅ Deployed successfully!")
+}
+
+func deploy_vercel() {
+    println("📦 Building WASM for Vercel Edge...")
+    compile_wasm("src/main.aether", "release")?
+    
+    println("☁️ Deploying to Vercel...")
+    run_shell("vercel deploy --prod")
+}
+
+func deploy_fly() {
+    println("📦 Building for Fly.io...")
+    compile_native("src/main.aether", "release")?
+    
+    // Generate fly.toml
+    if !file_exists("fly.toml") {
+        write_file("fly.toml", r#"
+app = "my-app"
+primary_region = "iad"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+"#)
+    }
+    
+    println("☁️ Deploying to Fly.io...")
+    run_shell("fly deploy")
+}
+
+func detect_deploy_platform() -> str {
+    if file_exists("firebase.json") { return "firebase" }
+    if file_exists("fly.toml") { return "fly" }
+    if file_exists("vercel.json") { return "vercel" }
+    if env_var("GOOGLE_CLOUD_PROJECT").is_some() { return "cloudrun" }
+    if env_var("AWS_REGION").is_some() { return "lambda" }
+    "firebase" // Default
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TEST - Run Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+func cmd_test(args: &[String]) {
+    let path = if len(args) > 0 { &args[0] } else { "tests/" }
+    
+    println(f"🧪 Running tests in {path}...")
+    println("")
+    
+    let test_files = find_files(path, "*.aether")
+    let passed = 0
+    let failed = 0
+    let start = now()
+    
+    for file in test_files {
+        print(f"  {file}... ")
+        match run_test_file(&file) {
+            _ => {
+                println("✅")
+                passed += 1
+            },
+            0 => {
+                println("❌")
+                println(f"    {e}")
+                failed += 1
+            }
+        }
+    }
+    
+    let time = now() - start
+    println("")
+    println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    println(f"Tests: {passed} passed, {failed} failed ({time}ms)")
+    
+    if failed > 0 {
+        exit(1)
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DEBUG - Interactive Debugger
+// ═══════════════════════════════════════════════════════════════════════════════
+
+func cmd_debug(args: &[String]) {
+    let file = if len(args) > 0 { &args[0] } else { "src/main.aether" }
+    
+    println("🔍 Aether Debugger")
+    println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    println("")
+    println(f"Loading: {file}")
+    println("")
+    println("Commands:")
+    println("  r, run      - Run program")
+    println("  b <line>    - Set breakpoint at line")
+    println("  n, next     - Step to next line")
+    println("  s, step     - Step into function")
+    println("  c, continue - Continue to next breakpoint")
+    println("  p <var>     - Print variable value")
+    println("  bt          - Print stack trace")
+    println("  q, quit     - Exit debugger")
+    println("")
+    
+    // Compile with debug info
+    let binary = compile_native_debug(file)?
+    
+    // Start debugger loop
+    let breakpoints: [Int] = []
+    let running = false
+    
+    loop {
+        print("(aether) ")
+        let input = read_line()
+        let parts = split(trim(input), " ")
+        
+        if len(parts) == 0 { continue }
+        
+        match parts[0].as_str() {
+            "r" | "run" => {
+                println("Running...")
+                run_binary_debug(binary, &breakpoints)
+            },
+            "b" | "break" => {
+                if len(parts) > 1 {
+                    let line = parse_int(&parts[1]).unwrap_or(0)
+                    push(breakpoints, line)
+                    println(f"Breakpoint set at line {line}")
+                }
+            },
+            "n" | "next" => debug_next(),
+            "s" | "step" => debug_step_into(),
+            "c" | "continue" => debug_continue(),
+            "p" | "print" => {
+                if len(parts) > 1 {
+                    debug_print_var(&parts[1])
+                }
+            },
+            "bt" | "backtrace" => debug_backtrace(),
+            "q" | "quit" | "exit" => {
+                println("Bye!")
+                return
+            },
+            _ => println(f"Unknown command: {parts[0]}")
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CHECK - Type Check Without Building
+// ═══════════════════════════════════════════════════════════════════════════════
+
+func cmd_check(args: &[String]) {
+    let path = if len(args) > 0 { &args[0] } else { "src/" }
+    
+    println(f"🔎 Checking {path}...")
+    
+    let start = now()
+    let files = find_files(path, "*.aether")
+    let errors: [CompileError] = []
+    
+    for file in files {
+        match check_file(&file) {
+            _ => {},
+            0 => {
+                for e in errs { push(errors, e) }
+            }
+        }
+    }
+    
+    let time = now() - start
+    
+    if len(errors) == 0 {
+        println(f"✅ No errors found ({len(files)} files checked in {time}ms)")
+    } else {
+        println(f"❌ Found {len(errors)} errors:")
+        println("")
+        for err in &errors {
+            print_error(err)
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FMT - Format Code
+// ═══════════════════════════════════════════════════════════════════════════════
+
+func cmd_fmt(args: &[String]) {
+    let path = if len(args) > 0 { &args[0] } else { "src/" }
+    
+    println(f"✨ Formatting {path}...")
+    
+    let files = find_files(path, "*.aether")
+    let formatted = 0
+    
+    for file in files {
+        if format_file(&file) {
+            formatted += 1
+            println(f"  {file}")
+        }
+    }
+    
+    println(f"✅ Formatted {formatted} files")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DOC - Generate Documentation
+// ═══════════════════════════════════════════════════════════════════════════════
+
+func cmd_doc(args: &[String]) {
+    println("📚 Generating documentation...")
+    
+    let files = find_files("src/", "*.aether")
+    
+    create_dir("docs")?
+    
+    for file in files {
+        generate_doc(&file, "docs/")
+    }
+    
+    println("✅ Documentation generated in docs/")
+    println("   Open docs/index.html to view")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CLEAN - Remove Build Artifacts
+// ═══════════════════════════════════════════════════════════════════════════════
+
+func cmd_clean(_args: &[String]) {
+    println("🧹 Cleaning build artifacts...")
+    
+    remove_dir("target")?
+    remove_dir("build")?
+    remove_file("*.o")?
+    
+    println("✅ Cleaned!")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// HELP
+// ═══════════════════════════════════════════════════════════════════════════════
+
+func print_help() {
+    println("
+╔═══════════════════════════════════════════════════════════════════╗
+║                                                                   ║
+║   ⚡ AETHER - The Final Programming Language                      ║
+║                                                                   ║
+╚═══════════════════════════════════════════════════════════════════╝
+
+USAGE:
+    aetherc <command> [options]
+
+COMMANDS:
+    new <name>      Create a new Aether project
+    run [file]      Compile and run (default: src/main.aether)
+    build           Build for production
+    deploy          Deploy to cloud (auto-detects platform)
+    test [path]     Run tests
+    debug [file]    Start interactive debugger
+    check [path]    Type-check without building
+    fmt [path]      Format source code
+    doc             Generate documentation
+    clean           Remove build artifacts
+
+BUILD OPTIONS:
+    --target <t>    native | wasm | both (default: native)
+    --release       Optimize for production (default)
+    --debug         Include debug information
+    -o <path>       Output path
+
+DEPLOY TARGETS:
+    --firebase      Deploy to Firebase Hosting + Functions
+    --cloudrun      Deploy to Google Cloud Run
+    --aws           Deploy to AWS Lambda
+    --vercel        Deploy to Vercel Edge
+    --fly           Deploy to Fly.io
+
+EXAMPLES:
+    aetherc new my-app          # Create project
+    aetherc run                 # Run locally
+    aetherc build --release     # Build for production
+    aetherc deploy --firebase   # Deploy to Firebase
+    aetherc test                # Run all tests
+    aetherc debug src/main.aether  # Debug with breakpoints
+")
+}
+
+func print_version() {
+    println("aetherc 1.0.0")
+    println("Target: native ARM64/x86_64 + WASM")
+    println("Copyright 2024 Aether Team")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ERROR DISPLAY
+// ═══════════════════════════════════════════════════════════════════════════════
+
+struct CompileError {
+    file: str,
+    line: Int,
+    column: Int,
+    message: str,
+    kind: ErrorKind,
+    suggestion: Int,
+}
+
+enum ErrorKind { Error, Warning, Hint }
+
+func print_error(err: &CompileError) {
+    let kind_str = match err.kind {
+        ErrorKind::Error => "error",
+        ErrorKind::Warning => "warning",
+        ErrorKind::Hint => "hint",
+    }
+    
+    let color = match err.kind {
+        ErrorKind::Error => "\x1b[31m",    // Red
+        ErrorKind::Warning => "\x1b[33m",  // Yellow
+        ErrorKind::Hint => "\x1b[36m",     // Cyan
+    }
+    let reset = "\x1b[0m"
+    
+    println(f"{color}{kind_str}{reset}: {err.message}")
+    println(f"  --> {err.file}:{err.line}:{err.column}")
+    
+    // Show source line
+    if let Some(line_content) = read_line_from_file(&err.file, err.line) {
+        println(f"   |")
+        println(f" {err.line} | {line_content}")
+        println(f"   | {repeat(\" \", err.column - 1)}^^^")
+    }
+    
+    if let suggestion = &err.suggestion {
+        println(f"   = help: {suggestion}")
+    }
+    
+    println("")
+}
+
+func print_errors(errors: [CompileError]) {
+    for err in &errors {
+        print_error(err)
+    }
+    println(f"❌ {len(errors)} error(s) found")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// UTILITIES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+func now() -> Int { __builtin_now() as Int }
+func format_size(bytes: Int) -> str {
+    if bytes < 1024 { return f"{bytes} B" }
+    if bytes < 1024 * 1024 { return f"{bytes / 1024} KB" }
+    f"{bytes / (1024 * 1024)} MB"
+}
+func detect_os() -> str { __builtin_os() }
+func detect_arch() -> str { __builtin_arch() }
+func run_shell(cmd: &str) { __builtin_shell(cmd) }
+func env_var(name: &str) -> Int { __builtin_env_var(name) }
+func file_exists(path: &str) -> bool { __builtin_file_exists(path) }
+func file_size(path: &str) -> Int { __builtin_file_size(path) }
+func find_files(path: &str, pattern: &str) -> [str] { __builtin_find_files(path, pattern) }
+func exit(code: Int) { __builtin_exit(code) }
+func read_line() -> str { __builtin_read_line() }
+func repeat(s: &str, n: Int) -> str { __builtin_repeat(s, n) }

@@ -1,0 +1,57 @@
+// Minimal Prelude for Bootstrap Compiler
+// Automagically imported by all files
+
+// Core Imports (if needed, but we define primitives here)
+// use core::* 
+
+// ----------------------------------------------------------------------------
+// OPTIONS & RESULTS (Int Stubs)
+// ----------------------------------------------------------------------------
+
+func unwrap(opt: Int) -> Int {
+    opt
+}
+
+func unwrap_or(opt: Int, default: Int) -> Int {
+    if opt == 0 { default } else { opt }
+}
+
+func unwrap_result(res: Int) -> Int {
+    res 
+}
+
+func map_option(opt: Int, f: Int) -> Int {
+    opt 
+}
+
+func map_result(res: Int, f: Int) -> Int {
+    res 
+}
+
+// ----------------------------------------------------------------------------
+// UTILS
+// ----------------------------------------------------------------------------
+
+func dbg(value: Int) -> Int {
+    value
+}
+
+func timed(label: String, f: Int) -> Int {
+    f
+}
+
+func times(n: Int, f: Int) {
+    // Stub
+}
+
+func forever(f: Int) {
+    // Stub
+}
+
+// ----------------------------------------------------------------------------
+// STUBS FOR TYPES
+// ----------------------------------------------------------------------------
+
+// These specific type aliases might not be supported by bootstrap
+// type Unit = ()
+// type Bytes = [Int]

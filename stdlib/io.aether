@@ -1,0 +1,68 @@
+// Aether I/O - Bootstrap Compatible Version
+// All functions use primitive types only
+
+// Console output
+func print(value: Int) {
+    __builtin_print_int(value)
+}
+
+func print_str(value: String) {
+    __builtin_print(value)
+}
+
+func println(value: Int) {
+    __builtin_print_int(value)
+    __builtin_print_newline()
+}
+
+func println_str(value: String) {
+    __builtin_println(value)
+}
+
+func eprint(value: Int) {
+    __builtin_eprint_int(value)
+}
+
+func eprintln(value: Int) {
+    __builtin_eprintln_int(value)
+}
+
+// Console input
+func input() -> String {
+    __builtin_input()
+}
+
+func prompt(message: String) -> String {
+    print_str(message)
+    input()
+}
+
+// File I/O
+func read_file(path: String) -> Int {
+    __builtin_file_read(path)
+}
+
+func write_file(path: String, content: String) -> Int {
+    __builtin_file_write(path, content)
+}
+
+func append_file(path: String, content: String) -> Int {
+    __builtin_file_append(path, content)
+}
+
+func file_exists(path: String) -> Bool {
+    __builtin_file_exists(path)
+}
+
+// Directory operations
+func list_dir(path: String) -> Int {
+    __builtin_dir_list(path)
+}
+
+func create_dir(path: String) -> Int {
+    __builtin_dir_create(path)
+}
+
+func is_directory(path: String) -> Bool {
+    __builtin_is_dir(path)
+}

@@ -1,0 +1,206 @@
+//! ═══════════════════════════════════════════════════════════════════════════════
+//! AETHER PARALLEL - TRUE MULTI-CORE EXECUTION
+//! ═══════════════════════════════════════════════════════════════════════════════
+//! Run MANY functions at the EXACT SAME TIME on ALL CPU cores
+//! - spawn() - Launch function on new thread
+//! - parallel_map() - Process array in parallel
+//! - parallel_for() - Parallel loop
+//! - join_all() - Wait for all threads
+
+import std.runtime.syscall
+import std.runtime.vec
+import std.runtime.concurrency
+
+// ============================================================================
+// THREAD MANAGEMENT (macOS pthread)
+// ============================================================================
+
+// macOS syscalls for threads
+const SYS_BSDTHREAD_CREATE: Int = 360
+const SYS_BSDTHREAD_TERMINATE: Int = 361
+
+// Thread handle: [thread_id, status, result, func_ptr, arg]
+const TH_ID_OFF: Int = 0
+const TH_STATUS_OFF: Int = 8
+const TH_RESULT_OFF: Int = 16
+const TH_FUNC_OFF: Int = 24
+const TH_ARG_OFF: Int = 32
+
+const TH_STATUS_RUNNING: Int = 1
+const TH_STATUS_DONE: Int = 2
+
+/// Create a thread pool for parallel execution
+var thread_pool: Int = 0
+var thread_pool_size: Int = 0
+var num_cpus: Int = 8  // Default to 8 cores
+
+// ============================================================================
+// SPAWN - Launch function on new thread
+// ============================================================================
+
+/// Spawn a function to run in parallel
+/// Returns: thread handle
+func spawn(func_ptr: Int, arg: Int) -> Int {
+    let th = malloc(40)
+    poke(th + TH_STATUS_OFF, TH_STATUS_RUNNING)
+    poke(th + TH_RESULT_OFF, 0)
+    poke(th + TH_FUNC_OFF, func_ptr)
+    poke(th + TH_ARG_OFF, arg)
+    
+    // Create OS thread via pthread_create equivalent
+    let thread_id = __spawn_thread(th)
+    poke(th + TH_ID_OFF, thread_id)
+    
+    th
+}
+
+/// Wait for a single thread to complete
+/// Returns: result of the function
+func join(th: Int) -> Int {
+    // Spin until done
+    while peek(th + TH_STATUS_OFF) != TH_STATUS_DONE {
+        __cpu_pause()
+    }
+    peek(th + TH_RESULT_OFF)
+}
+
+/// Wait for multiple threads to complete
+func join_all(threads: Int) {
+    let len = vec_len(threads)
+    let i = 0
+    while i < len {
+        let th = vec_get(threads, i)
+        join(th)
+        i = i + 1
+    }
+}
+
+// ============================================================================
+// PARALLEL MAP - Process array in parallel across all cores
+// ============================================================================
+
+/// Apply function to each element in parallel
+/// func_ptr: function Int -> Int
+/// Returns: new array with results
+func parallel_map(arr: Int, len: Int, func_ptr: Int) -> Int {
+    let results = malloc(len * 8)
+    let threads = vec_new()
+    
+    // Spawn one task per element (will be distributed across cores)
+    let i = 0
+    while i < len {
+        let arg = malloc(24)
+        poke(arg, arr)       // source array
+        poke(arg + 8, i)     // index
+        poke(arg + 16, results)  // result array
+        
+        let th = spawn(func_ptr, arg)
+        vec_push(threads, th)
+        i = i + 1
+    }
+    
+    // Wait for all to complete
+    join_all(threads)
+    
+    results
+}
+
+/// Parallel for loop - execute body for each i in 0..n
+func parallel_for(n: Int, body: Int) {
+    let threads = vec_new()
+    
+    let i = 0
+    while i < n {
+        let th = spawn(body, i)
+        vec_push(threads, th)
+        i = i + 1
+    }
+    
+    join_all(threads)
+}
+
+// ============================================================================
+// PARALLEL REDUCE - Combine results in log(n) steps
+// ============================================================================
+
+/// Parallel sum of array
+func parallel_sum(arr: Int, len: Int) -> Int {
+    if len <= 16 {
+        // Base case: sequential sum
+        let sum = 0
+        let i = 0
+        while i < len {
+            sum = sum + peek(arr + i * 8)
+            i = i + 1
+        }
+        return sum
+    }
+    
+    // Split in half, sum in parallel
+    let mid = len / 2
+    
+    let left_sum = 0
+    let right_sum = 0
+    
+    // Spawn right half
+    let right_th = spawn(__parallel_sum_helper, arr + mid * 8)
+    
+    // Compute left half locally
+    left_sum = parallel_sum(arr, mid)
+    
+    // Wait for right
+    right_sum = join(right_th)
+    
+    left_sum + right_sum
+}
+
+// ============================================================================
+// EXTREMELY PARALLEL - 1000s of tasks
+// ============================================================================
+
+/// Execute N independent tasks in parallel
+/// Returns immediately, tasks run async
+func async_batch(tasks: Int, count: Int) {
+    let i = 0
+    while i < count {
+        let task = vec_get(tasks, i)
+        spawn(task, i)
+        i = i + 1
+    }
+}
+
+/// Get number of CPU cores
+func cpu_count() -> Int {
+    num_cpus
+}
+
+/// Set parallelism level
+func set_parallelism(n: Int) {
+    num_cpus = n
+}
+
+// ============================================================================
+// WORK STEALING SCHEDULER (Advanced)
+// ============================================================================
+
+/// Initialize work-stealing scheduler with N worker threads
+func init_scheduler(n_workers: Int) {
+    thread_pool_size = n_workers
+    thread_pool = vec_new()
+    
+    let i = 0
+    while i < n_workers {
+        let worker = spawn(__worker_loop, i)
+        vec_push(thread_pool, worker)
+        i = i + 1
+    }
+}
+
+/// Submit task to work-stealing scheduler
+func submit_task(task: Int, arg: Int) {
+    // Add to global queue
+    let work = malloc(16)
+    poke(work, task)
+    poke(work + 8, arg)
+    __global_queue_push(work)
+}

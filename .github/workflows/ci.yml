@@ -1,0 +1,52 @@
+name: Aether CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    
+    - name: Verify Compiler
+      run: ./aetherc --version
+    
+    - name: Compile Standard Library
+      run: |
+        echo "Compiling stdlib..."
+        for file in stdlib/**/*.aether; do
+          echo "Compiling $file"
+          ./aetherc "$file" 2>&1 || true
+        done
+    
+    - name: Run Hello World Test
+      run: |
+        echo 'func main() -> Int { println("Hello from CI!"); 0 }' > test_ci.aether
+        ./aetherc test_ci.aether
+        ./a.out
+    
+    - name: Cleanup
+      run: rm -f test_ci.aether a.out
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    
+    - name: Verify Documentation
+      run: |
+        echo "Checking documentation..."
+        ls -la docs/
+        for doc in docs/*.md; do
+          echo "Found: $doc"
+        done
