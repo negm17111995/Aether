@@ -1,5 +1,0 @@
-func main() -> Int {
-    let p = malloc(16)
-    free(p)
-    return 0
-}
