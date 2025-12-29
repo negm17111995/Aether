@@ -1,0 +1,48 @@
+// AETHER TIME - Bootstrap Compatible
+// Time utilities
+
+import std
+
+// Get current time in milliseconds
+func now_ms() -> Int {
+    __builtin_now_ms()
+}
+
+// Duration
+func duration_ms(ms: Int) -> Int {
+    ms
+}
+
+func duration_sec(s: Int) -> Int {
+    s * 1000
+}
+
+func duration_min(m: Int) -> Int {
+    m * 60000
+}
+
+// Timer
+func timer_start() -> Int {
+    __builtin_now_ms()
+}
+
+func timer_elapsed_ms(start: Int) -> Int {
+    __builtin_now_ms() - start
+}
+
+// Sleep (busy wait)
+func sleep_ms(ms: Int) {
+    let end = __builtin_now_ms() + ms
+    while __builtin_now_ms() < end {
+        // Spin
+    }
+}
+
+// Simple date (days since epoch)
+func date_now() -> Int {
+    __builtin_now_ms() / 86400000
+}
+
+func date_add_days(date: Int, days: Int) -> Int {
+    date + days
+}

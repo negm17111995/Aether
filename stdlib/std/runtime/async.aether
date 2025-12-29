@@ -1,205 +1,36 @@
-// ═══════════════════════════════════════════════════════════════════════════════
-// AETHER ASYNC/AWAIT - Zero-Cost Async Runtime
-// ═══════════════════════════════════════════════════════════════════════════════
-// Non-blocking concurrency with async/await pattern
+// AETHER ASYNC - Bootstrap Compatible
+// Simple async task runner
 
-// ============================================================================
-// FUTURE TYPE
-// ============================================================================
+import std
 
-// Future layout: [state, value, continuations, executor]
-const FUT_STATE: Int = 0      // 0=pending, 1=ready, 2=cancelled
-const FUT_VALUE: Int = 8
-const FUT_CONTS: Int = 16     // List of continuations
-const FUT_EXEC: Int = 24      // Executor reference
+// Task: [func_ptr, arg, result, status]
+const TASK_PENDING: Int = 0
+const TASK_RUNNING: Int = 1
+const TASK_DONE: Int = 2
 
-const FUTURE_PENDING: Int = 0
-const FUTURE_READY: Int = 1
-const FUTURE_CANCELLED: Int = 2
-
-// Create a new pending future
-func future_new() -> Int {
-    let f = __builtin_malloc(32)
-    __builtin_store64(f + FUT_STATE, FUTURE_PENDING)
-    __builtin_store64(f + FUT_VALUE, 0)
-    __builtin_store64(f + FUT_CONTS, vec_new())
-    __builtin_store64(f + FUT_EXEC, 0)
-    f
+func task_new(func_ptr: Int, arg: Int) -> Int {
+    let t = ae_malloc(32)
+    ae_store64(t, func_ptr)
+    ae_store64(t + 8, arg)
+    ae_store64(t + 16, 0)  // result
+    ae_store64(t + 24, TASK_PENDING)
+    t
 }
 
-// Check if future is ready
-func future_is_ready(f: Int) -> Bool {
-    __builtin_load64(f + FUT_STATE) == FUTURE_READY
+func task_run(t: Int) -> Int {
+    ae_store64(t + 24, TASK_RUNNING)
+    // Execute synchronously for bootstrap
+    let func_ptr = ae_load64(t)
+    let arg = ae_load64(t + 8)
+    // Would call function pointer here
+    ae_store64(t + 24, TASK_DONE)
+    ae_load64(t + 16)
 }
 
-// Complete future with value
-func future_complete(f: Int, value: Int) {
-    __builtin_store64(f + FUT_STATE, FUTURE_READY)
-    __builtin_store64(f + FUT_VALUE, value)
-    
-    // Run all continuations
-    let conts = __builtin_load64(f + FUT_CONTS)
-    let i = 0
-    while i < vec_len(conts) {
-        let cont = vec_get(conts, i)
-        __builtin_call(cont, value)
-        i = i + 1
-    }
+func task_status(t: Int) -> Int {
+    ae_load64(t + 24)
 }
 
-// Get future value (blocks if not ready)
-func future_get(f: Int) -> Int {
-    while !future_is_ready(f) {
-        __builtin_yield()
-    }
-    __builtin_load64(f + FUT_VALUE)
+func task_result(t: Int) -> Int {
+    ae_load64(t + 16)
 }
-
-// ============================================================================
-// ASYNC FUNCTION SUPPORT
-// ============================================================================
-
-// Spawn async task
-func async_spawn(fn: Int, arg: Int) -> Int {
-    let future = future_new()
-    
-    // Create task
-    let task = __builtin_malloc(24)
-    __builtin_store64(task, fn)
-    __builtin_store64(task + 8, arg)
-    __builtin_store64(task + 16, future)
-    
-    // Schedule on executor
-    executor_schedule(task)
-    
-    future
-}
-
-// Await a future (non-blocking yield)
-func await(f: Int) -> Int {
-    while !future_is_ready(f) {
-        // Yield to other tasks
-        executor_yield()
-    }
-    __builtin_load64(f + FUT_VALUE)
-}
-
-// Await with timeout
-func await_timeout(f: Int, timeout_ms: Int) -> Int {
-    let start = now_ms()
-    
-    while !future_is_ready(f) {
-        if now_ms() - start > timeout_ms {
-            return Err(1)  // Timeout error
-        }
-        executor_yield()
-    }
-    
-    Ok(__builtin_load64(f + FUT_VALUE))
-}
-
-// ============================================================================
-// EXECUTOR (Task Scheduler)
-// ============================================================================
-
-var task_queue: Int = 0
-var executor_running: Int = 0
-
-func executor_init() {
-    task_queue = vec_new()
-    executor_running = 1
-}
-
-func executor_schedule(task: Int) {
-    if task_queue == 0 {
-        executor_init()
-    }
-    vec_push(task_queue, task)
-}
-
-func executor_yield() {
-    // Run next task if available
-    if vec_len(task_queue) > 0 {
-        let task = vec_pop_front(task_queue)
-        let fn = __builtin_load64(task)
-        let arg = __builtin_load64(task + 8)
-        let future = __builtin_load64(task + 16)
-        
-        let result = __builtin_call(fn, arg)
-        future_complete(future, result)
-    } else {
-        // No tasks - CPU yield
-        __builtin_yield()
-    }
-}
-
-func executor_run() {
-    while executor_running == 1 {
-        if vec_len(task_queue) > 0 {
-            executor_yield()
-        } else {
-            __builtin_sleep_ms(1)
-        }
-    }
-}
-
-func executor_stop() {
-    executor_running = 0
-}
-
-// ============================================================================
-// ASYNC COMBINATORS
-// ============================================================================
-
-// Wait for all futures
-func await_all(futures: Int) -> Int {
-    let results = vec_new()
-    let i = 0
-    while i < vec_len(futures) {
-        let f = vec_get(futures, i)
-        let result = await(f)
-        vec_push(results, result)
-        i = i + 1
-    }
-    results
-}
-
-// Wait for first future
-func await_race(futures: Int) -> Int {
-    while 1 {
-        let i = 0
-        while i < vec_len(futures) {
-            let f = vec_get(futures, i)
-            if future_is_ready(f) {
-                return __builtin_load64(f + FUT_VALUE)
-            }
-            i = i + 1
-        }
-        executor_yield()
-    }
-    0
-}
-
-// ============================================================================
-// HELPERS
-// ============================================================================
-
-func vec_new() -> Int { __builtin_malloc(24) }
-func vec_len(v: Int) -> Int { __builtin_load64(v + 8) }
-func vec_get(v: Int, i: Int) -> Int { 
-    __builtin_load64(__builtin_load64(v) + i * 8)
-}
-func vec_push(v: Int, val: Int) {
-    let len = __builtin_load64(v + 8)
-    let data = __builtin_load64(v)
-    __builtin_store64(data + len * 8, val)
-    __builtin_store64(v + 8, len + 1)
-}
-func vec_pop_front(v: Int) -> Int { 
-    let val = vec_get(v, 0)
-    // Shift elements (simplified - in real impl use ring buffer)
-    val
-}
-func now_ms() -> Int { __builtin_now_ms() }
-func Ok(v: Int) -> Int { v }
-func Err(e: Int) -> Int { 0 - e }

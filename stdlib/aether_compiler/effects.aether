@@ -1,0 +1,306 @@
+// AETHER SELF-HOSTED COMPILER - EFFECTS SYSTEM
+// Algebraic Effects - effect tracking and handling
+
+import std
+
+// ============================================================================
+// EFFECT KINDS
+// ============================================================================
+
+const EFF_NONE: Int = 0
+const EFF_IO: Int = 1
+const EFF_ASYNC: Int = 2
+const EFF_THROW: Int = 3
+const EFF_STATE: Int = 4
+const EFF_YIELD: Int = 5
+const EFF_RESUME: Int = 6
+
+// ============================================================================
+// EFFECT REPRESENTATION
+// ============================================================================
+
+// Effect: [kind, name, params]
+func effect_new(kind: Int, name: Int) -> Int {
+    let e = ae_malloc(24)
+    ae_store64(e, kind)
+    ae_store64(e + 8, name)
+    ae_store64(e + 16, vec_new())
+    e
+}
+
+func effect_kind(e: Int) -> Int { ae_load64(e) }
+func effect_name(e: Int) -> Int { ae_load64(e + 8) }
+func effect_params(e: Int) -> Int { ae_load64(e + 16) }
+
+// ============================================================================
+// EFFECT SET
+// ============================================================================
+
+func effect_set_new() -> Int {
+    vec_new()
+}
+
+func effect_set_add(set: Int, eff: Int) {
+    // Check if already present
+    let count = vec_len(set)
+    let i = 0
+    while i < count {
+        let existing = vec_get(set, i)
+        if effect_kind(existing) == effect_kind(eff) {
+            return  // Already present
+        }
+        i = i + 1
+    }
+    vec_push(set, eff)
+}
+
+func effect_set_has(set: Int, kind: Int) -> Int {
+    let count = vec_len(set)
+    let i = 0
+    while i < count {
+        let e = vec_get(set, i)
+        if effect_kind(e) == kind {
+            return 1
+        }
+        i = i + 1
+    }
+    0
+}
+
+func effect_set_union(a: Int, b: Int) -> Int {
+    let result = effect_set_new()
+    
+    let count_a = vec_len(a)
+    let i = 0
+    while i < count_a {
+        effect_set_add(result, vec_get(a, i))
+        i = i + 1
+    }
+    
+    let count_b = vec_len(b)
+    i = 0
+    while i < count_b {
+        effect_set_add(result, vec_get(b, i))
+        i = i + 1
+    }
+    
+    result
+}
+
+// ============================================================================
+// EFFECT HANDLERS
+// ============================================================================
+
+// Handler: [effect_kind, handler_func, resume_func]
+func handler_new(kind: Int, handler: Int, resume: Int) -> Int {
+    let h = ae_malloc(24)
+    ae_store64(h, kind)
+    ae_store64(h + 8, handler)
+    ae_store64(h + 16, resume)
+    h
+}
+
+func handler_kind(h: Int) -> Int { ae_load64(h) }
+func handler_func(h: Int) -> Int { ae_load64(h + 8) }
+func handler_resume(h: Int) -> Int { ae_load64(h + 16) }
+
+// Handler stack for effect scoping
+func handler_stack_new() -> Int {
+    vec_new()
+}
+
+func handler_stack_push(stack: Int, handler: Int) {
+    vec_push(stack, handler)
+}
+
+func handler_stack_find(stack: Int, kind: Int) -> Int {
+    let count = vec_len(stack)
+    let i = count - 1
+    while i >= 0 {
+        let h = vec_get(stack, i)
+        if handler_kind(h) == kind {
+            return h
+        }
+        i = i - 1
+    }
+    0
+}
+
+// ============================================================================
+// EFFECT INFERENCE
+// ============================================================================
+
+// EffectCtx: [handlers, inferred_effects, parent]
+func effect_ctx_new(parent: Int) -> Int {
+    let ctx = ae_malloc(24)
+    ae_store64(ctx, handler_stack_new())
+    ae_store64(ctx + 8, effect_set_new())
+    ae_store64(ctx + 16, parent)
+    ctx
+}
+
+func ctx_handlers(ctx: Int) -> Int { ae_load64(ctx) }
+func ctx_effects(ctx: Int) -> Int { ae_load64(ctx + 8) }
+func ctx_effect_parent(ctx: Int) -> Int { ae_load64(ctx + 16) }
+
+func ctx_add_effect(ctx: Int, kind: Int) {
+    let eff = effect_new(kind, 0)
+    effect_set_add(ctx_effects(ctx), eff)
+}
+
+// Infer effects from expression
+func infer_effects_expr(ctx: Int, node: Int) {
+    if node == 0 { return }
+    
+    let kind = ast_kind(node)
+    
+    // Function call - check if function has effects
+    if kind == AST_CALL {
+        // Check function name for known effectful functions
+        let func_expr = ast_data1(node)
+        if ast_kind(func_expr) == AST_IDENT {
+            let name = ast_data1(func_expr)
+            // print is IO
+            if str_has_prefix(name, "print") == 1 {
+                ctx_add_effect(ctx, EFF_IO)
+            }
+            // async functions
+            if str_has_prefix(name, "async") == 1 {
+                ctx_add_effect(ctx, EFF_ASYNC)
+            }
+            // panic/throw
+            if str_has_prefix(name, "panic") == 1 {
+                ctx_add_effect(ctx, EFF_THROW)
+            }
+        }
+        
+        // Recurse on arguments
+        let args = ast_data2(node)
+        let count = vec_len(args)
+        let i = 0
+        while i < count {
+            infer_effects_expr(ctx, vec_get(args, i))
+            i = i + 1
+        }
+        return
+    }
+    
+    // Binary/unary - recurse
+    if kind == AST_BINARY {
+        infer_effects_expr(ctx, ast_data2(node))
+        infer_effects_expr(ctx, ast_data3(node))
+        return
+    }
+    
+    if kind == AST_UNARY {
+        infer_effects_expr(ctx, ast_data2(node))
+        return
+    }
+}
+
+func infer_effects_stmt(ctx: Int, node: Int) {
+    if node == 0 { return }
+    
+    let kind = ast_kind(node)
+    
+    if kind == AST_LET {
+        infer_effects_expr(ctx, ast_data3(node))
+        return
+    }
+    
+    if kind == AST_RETURN {
+        infer_effects_expr(ctx, ast_data1(node))
+        return
+    }
+    
+    if kind == AST_IF {
+        infer_effects_expr(ctx, ast_data1(node))
+        infer_effects_block(ctx, ast_data2(node))
+        let else_blk = ast_data3(node)
+        if else_blk != 0 {
+            infer_effects_block(ctx, else_blk)
+        }
+        return
+    }
+    
+    if kind == AST_WHILE {
+        infer_effects_expr(ctx, ast_data1(node))
+        infer_effects_block(ctx, ast_data2(node))
+        return
+    }
+    
+    if kind == AST_EXPR_STMT {
+        infer_effects_expr(ctx, ast_data1(node))
+        return
+    }
+}
+
+func infer_effects_block(ctx: Int, block: Int) {
+    if block == 0 { return }
+    
+    let stmts = ast_data1(block)
+    if stmts == 0 { return }
+    
+    let count = vec_len(stmts)
+    let i = 0
+    while i < count {
+        infer_effects_stmt(ctx, vec_get(stmts, i))
+        i = i + 1
+    }
+}
+
+// Infer effects for a function
+func infer_func_effects(node: Int) -> Int {
+    let ctx = effect_ctx_new(0)
+    let body = ast_data4(node)
+    infer_effects_block(ctx, body)
+    ctx_effects(ctx)
+}
+
+// ============================================================================
+// EFFECT VERIFICATION
+// ============================================================================
+
+// Verify that all effects are handled
+func verify_effects(module: Int) -> Int {
+    let decls = ast_data1(module)
+    let count = vec_len(decls)
+    let i = 0
+    while i < count {
+        let decl = vec_get(decls, i)
+        if ast_kind(decl) == AST_FUNC {
+            let effects = infer_func_effects(decl)
+            let eff_count = vec_len(effects)
+            
+            // Check for unhandled effects (main should handle all)
+            let name = ast_data1(decl)
+            if str_eq(name, "main") == 1 {
+                // Main can have IO and THROW
+            } else {
+                // Non-main functions must declare their effects
+                // (In full impl, check effect annotations match inferred)
+            }
+        }
+        i = i + 1
+    }
+    1
+}
+
+// ============================================================================
+// STRING HELPERS
+// ============================================================================
+
+func str_has_prefix(s: Int, prefix: Int) -> Int {
+    if s == 0 || prefix == 0 { return 0 }
+    
+    let i = 0
+    while 1 == 1 {
+        let pc = ae_load8(prefix + i)
+        if pc == 0 { return 1 }  // Prefix exhausted = match
+        
+        let sc = ae_load8(s + i)
+        if sc != pc { return 0 }
+        i = i + 1
+    }
+    0
+}

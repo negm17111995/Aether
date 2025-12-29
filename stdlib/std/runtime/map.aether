@@ -1,179 +1,90 @@
-//! ═══════════════════════════════════════════════════════════════════════════════
-//! AETHER PURE RUNTIME - HASH MAP
-//! ═══════════════════════════════════════════════════════════════════════════════
-//! Simple hash map implementation in pure Aether
+// AETHER MAP - Bootstrap Compatible
+// Hash map implementation
 
-import std.runtime.alloc
-import std.runtime.vec
+import std
 
-// ============================================================================
-// MAP LAYOUT
-// ============================================================================
-// Map handle points to: [buckets: Int, size: Int, cap: Int]
-// Each bucket is a vector of [key, value] pairs
-// Total header: 24 bytes
-
-const MAP_BUCKETS_OFFSET: Int = 0
-const MAP_SIZE_OFFSET: Int = 8
-const MAP_CAP_OFFSET: Int = 16
-const MAP_HEADER_SIZE: Int = 24
-const MAP_INITIAL_CAP: Int = 16
-
-// ============================================================================
-// HASH FUNCTION
-// ============================================================================
-
-/// Simple integer hash function (FNV-1a inspired)
-func hash_int(key: Int) -> Int {
-    let h = 14695981039346656037  // FNV offset basis
-    let prime = 1099511628211     // FNV prime
-    
-    // Hash each byte of the key
-    let k = key
-    let i = 0
-    while i < 8 {
-        let byte = k & 0xFF
-        h = (h ^ byte) * prime
-        k = k >> 8
-        i = i + 1
-    }
-    
-    h
-}
-
-/// String hash function
-func hash_str(s: Int) -> Int {
-    let h = 14695981039346656037
-    let prime = 1099511628211
-    
-    let i = 0
-    let c = peek8(s + i)
-    while c != 0 {
-        h = (h ^ c) * prime
-        i = i + 1
-        c = peek8(s + i)
-    }
-    
-    h
-}
-
-// ============================================================================
-// MAP OPERATIONS
-// ============================================================================
-
-/// Create a new empty map
+// Map: [buckets_ptr, bucket_count, size]
 func map_new() -> Int {
-    let m = malloc(MAP_HEADER_SIZE)
-    let buckets = malloc(MAP_INITIAL_CAP * 8)
+    let m = ae_malloc(24)
+    let bucket_count = 16
+    let buckets = ae_malloc(bucket_count * 8)
     
-    // Initialize all buckets to 0 (empty)
     let i = 0
-    while i < MAP_INITIAL_CAP {
-        poke(buckets + i * 8, 0)
+    while i < bucket_count {
+        ae_store64(buckets + i * 8, 0)  // null entries
         i = i + 1
     }
     
-    poke(m + MAP_BUCKETS_OFFSET, buckets)
-    poke(m + MAP_SIZE_OFFSET, 0)
-    poke(m + MAP_CAP_OFFSET, MAP_INITIAL_CAP)
-    
+    ae_store64(m, buckets)
+    ae_store64(m + 8, bucket_count)
+    ae_store64(m + 16, 0)  // size = 0
     m
 }
 
-/// Get map size
-func map_size(m: Int) -> Int {
-    peek(m + MAP_SIZE_OFFSET)
+func map_hash(key: Int, bucket_count: Int) -> Int {
+    let h = key * 2654435761
+    if h < 0 { h = 0 - h }
+    h % bucket_count
 }
 
-/// Get value for key (returns 0 if not found)
-func map_get(m: Int, key: Int) -> Int {
-    let cap = peek(m + MAP_CAP_OFFSET)
-    let buckets = peek(m + MAP_BUCKETS_OFFSET)
-    let idx = hash_int(key) % cap
+// Entry: [key, value, next]
+func map_set(m: Int, key: Int, value: Int) {
+    let buckets = ae_load64(m)
+    let bucket_count = ae_load64(m + 8)
+    let idx = map_hash(key, bucket_count)
     
-    let bucket = peek(buckets + idx * 8)
-    if bucket == 0 {
-        return 0
-    }
+    let entry = ae_load64(buckets + idx * 8)
     
-    // Search bucket for key
-    let len = vec_len(bucket)
-    let i = 0
-    while i < len {
-        let pair = vec_get(bucket, i)
-        let pair_key = peek(pair)
-        if pair_key == key {
-            return peek(pair + 8)
-        }
-        i = i + 1
-    }
-    
-    0
-}
-
-/// Set key-value pair
-func map_set(m: Int, key: Int, val: Int) {
-    let cap = peek(m + MAP_CAP_OFFSET)
-    let buckets = peek(m + MAP_BUCKETS_OFFSET)
-    let idx = hash_int(key) % cap
-    
-    let bucket = peek(buckets + idx * 8)
-    
-    // Create bucket if needed
-    if bucket == 0 {
-        bucket = vec_new()
-        poke(buckets + idx * 8, bucket)
-    }
-    
-    // Search for existing key
-    let len = vec_len(bucket)
-    let i = 0
-    while i < len {
-        let pair = vec_get(bucket, i)
-        let pair_key = peek(pair)
-        if pair_key == key {
-            // Update existing
-            poke(pair + 8, val)
+    // Check if key exists
+    while entry != 0 {
+        if ae_load64(entry) == key {
+            ae_store64(entry + 8, value)
             return
         }
-        i = i + 1
+        entry = ae_load64(entry + 16)
     }
     
-    // Add new pair
-    let pair = malloc(16)
-    poke(pair, key)
-    poke(pair + 8, val)
-    vec_push(bucket, pair)
+    // Create new entry
+    let new_entry = ae_malloc(24)
+    ae_store64(new_entry, key)
+    ae_store64(new_entry + 8, value)
+    ae_store64(new_entry + 16, ae_load64(buckets + idx * 8))
+    ae_store64(buckets + idx * 8, new_entry)
     
-    let size = peek(m + MAP_SIZE_OFFSET)
-    poke(m + MAP_SIZE_OFFSET, size + 1)
+    let size = ae_load64(m + 16)
+    ae_store64(m + 16, size + 1)
 }
 
-/// Check if key exists
-func map_contains(m: Int, key: Int) -> Int {
-    let cap = peek(m + MAP_CAP_OFFSET)
-    let buckets = peek(m + MAP_BUCKETS_OFFSET)
-    let idx = hash_int(key) % cap
+func map_get(m: Int, key: Int) -> Int {
+    let buckets = ae_load64(m)
+    let bucket_count = ae_load64(m + 8)
+    let idx = map_hash(key, bucket_count)
     
-    let bucket = peek(buckets + idx * 8)
-    if bucket == 0 {
-        return 0
-    }
-    
-    let len = vec_len(bucket)
-    let i = 0
-    while i < len {
-        let pair = vec_get(bucket, i)
-        if peek(pair) == key {
-            return 1
+    let entry = ae_load64(buckets + idx * 8)
+    while entry != 0 {
+        if ae_load64(entry) == key {
+            return ae_load64(entry + 8)
         }
-        i = i + 1
+        entry = ae_load64(entry + 16)
     }
-    
     0
 }
 
-/// Remove key from map
-func map_remove(m: Int, key: Int) {
-    // TODO: implement removal
+func map_contains(m: Int, key: Int) -> Int {
+    let buckets = ae_load64(m)
+    let bucket_count = ae_load64(m + 8)
+    let idx = map_hash(key, bucket_count)
+    
+    let entry = ae_load64(buckets + idx * 8)
+    while entry != 0 {
+        if ae_load64(entry) == key {
+            return 1
+        }
+        entry = ae_load64(entry + 16)
+    }
+    0
+}
+
+func map_size(m: Int) -> Int {
+    ae_load64(m + 16)
 }

@@ -1,0 +1,342 @@
+// AETHER SELF-HOSTED COMPILER - LEXER
+// Tokenizes Aether source code into tokens
+
+import std
+
+// ============================================================================
+// TOKEN TYPES
+// ============================================================================
+
+const TOK_EOF: Int = 0
+const TOK_ID: Int = 1
+const TOK_INT: Int = 2
+const TOK_STR: Int = 3
+const TOK_LPAREN: Int = 10
+const TOK_RPAREN: Int = 11
+const TOK_LBRACE: Int = 12
+const TOK_RBRACE: Int = 13
+const TOK_LBRACK: Int = 14
+const TOK_RBRACK: Int = 15
+const TOK_COMMA: Int = 16
+const TOK_COLON: Int = 17
+const TOK_SEMI: Int = 18
+const TOK_DOT: Int = 19
+const TOK_ARROW: Int = 20
+const TOK_EQ: Int = 21
+const TOK_EQEQ: Int = 22
+const TOK_NE: Int = 23
+const TOK_LT: Int = 24
+const TOK_LE: Int = 25
+const TOK_GT: Int = 26
+const TOK_GE: Int = 27
+const TOK_PLUS: Int = 28
+const TOK_MINUS: Int = 29
+const TOK_STAR: Int = 30
+const TOK_SLASH: Int = 31
+const TOK_AMP: Int = 32
+const TOK_PIPE: Int = 33
+const TOK_BANG: Int = 34
+const TOK_DCOLON: Int = 35
+
+// Keywords
+const TOK_FUNC: Int = 50
+const TOK_LET: Int = 51
+const TOK_MUT: Int = 52
+const TOK_IF: Int = 53
+const TOK_ELSE: Int = 54
+const TOK_WHILE: Int = 55
+const TOK_FOR: Int = 56
+const TOK_RETURN: Int = 57
+const TOK_STRUCT: Int = 58
+const TOK_IMPL: Int = 59
+const TOK_TRAIT: Int = 60
+const TOK_IMPORT: Int = 61
+const TOK_CONST: Int = 62
+const TOK_PUB: Int = 63
+const TOK_MATCH: Int = 64
+const TOK_TRUE: Int = 65
+const TOK_FALSE: Int = 66
+
+// ============================================================================
+// TOKEN STRUCTURE
+// ============================================================================
+
+// Token: [type, value, line, col, len]
+const TOKEN_SIZE: Int = 40
+
+func token_new(typ: Int, val: Int, line: Int, col: Int, len: Int) -> Int {
+    let t = ae_malloc(TOKEN_SIZE)
+    ae_store64(t, typ)
+    ae_store64(t + 8, val)
+    ae_store64(t + 16, line)
+    ae_store64(t + 24, col)
+    ae_store64(t + 32, len)
+    t
+}
+
+func token_type(t: Int) -> Int { ae_load64(t) }
+func token_value(t: Int) -> Int { ae_load64(t + 8) }
+func token_line(t: Int) -> Int { ae_load64(t + 16) }
+func token_col(t: Int) -> Int { ae_load64(t + 24) }
+
+// ============================================================================
+// LEXER STATE
+// ============================================================================
+
+// Lexer: [src, len, pos, line, col]
+const LEXER_SIZE: Int = 40
+
+func lexer_new(src: Int, len: Int) -> Int {
+    let l = ae_malloc(LEXER_SIZE)
+    ae_store64(l, src)
+    ae_store64(l + 8, len)
+    ae_store64(l + 16, 0)  // pos = 0
+    ae_store64(l + 24, 1)  // line = 1
+    ae_store64(l + 32, 1)  // col = 1
+    l
+}
+
+func lexer_src(l: Int) -> Int { ae_load64(l) }
+func lexer_len(l: Int) -> Int { ae_load64(l + 8) }
+func lexer_pos(l: Int) -> Int { ae_load64(l + 16) }
+func lexer_line(l: Int) -> Int { ae_load64(l + 24) }
+func lexer_col(l: Int) -> Int { ae_load64(l + 32) }
+
+func lexer_set_pos(l: Int, p: Int) { ae_store64(l + 16, p) }
+func lexer_set_line(l: Int, ln: Int) { ae_store64(l + 24, ln) }
+func lexer_set_col(l: Int, c: Int) { ae_store64(l + 32, c) }
+
+// ============================================================================
+// CHARACTER HELPERS
+// ============================================================================
+
+func is_digit(c: Int) -> Int {
+    if c >= 48 && c <= 57 { return 1 }
+    0
+}
+
+func is_alpha(c: Int) -> Int {
+    if c >= 65 && c <= 90 { return 1 }   // A-Z
+    if c >= 97 && c <= 122 { return 1 }  // a-z
+    if c == 95 { return 1 }              // _
+    0
+}
+
+func is_alnum(c: Int) -> Int {
+    if is_alpha(c) == 1 { return 1 }
+    if is_digit(c) == 1 { return 1 }
+    0
+}
+
+func is_space(c: Int) -> Int {
+    if c == 32 { return 1 }   // space
+    if c == 9 { return 1 }    // tab
+    if c == 10 { return 1 }   // newline
+    if c == 13 { return 1 }   // carriage return
+    0
+}
+
+// ============================================================================
+// LEXER PRIMITIVES
+// ============================================================================
+
+func lexer_peek(l: Int) -> Int {
+    let pos = lexer_pos(l)
+    let len = lexer_len(l)
+    if pos >= len { return 0 }
+    ae_load8(lexer_src(l) + pos)
+}
+
+func lexer_peek_n(l: Int, n: Int) -> Int {
+    let pos = lexer_pos(l) + n
+    let len = lexer_len(l)
+    if pos >= len { return 0 }
+    ae_load8(lexer_src(l) + pos)
+}
+
+func lexer_advance(l: Int) {
+    let c = lexer_peek(l)
+    let pos = lexer_pos(l)
+    lexer_set_pos(l, pos + 1)
+    
+    if c == 10 {
+        lexer_set_line(l, lexer_line(l) + 1)
+        lexer_set_col(l, 1)
+    } else {
+        lexer_set_col(l, lexer_col(l) + 1)
+    }
+}
+
+func lexer_skip_ws(l: Int) {
+    while is_space(lexer_peek(l)) == 1 {
+        lexer_advance(l)
+    }
+    
+    // Skip comments
+    if lexer_peek(l) == 47 && lexer_peek_n(l, 1) == 47 {
+        while lexer_peek(l) != 10 && lexer_peek(l) != 0 {
+            lexer_advance(l)
+        }
+        lexer_skip_ws(l)
+    }
+}
+
+// ============================================================================
+// TOKENIZATION
+// ============================================================================
+
+func lexer_read_number(l: Int) -> Int {
+    let start = lexer_pos(l)
+    let val = 0
+    
+    while is_digit(lexer_peek(l)) == 1 {
+        val = val * 10 + (lexer_peek(l) - 48)
+        lexer_advance(l)
+    }
+    
+    val
+}
+
+func lexer_read_ident(l: Int) -> Int {
+    let start = lexer_pos(l)
+    let src = lexer_src(l)
+    
+    while is_alnum(lexer_peek(l)) == 1 {
+        lexer_advance(l)
+    }
+    
+    let len = lexer_pos(l) - start
+    
+    // Copy identifier to new buffer
+    let buf = ae_malloc(len + 1)
+    let i = 0
+    while i < len {
+        ae_store8(buf + i, ae_load8(src + start + i))
+        i = i + 1
+    }
+    ae_store8(buf + len, 0)  // null terminate
+    
+    buf
+}
+
+func lexer_next(l: Int) -> Int {
+    lexer_skip_ws(l)
+    
+    let line = lexer_line(l)
+    let col = lexer_col(l)
+    let c = lexer_peek(l)
+    
+    if c == 0 {
+        return token_new(TOK_EOF, 0, line, col, 0)
+    }
+    
+    // Numbers
+    if is_digit(c) == 1 {
+        let val = lexer_read_number(l)
+        return token_new(TOK_INT, val, line, col, 1)
+    }
+    
+    // Identifiers and keywords
+    if is_alpha(c) == 1 {
+        let id = lexer_read_ident(l)
+        // Check for keywords (simplified - uses hash comparison)
+        return token_new(TOK_ID, id, line, col, 1)
+    }
+    
+    // Two-char operators
+    let c2 = lexer_peek_n(l, 1)
+    
+    if c == 45 && c2 == 62 {  // ->
+        lexer_advance(l)
+        lexer_advance(l)
+        return token_new(TOK_ARROW, 0, line, col, 2)
+    }
+    
+    if c == 61 && c2 == 61 {  // ==
+        lexer_advance(l)
+        lexer_advance(l)
+        return token_new(TOK_EQEQ, 0, line, col, 2)
+    }
+    
+    if c == 33 && c2 == 61 {  // !=
+        lexer_advance(l)
+        lexer_advance(l)
+        return token_new(TOK_NE, 0, line, col, 2)
+    }
+    
+    if c == 60 && c2 == 61 {  // <=
+        lexer_advance(l)
+        lexer_advance(l)
+        return token_new(TOK_LE, 0, line, col, 2)
+    }
+    
+    if c == 62 && c2 == 61 {  // >=
+        lexer_advance(l)
+        lexer_advance(l)
+        return token_new(TOK_GE, 0, line, col, 2)
+    }
+    
+    if c == 58 && c2 == 58 {  // ::
+        lexer_advance(l)
+        lexer_advance(l)
+        return token_new(TOK_DCOLON, 0, line, col, 2)
+    }
+    
+    if c == 38 && c2 == 38 {  // &&
+        lexer_advance(l)
+        lexer_advance(l)
+        return token_new(TOK_AMP, 0, line, col, 2)
+    }
+    
+    if c == 124 && c2 == 124 {  // ||
+        lexer_advance(l)
+        lexer_advance(l)
+        return token_new(TOK_PIPE, 0, line, col, 2)
+    }
+    
+    // Single char tokens
+    lexer_advance(l)
+    
+    if c == 40 { return token_new(TOK_LPAREN, 0, line, col, 1) }
+    if c == 41 { return token_new(TOK_RPAREN, 0, line, col, 1) }
+    if c == 123 { return token_new(TOK_LBRACE, 0, line, col, 1) }
+    if c == 125 { return token_new(TOK_RBRACE, 0, line, col, 1) }
+    if c == 91 { return token_new(TOK_LBRACK, 0, line, col, 1) }
+    if c == 93 { return token_new(TOK_RBRACK, 0, line, col, 1) }
+    if c == 44 { return token_new(TOK_COMMA, 0, line, col, 1) }
+    if c == 58 { return token_new(TOK_COLON, 0, line, col, 1) }
+    if c == 59 { return token_new(TOK_SEMI, 0, line, col, 1) }
+    if c == 46 { return token_new(TOK_DOT, 0, line, col, 1) }
+    if c == 61 { return token_new(TOK_EQ, 0, line, col, 1) }
+    if c == 60 { return token_new(TOK_LT, 0, line, col, 1) }
+    if c == 62 { return token_new(TOK_GT, 0, line, col, 1) }
+    if c == 43 { return token_new(TOK_PLUS, 0, line, col, 1) }
+    if c == 45 { return token_new(TOK_MINUS, 0, line, col, 1) }
+    if c == 42 { return token_new(TOK_STAR, 0, line, col, 1) }
+    if c == 47 { return token_new(TOK_SLASH, 0, line, col, 1) }
+    if c == 33 { return token_new(TOK_BANG, 0, line, col, 1) }
+    
+    // Unknown
+    token_new(TOK_EOF, 0, line, col, 0)
+}
+
+// ============================================================================
+// TOKENIZE ALL
+// ============================================================================
+
+func tokenize(src: Int, len: Int) -> Int {
+    let l = lexer_new(src, len)
+    let tokens = vec_new()
+    
+    let done = 0
+    while done == 0 {
+        let tok = lexer_next(l)
+        vec_push(tokens, tok)
+        
+        if token_type(tok) == TOK_EOF {
+            done = 1
+        }
+    }
+    
+    tokens
+}

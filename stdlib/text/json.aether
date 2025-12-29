@@ -1,0 +1,89 @@
+// AETHER JSON - Bootstrap Compatible
+// JSON parser and generator
+
+import std
+
+// JSON types
+const JSON_NULL: Int = 0
+const JSON_BOOL: Int = 1
+const JSON_NUMBER: Int = 2
+const JSON_STRING: Int = 3
+const JSON_ARRAY: Int = 4
+const JSON_OBJECT: Int = 5
+
+// JSON value: [type, data]
+func json_null() -> Int {
+    let v = ae_malloc(16)
+    ae_store64(v, JSON_NULL)
+    ae_store64(v + 8, 0)
+    v
+}
+
+func json_bool(b: Int) -> Int {
+    let v = ae_malloc(16)
+    ae_store64(v, JSON_BOOL)
+    ae_store64(v + 8, b)
+    v
+}
+
+func json_number(n: Int) -> Int {
+    let v = ae_malloc(16)
+    ae_store64(v, JSON_NUMBER)
+    ae_store64(v + 8, n)
+    v
+}
+
+func json_string(s: Int) -> Int {
+    let v = ae_malloc(16)
+    ae_store64(v, JSON_STRING)
+    ae_store64(v + 8, s)
+    v
+}
+
+func json_array() -> Int {
+    let v = ae_malloc(16)
+    ae_store64(v, JSON_ARRAY)
+    ae_store64(v + 8, vec_new())
+    v
+}
+
+func json_object() -> Int {
+    let v = ae_malloc(16)
+    ae_store64(v, JSON_OBJECT)
+    ae_store64(v + 8, vec_new())  // key-value pairs
+    v
+}
+
+func json_type(v: Int) -> Int { ae_load64(v) }
+
+func json_array_push(arr: Int, val: Int) {
+    let items = ae_load64(arr + 8)
+    vec_push(items, val)
+}
+
+func json_array_get(arr: Int, idx: Int) -> Int {
+    let items = ae_load64(arr + 8)
+    vec_get(items, idx)
+}
+
+func json_object_set(obj: Int, key: Int, val: Int) {
+    let pairs = ae_load64(obj + 8)
+    let p = ae_malloc(16)
+    ae_store64(p, key)
+    ae_store64(p + 8, val)
+    vec_push(pairs, p)
+}
+
+func json_object_get(obj: Int, key: Int) -> Int {
+    let pairs = ae_load64(obj + 8)
+    let count = vec_len(pairs)
+    let i = 0
+    while i < count {
+        let p = vec_get(pairs, i)
+        if ae_load64(p) == key {
+            return ae_load64(p + 8)
+        }
+        i = i + 1
+    }
+    0
+}

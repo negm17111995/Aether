@@ -1,418 +1,57 @@
-//! Aether Lexer - Primitive Style (Stage 0)
-//!
-//! Tokenizes Aether source code into a stream of token handles.
-//! STRICTLY PRIMITIVE: No structs, no enums. Handles and Ints only.
+// AETHER COMPILER LEXER - Bootstrap Compatible
+// (Separate from stdlib self-hosted compiler)
 
-use prelude::*
-use string::*
-use collections::*
+import std
 
-// ============================================================================
-// TOKEN TYPES (CONSTANTS)
-// ============================================================================
+// Token types
+const L_TOK_EOF: Int = 0
+const L_TOK_ID: Int = 1
+const L_TOK_INT: Int = 2
+const L_TOK_STR: Int = 3
+const L_TOK_OP: Int = 4
+const L_TOK_PUNCT: Int = 5
 
-const TOK_INT_LIT: Int = 0
-const TOK_FLOAT_LIT: Int = 1
-const TOK_STRING_LIT: Int = 2
-const TOK_BOOL_LIT: Int = 3
-const TOK_IDENT: Int = 4
-const TOK_KEYWORD: Int = 5
-const TOK_PLUS: Int = 6
-const TOK_MINUS: Int = 7
-const TOK_STAR: Int = 8
-const TOK_SLASH: Int = 9
-const TOK_PERCENT: Int = 10
-const TOK_EQ: Int = 11
-const TOK_EQEQ: Int = 12
-const TOK_NE: Int = 13
-const TOK_LT: Int = 14
-const TOK_LE: Int = 15
-const TOK_GT: Int = 16
-const TOK_GE: Int = 17
-const TOK_AND: Int = 18
-const TOK_OR: Int = 19
-const TOK_NOT: Int = 20
-const TOK_BIT_AND: Int = 21
-const TOK_BIT_OR: Int = 22
-const TOK_BIT_XOR: Int = 23
-const TOK_BIT_NOT: Int = 24
-const TOK_SHL: Int = 25
-const TOK_SHR: Int = 26
-const TOK_ARROW: Int = 27
-const TOK_FAT_ARROW: Int = 28
-const TOK_DOT: Int = 29
-const TOK_DOTDOT: Int = 30
-const TOK_COLON: Int = 31
-const TOK_COLONCOLON: Int = 32
-const TOK_SEMICOLON: Int = 33
-const TOK_COMMA: Int = 34
-const TOK_AT: Int = 35
-const TOK_HASH: Int = 36
-const TOK_QUESTION: Int = 37
-const TOK_LPAREN: Int = 38
-const TOK_RPAREN: Int = 39
-const TOK_LBRACKET: Int = 40
-const TOK_RBRACKET: Int = 41
-const TOK_LBRACE: Int = 42
-const TOK_RBRACE: Int = 43
-const TOK_NEWLINE: Int = 44
-const TOK_COMMENT: Int = 45
-const TOK_EOF: Int = 46
-const TOK_ERROR: Int = 47
-
-// ============================================================================
-// TOKEN HANDLE
-// ============================================================================
-// Token Layout: [type, lexeme_ptr, line, col]
-
-func token_new(typ: Int, lexeme: String, line: Int, col: Int) -> Int {
-    let t = vec_new()
-    vec_push(t, typ)
-    vec_push(t, lexeme)
-    vec_push(t, line)
-    vec_push(t, col)
+// Token: [type, value, line]
+func lexer_token_new(typ: Int, val: Int, line: Int) -> Int {
+    let t = ae_malloc(24)
+    ae_store64(t, typ)
+    ae_store64(t + 8, val)
+    ae_store64(t + 16, line)
     t
 }
 
-func token_type(t: Int) -> Int { vec_get(t, 0) }
-func token_lexeme(t: Int) -> String { vec_get(t, 1) as String }
-func token_line(t: Int) -> Int { vec_get(t, 2) }
-func token_col(t: Int) -> Int { vec_get(t, 3) }
+func lexer_token_type(t: Int) -> Int { ae_load64(t) }
+func lexer_token_value(t: Int) -> Int { ae_load64(t + 8) }
+func lexer_token_line(t: Int) -> Int { ae_load64(t + 16) }
 
-// ============================================================================
-// KEYWORDS
-// ============================================================================
-
-func is_keyword(s: String) -> Bool {
-    s == "func" || s == "let" || s == "const" || s == "if" || s == "else" ||
-    s == "while" || s == "for" || s == "in" || s == "loop" || s == "break" ||
-    s == "continue" || s == "return" || s == "struct" || s == "enum" || s == "impl" ||
-    s == "trait" || s == "type" || s == "use" || s == "pub" || s == "mut" ||
-    s == "match" || s == "true" || s == "false" || s == "null"
-}
-
-// ============================================================================
-// LEXER STATE
-// ============================================================================
-// Lexer Layout:
-// [0] source (String)
-// [1] tokens (Vec of TokenHandles)
-// [2] start (Int)
-// [3] current (Int)
-// [4] line (Int)
-// [5] column (Int)
-
-func lexer_new(source: String) -> Int {
-    let l = vec_new()
-    vec_push(l, source)
-    vec_push(l, vec_new())
-    vec_push(l, 0)
-    vec_push(l, 0)
-    vec_push(l, 1) // line
-    vec_push(l, 1) // col
+// Lexer state
+func create_lexer(src: Int, len: Int) -> Int {
+    let l = ae_malloc(32)
+    ae_store64(l, src)
+    ae_store64(l + 8, len)
+    ae_store64(l + 16, 0)  // pos
+    ae_store64(l + 24, 1)  // line
     l
 }
 
-func lex_source(l: Int) -> String { vec_get(l, 0) as String }
-func lex_tokens(l: Int) -> Int { vec_get(l, 1) }
-func lex_start(l: Int) -> Int { vec_get(l, 2) }
-func lex_current(l: Int) -> Int { vec_get(l, 3) }
-func lex_line(l: Int) -> Int { vec_get(l, 4) }
-func lex_col(l: Int) -> Int { vec_get(l, 5) }
-
-func lex_set_start(l: Int, v: Int) { vec_set(l, 2, v) }
-func lex_set_current(l: Int, v: Int) { vec_set(l, 3, v) }
-func lex_set_line(l: Int, v: Int) { vec_set(l, 4, v) }
-func lex_set_col(l: Int, v: Int) { vec_set(l, 5, v) }
-
-func is_at_end(lex: Int) -> Bool {
-    lex_current(lex) >= string_len(lex_source(lex))
+func lexer_peek_char(l: Int) -> Int {
+    let pos = ae_load64(l + 16)
+    let len = ae_load64(l + 8)
+    if pos >= len { return 0 }
+    let src = ae_load64(l)
+    ae_load8(src + pos)
 }
 
-func lex_peek(lex: Int) -> String {
-    if is_at_end(lex) {
-        "\0"
-    } else {
-        char_at(lex_source(lex), lex_current(lex))
-    }
+func lexer_advance_char(l: Int) {
+    let pos = ae_load64(l + 16)
+    ae_store64(l + 16, pos + 1)
 }
 
-func lex_peek_next(lex: Int) -> String {
-    if lex_current(lex) + 1 >= string_len(lex_source(lex)) {
-        "\0"
-    } else {
-        char_at(lex_source(lex), lex_current(lex) + 1)
+func lexer_get_token(l: Int) -> Int {
+    let c = lexer_peek_char(l)
+    if c == 0 {
+        return lexer_token_new(L_TOK_EOF, 0, ae_load64(l + 24))
     }
-}
-
-func lex_advance(lex: Int) -> String {
-    let c = lex_peek(lex)
-    let cur = lex_current(lex)
-    lex_set_current(lex, cur + 1)
-    
-    if c == "\n" {
-        lex_set_line(lex, lex_line(lex) + 1)
-        lex_set_col(lex, 1)
-    } else {
-        lex_set_col(lex, lex_col(lex) + 1)
-    }
-    c
-}
-
-func match_char(lex: Int, expected: String) -> Bool {
-    if is_at_end(lex) { return false }
-    if lex_peek(lex) != expected { return false }
-    lex_advance(lex)
-    true
-}
-
-func add_token(lex: Int, typ: Int) {
-    let text = substring(lex_source(lex), lex_start(lex), lex_current(lex))
-    let t = token_new(typ, text, lex_line(lex), lex_col(lex))
-    vec_push(lex_tokens(lex), t)
-}
-
-func add_token_str(lex: Int, typ: Int, lexeme: String) {
-    let t = token_new(typ, lexeme, lex_line(lex), lex_col(lex))
-    vec_push(lex_tokens(lex), t)
-}
-
-// ============================================================================
-// CHARACTER CLASSES
-// ============================================================================
-
-func is_char(c: String, lit: String) -> Bool {
-    // Check if single char string equals char literal
-    // In primitive runtime, strings are pointers.
-    // Literal "(" is a new pointer EACH TIME? No, typically const string.
-    // But char_at returns new string if implemented as SUBSTRING(i, i+1).
-    // Runtime char_at needs to return... wait.
-    // If char_at(s, i) returns String (malloced), pointer equality FAILS.
-    // We MUST usage str_eq.
-    // Or usage peek8.
-    
-    // Better: change is_char to usage runtime check.
-    // But we don't have str_eq binding in lexer.aether yet?
-    // We assumed primitives.
-    
-    // HACK: Use first byte comparison.
-    // Since we know they are 1-char strings (ASCII).
-    let c_ptr = c as Int // Cast handle to address
-    let lit_ptr = lit as Int
-    if c_ptr == 0 || lit_ptr == 0 { return false }
-    
-    // Usage generic peek8 from runtime (implied available because std.native uses it?)
-    // But lexer.aether imports std.collections etc.
-    // We need to declare peek8 if not imported.
-    // It is NOT imported by default in stage1 setup?
-    // native_compiler attempts to compile 'peek8'.
-    // If 'peek8' is not defined in Aether source, it fails.
-    // std.core usually defines iterface to peek8.
-    // But for now, let's assume str_eq is available (runtime.c has it).
-    // We must DECLARE it:
-    // func aether_str_eq(a: String, b: String) -> Bool; (Extern)
-    // But externs not supported in bootstrap parser?
-    // Bootstrap parser parses all funcs.
-    
-    // Let's implement primitive_pointer_eq for now?
-    // Pointer eq fails.
-    
-    // I will use a special FFI call or assume str_eq is available via `use prelude`.
-    // runtime.c has `str_eq`. 
-    // Does prelude.aether wrap it?
-    // We haven't built prelude.aether for stage 1.
-    // stage1 uses `import std.core`.
-    
-    // I will implementing is_char using peek8 if I can access it.
-    // But peek8 is a "native" function in `native/arm64`.
-    
-    // WAIT. Simplest fix: `char_at` in runtime.c returns INTEGER (int64).
-    // And `lex_peek` returns Int.
-    // Then `if c == 40` works.
-    // I need to change `lexer.aether` to assume Int return.
-    // And I need to chang `runtime.c` `char_at` to return Int?
-    // No, `lex_peek` calls `char_at`.
-    // I update `char_at` call in `lex_peek` to `char_code_at`?
-    
-    // Call str_eq directly - links to _str_eq in runtime.c
-    str_eq(c, lit)
-}
-
-// NOTE: str_eq is provided by bootstrap/runtime.c
-// We do NOT define it here to avoid symbol collision.
-// The bootstrap compiler allows undefined functions (resolved at link time).
-
-func is_digit(c: String) -> Bool {
-    c >= "0" && c <= "9"
-}
-
-func is_alpha(c: String) -> Bool {
-    (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || c == "_"
-}
-
-func is_alphanumeric(c: String) -> Bool {
-    is_alpha(c) || is_digit(c)
-}
-
-// ============================================================================
-// SCANNING
-// ============================================================================
-
-func scan_token(lex: Int) {
-    lex_set_start(lex, lex_current(lex))
-    let c = lex_advance(lex)
-    
-    if is_char(c, "(") { add_token(lex, TOK_LPAREN) }
-    else if is_char(c, ")") { add_token(lex, TOK_RPAREN) }
-    else if is_char(c, "[") { add_token(lex, TOK_LBRACKET) }
-    else if is_char(c, "]") { add_token(lex, TOK_RBRACKET) }
-    else if is_char(c, "{") { add_token(lex, TOK_LBRACE) }
-    else if is_char(c, "}") { add_token(lex, TOK_RBRACE) }
-    else if is_char(c, ",") { add_token(lex, TOK_COMMA) }
-    else if is_char(c, ";") { add_token(lex, TOK_SEMICOLON) }
-    else if is_char(c, "@") { add_token(lex, TOK_AT) }
-    else if is_char(c, "#") { add_token(lex, TOK_HASH) }
-    else if is_char(c, "?") { add_token(lex, TOK_QUESTION) }
-    else if is_char(c, "~") { add_token(lex, TOK_BIT_NOT) }
-    else if is_char(c, "%") { add_token(lex, TOK_PERCENT) }
-    else if is_char(c, "^") { add_token(lex, TOK_BIT_XOR) }
-    else if is_char(c, "+") { add_token(lex, TOK_PLUS) }
-    else if is_char(c, "*") { add_token(lex, TOK_STAR) }
-    else if is_char(c, "-") {
-        if match_char(lex, ">") { add_token(lex, TOK_ARROW) }
-        else { add_token(lex, TOK_MINUS) }
-    }
-    else if is_char(c, "=") {
-        if match_char(lex, "=") { add_token(lex, TOK_EQEQ) }
-        else if match_char(lex, ">") { add_token(lex, TOK_FAT_ARROW) }
-        else { add_token(lex, TOK_EQ) }
-    }
-    else if is_char(c, "!") {
-        if match_char(lex, "=") { add_token(lex, TOK_NE) }
-        else { add_token(lex, TOK_NOT) }
-    }
-    else if is_char(c, "<") {
-        if match_char(lex, "=") { add_token(lex, TOK_LE) }
-        else if match_char(lex, "<") { add_token(lex, TOK_SHL) }
-        else { add_token(lex, TOK_LT) }
-    }
-    else if is_char(c, ">") {
-        if match_char(lex, "=") { add_token(lex, TOK_GE) }
-        else if match_char(lex, ">") { add_token(lex, TOK_SHR) }
-        else { add_token(lex, TOK_GT) }
-    }
-    else if is_char(c, "&") {
-        if match_char(lex, "&") { add_token(lex, TOK_AND) }
-        else { add_token(lex, TOK_BIT_AND) }
-    }
-    else if is_char(c, "|") {
-        if match_char(lex, "|") { add_token(lex, TOK_OR) }
-        else { add_token(lex, TOK_BIT_OR) }
-    }
-    else if is_char(c, ":") {
-        if match_char(lex, ":") { add_token(lex, TOK_COLONCOLON) }
-        else { add_token(lex, TOK_COLON) }
-    }
-    else if is_char(c, ".") {
-        if match_char(lex, ".") { add_token(lex, TOK_DOTDOT) }
-        else { add_token(lex, TOK_DOT) }
-    }
-    else if is_char(c, "/") {
-        if match_char(lex, "/") {
-            while lex_peek(lex) != "\n" && !is_at_end(lex) {
-                lex_advance(lex)
-            }
-        } else if match_char(lex, "*") {
-            scan_block_comment(lex)
-        } else {
-            add_token(lex, TOK_SLASH)
-        }
-    }
-    else if is_char(c, " ") { }
-    else if is_char(c, "\r") { }
-    else if is_char(c, "\t") { }
-    else if is_char(c, "\n") { }
-    else if is_char(c, "\"") { scan_string(lex) }
-    else {
-        if is_digit(c) {
-            scan_number(lex)
-        } else if is_alpha(c) {
-            scan_identifier(lex)
-        } else {
-            add_token_str(lex, TOK_ERROR, "Unexpected char: " + c)
-        }
-    }
-}
-
-func scan_block_comment(lex: Int) {
-    let depth = 1
-    while depth > 0 && !is_at_end(lex) {
-        if lex_peek(lex) == "/" && lex_peek_next(lex) == "*" {
-            lex_advance(lex); lex_advance(lex)
-            depth = depth + 1
-        } else if lex_peek(lex) == "*" && lex_peek_next(lex) == "/" {
-            lex_advance(lex); lex_advance(lex)
-            depth = depth - 1
-        } else {
-            lex_advance(lex)
-        }
-    }
-}
-
-func scan_string(lex: Int) {
-    while lex_peek(lex) != "\"" && !is_at_end(lex) {
-        if lex_peek(lex) == "\\" {
-            lex_advance(lex); lex_advance(lex)
-        } else {
-            lex_advance(lex)
-        }
-    }
-    
-    if is_at_end(lex) {
-        add_token_str(lex, TOK_ERROR, "Unterminated string")
-        return
-    }
-    
-    lex_advance(lex) // closing quote
-    let value = substring(lex_source(lex), lex_start(lex) + 1, lex_current(lex) - 1)
-    add_token_str(lex, TOK_STRING_LIT, value)
-}
-
-func scan_number(lex: Int) {
-    while is_digit(lex_peek(lex)) { lex_advance(lex) }
-    
-    if lex_peek(lex) == "." && is_digit(lex_peek_next(lex)) {
-        lex_advance(lex)
-        while is_digit(lex_peek(lex)) { lex_advance(lex) }
-        add_token(lex, TOK_FLOAT_LIT)
-    } else {
-        add_token(lex, TOK_INT_LIT)
-    }
-}
-
-func scan_identifier(lex: Int) {
-    while is_alphanumeric(lex_peek(lex)) { lex_advance(lex) }
-    
-    let text = substring(lex_source(lex), lex_start(lex), lex_current(lex))
-    if text == "true" || text == "false" {
-        add_token(lex, TOK_BOOL_LIT)
-    } else if is_keyword(text) {
-        add_token(lex, TOK_KEYWORD)
-    } else {
-        add_token(lex, TOK_IDENT)
-    }
-}
-
-// ============================================================================
-// ENTRY
-// ============================================================================
-
-/// Tokenize (returns handle to token vec)
-func lexer_tokenize(source: String) -> Int {
-    let lex = lexer_new(source)
-    while !is_at_end(lex) {
-        scan_token(lex)
-    }
-    add_token_str(lex, TOK_EOF, "")
-    lex_tokens(lex)
+    lexer_advance_char(l)
+    lexer_token_new(L_TOK_PUNCT, c, ae_load64(l + 24))
 }

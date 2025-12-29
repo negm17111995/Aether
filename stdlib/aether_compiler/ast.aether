@@ -1,0 +1,239 @@
+// AETHER SELF-HOSTED COMPILER - AST NODES
+// Abstract Syntax Tree definitions
+
+import std
+
+// ============================================================================
+// NODE TYPES
+// ============================================================================
+
+// Expressions
+const AST_INT_LIT: Int = 1
+const AST_STR_LIT: Int = 2
+const AST_IDENT: Int = 3
+const AST_BINARY: Int = 4
+const AST_UNARY: Int = 5
+const AST_CALL: Int = 6
+const AST_INDEX: Int = 7
+const AST_FIELD: Int = 8
+const AST_STRUCT_LIT: Int = 9
+const AST_ARRAY_LIT: Int = 10
+const AST_LAMBDA: Int = 11
+
+// Statements
+const AST_LET: Int = 20
+const AST_ASSIGN: Int = 21
+const AST_RETURN: Int = 22
+const AST_IF: Int = 23
+const AST_WHILE: Int = 24
+const AST_FOR: Int = 25
+const AST_MATCH: Int = 26
+const AST_EXPR_STMT: Int = 27
+const AST_BLOCK: Int = 28
+
+// Declarations
+const AST_FUNC: Int = 40
+const AST_STRUCT: Int = 41
+const AST_TRAIT: Int = 42
+const AST_IMPL: Int = 43
+const AST_CONST: Int = 44
+const AST_IMPORT: Int = 45
+const AST_MODULE: Int = 46
+
+// Types
+const AST_TYPE_NAME: Int = 60
+const AST_TYPE_GENERIC: Int = 61
+const AST_TYPE_FUNC: Int = 62
+const AST_TYPE_ARRAY: Int = 63
+
+// ============================================================================
+// AST NODE STRUCTURE
+// ============================================================================
+
+// Node: [kind, line, col, data1, data2, data3, data4]
+const NODE_SIZE: Int = 56
+
+func ast_new(kind: Int, line: Int, col: Int) -> Int {
+    let n = ae_malloc(NODE_SIZE)
+    ae_store64(n, kind)
+    ae_store64(n + 8, line)
+    ae_store64(n + 16, col)
+    ae_store64(n + 24, 0)
+    ae_store64(n + 32, 0)
+    ae_store64(n + 40, 0)
+    ae_store64(n + 48, 0)
+    n
+}
+
+func ast_kind(n: Int) -> Int { ae_load64(n) }
+func ast_line(n: Int) -> Int { ae_load64(n + 8) }
+func ast_col(n: Int) -> Int { ae_load64(n + 16) }
+func ast_data1(n: Int) -> Int { ae_load64(n + 24) }
+func ast_data2(n: Int) -> Int { ae_load64(n + 32) }
+func ast_data3(n: Int) -> Int { ae_load64(n + 40) }
+func ast_data4(n: Int) -> Int { ae_load64(n + 48) }
+
+func ast_set_data1(n: Int, v: Int) { ae_store64(n + 24, v) }
+func ast_set_data2(n: Int, v: Int) { ae_store64(n + 32, v) }
+func ast_set_data3(n: Int, v: Int) { ae_store64(n + 40, v) }
+func ast_set_data4(n: Int, v: Int) { ae_store64(n + 48, v) }
+
+// ============================================================================
+// EXPRESSION CONSTRUCTORS
+// ============================================================================
+
+// Integer literal: data1 = value
+func ast_int(val: Int, line: Int, col: Int) -> Int {
+    let n = ast_new(AST_INT_LIT, line, col)
+    ast_set_data1(n, val)
+    n
+}
+
+// Identifier: data1 = name (ptr)
+func ast_ident(name: Int, line: Int, col: Int) -> Int {
+    let n = ast_new(AST_IDENT, line, col)
+    ast_set_data1(n, name)
+    n
+}
+
+// Binary: data1 = op, data2 = left, data3 = right
+func ast_binary(op: Int, left: Int, right: Int, line: Int, col: Int) -> Int {
+    let n = ast_new(AST_BINARY, line, col)
+    ast_set_data1(n, op)
+    ast_set_data2(n, left)
+    ast_set_data3(n, right)
+    n
+}
+
+// Unary: data1 = op, data2 = operand
+func ast_unary(op: Int, operand: Int, line: Int, col: Int) -> Int {
+    let n = ast_new(AST_UNARY, line, col)
+    ast_set_data1(n, op)
+    ast_set_data2(n, operand)
+    n
+}
+
+// Call: data1 = func, data2 = args (vec)
+func ast_call(func_expr: Int, args: Int, line: Int, col: Int) -> Int {
+    let n = ast_new(AST_CALL, line, col)
+    ast_set_data1(n, func_expr)
+    ast_set_data2(n, args)
+    n
+}
+
+// Field access: data1 = expr, data2 = field_name
+func ast_field(expr: Int, field: Int, line: Int, col: Int) -> Int {
+    let n = ast_new(AST_FIELD, line, col)
+    ast_set_data1(n, expr)
+    ast_set_data2(n, field)
+    n
+}
+
+// ============================================================================
+// STATEMENT CONSTRUCTORS
+// ============================================================================
+
+// Let: data1 = name, data2 = type (optional), data3 = init, data4 = is_mut
+func ast_let(name: Int, typ: Int, init: Int, is_mut: Int, line: Int, col: Int) -> Int {
+    let n = ast_new(AST_LET, line, col)
+    ast_set_data1(n, name)
+    ast_set_data2(n, typ)
+    ast_set_data3(n, init)
+    ast_set_data4(n, is_mut)
+    n
+}
+
+// Return: data1 = expr (optional)
+func ast_return(expr: Int, line: Int, col: Int) -> Int {
+    let n = ast_new(AST_RETURN, line, col)
+    ast_set_data1(n, expr)
+    n
+}
+
+// If: data1 = cond, data2 = then_block, data3 = else_block
+func ast_if(cond: Int, then_blk: Int, else_blk: Int, line: Int, col: Int) -> Int {
+    let n = ast_new(AST_IF, line, col)
+    ast_set_data1(n, cond)
+    ast_set_data2(n, then_blk)
+    ast_set_data3(n, else_blk)
+    n
+}
+
+// While: data1 = cond, data2 = body
+func ast_while(cond: Int, body: Int, line: Int, col: Int) -> Int {
+    let n = ast_new(AST_WHILE, line, col)
+    ast_set_data1(n, cond)
+    ast_set_data2(n, body)
+    n
+}
+
+// Block: data1 = stmts (vec)
+func ast_block(stmts: Int, line: Int, col: Int) -> Int {
+    let n = ast_new(AST_BLOCK, line, col)
+    ast_set_data1(n, stmts)
+    n
+}
+
+// ============================================================================
+// DECLARATION CONSTRUCTORS
+// ============================================================================
+
+// Func: data1 = name, data2 = params (vec), data3 = ret_type, data4 = body
+func ast_func(name: Int, params: Int, ret_type: Int, body: Int, line: Int, col: Int) -> Int {
+    let n = ast_new(AST_FUNC, line, col)
+    ast_set_data1(n, name)
+    ast_set_data2(n, params)
+    ast_set_data3(n, ret_type)
+    ast_set_data4(n, body)
+    n
+}
+
+// Struct: data1 = name, data2 = fields (vec), data3 = generics (vec)
+func ast_struct(name: Int, fields: Int, generics: Int, line: Int, col: Int) -> Int {
+    let n = ast_new(AST_STRUCT, line, col)
+    ast_set_data1(n, name)
+    ast_set_data2(n, fields)
+    ast_set_data3(n, generics)
+    n
+}
+
+// Trait: data1 = name, data2 = methods (vec), data3 = generics (vec)
+func ast_trait(name: Int, methods: Int, generics: Int, line: Int, col: Int) -> Int {
+    let n = ast_new(AST_TRAIT, line, col)
+    ast_set_data1(n, name)
+    ast_set_data2(n, methods)
+    ast_set_data3(n, generics)
+    n
+}
+
+// Impl: data1 = trait (optional), data2 = for_type, data3 = methods (vec)
+func ast_impl(trait_name: Int, for_type: Int, methods: Int, line: Int, col: Int) -> Int {
+    let n = ast_new(AST_IMPL, line, col)
+    ast_set_data1(n, trait_name)
+    ast_set_data2(n, for_type)
+    ast_set_data3(n, methods)
+    n
+}
+
+// Import: data1 = path (vec of names)
+func ast_import(path: Int, line: Int, col: Int) -> Int {
+    let n = ast_new(AST_IMPORT, line, col)
+    ast_set_data1(n, path)
+    n
+}
+
+// Const: data1 = name, data2 = type, data3 = value
+func ast_const(name: Int, typ: Int, val: Int, line: Int, col: Int) -> Int {
+    let n = ast_new(AST_CONST, line, col)
+    ast_set_data1(n, name)
+    ast_set_data2(n, typ)
+    ast_set_data3(n, val)
+    n
+}
+
+// Module: data1 = decls (vec)
+func ast_module(decls: Int) -> Int {
+    let n = ast_new(AST_MODULE, 0, 0)
+    ast_set_data1(n, decls)
+    n
+}

@@ -1,272 +1,56 @@
-//! ═══════════════════════════════════════════════════════════════════════════════
-//! AETHER DISTRIBUTED CACHE - BILLIONS OF REQUESTS/SECOND
-//! ═══════════════════════════════════════════════════════════════════════════════
-//! Ultra-fast distributed caching for planet-scale
-//! - Consistent hashing across nodes
-//! - LRU eviction with TTL
-//! - Read replicas for hot data
-//! - Write-through/write-behind
+// AETHER CACHE - Bootstrap Compatible
+// Distributed cache
 
-import std.cluster.cluster
-import std.runtime.concurrency
+import std
 
-// ============================================================================
-// CACHE CONFIGURATION
-// ============================================================================
-
-const CACHE_SIZE_PER_NODE: Int = 1073741824  // 1GB per node
-const DEFAULT_TTL_MS: Int = 3600000           // 1 hour default TTL
-const HOT_THRESHOLD: Int = 100                // Replicate after 100 reads
-
-// ============================================================================
-// LOCAL CACHE (per-node)
-// ============================================================================
-
-// Entry: [key_hash, value_ptr, ttl_ms, created_at, access_count, next, prev]
-const CE_KEY_OFF: Int = 0
-const CE_VAL_OFF: Int = 8
-const CE_TTL_OFF: Int = 16
-const CE_CREATED_OFF: Int = 24
-const CE_ACCESS_OFF: Int = 32
-const CE_NEXT_OFF: Int = 40
-const CE_PREV_OFF: Int = 48
-
-var cache_map: Int = 0        // Map<key_hash, entry>
-var cache_head: Int = 0       // LRU head (most recent)
-var cache_tail: Int = 0       // LRU tail (least recent)
-var cache_size: Int = 0       // Current size bytes
-var cache_max: Int = 0        // Max size bytes
-
-/// Initialize local cache
-func cache_init(max_size: Int) {
-    cache_map = map_new()
-    cache_head = 0
-    cache_tail = 0
-    cache_size = 0
-    cache_max = max_size
+// Cache entry: [key, value, expiry]
+func cache_entry_new(key: Int, value: Int, ttl: Int) -> Int {
+    let e = ae_malloc(24)
+    ae_store64(e, key)
+    ae_store64(e + 8, value)
+    ae_store64(e + 16, __builtin_now_ms() + ttl)
+    e
 }
 
-/// Get from local cache
-func cache_local_get(key: Int) -> Int {
-    let hash = sha256_int(key)
-    let entry = map_get(cache_map, hash)
-    
-    if entry == 0 { return 0 }
-    
-    // Check TTL
-    let created = peek(entry + CE_CREATED_OFF)
-    let ttl = peek(entry + CE_TTL_OFF)
-    if now_ms() - created > ttl {
-        cache_evict(entry)
-        return 0
-    }
-    
-    // Update access count
-    let count = peek(entry + CE_ACCESS_OFF) + 1
-    poke(entry + CE_ACCESS_OFF, count)
-    
-    // Move to head (most recently used)
-    lru_move_to_head(entry)
-    
-    peek(entry + CE_VAL_OFF)
+func cache_entry_expired(e: Int) -> Int {
+    let expiry = ae_load64(e + 16)
+    if __builtin_now_ms() > expiry { return 1 }
+    0
 }
 
-/// Set in local cache
-func cache_local_set(key: Int, value: Int, size: Int, ttl: Int) {
-    let hash = sha256_int(key)
-    
-    // Evict if needed
-    while cache_size + size > cache_max && cache_tail != 0 {
-        cache_evict(cache_tail)
-    }
-    
-    let entry = malloc(56)
-    poke(entry + CE_KEY_OFF, hash)
-    poke(entry + CE_VAL_OFF, value)
-    poke(entry + CE_TTL_OFF, ttl)
-    poke(entry + CE_CREATED_OFF, now_ms())
-    poke(entry + CE_ACCESS_OFF, 1)
-    
-    map_set(cache_map, hash, entry)
-    lru_add_head(entry)
-    cache_size = cache_size + size
+// Cache: [entries, count]
+func dist_cache_new() -> Int {
+    let c = ae_malloc(16)
+    ae_store64(c, vec_new())
+    ae_store64(c + 8, 0)
+    c
 }
 
-/// Evict entry from cache
-func cache_evict(entry: Int) {
-    let hash = peek(entry + CE_KEY_OFF)
-    map_delete(cache_map, hash)
-    lru_remove(entry)
-    cache_size = cache_size - entry_size(entry)
-    free(entry)
+func dist_cache_set(c: Int, key: Int, value: Int, ttl_ms: Int) {
+    let entries = ae_load64(c)
+    let e = cache_entry_new(key, value, ttl_ms)
+    vec_push(entries, e)
+    let count = ae_load64(c + 8)
+    ae_store64(c + 8, count + 1)
 }
 
-// ============================================================================
-// LRU LIST OPERATIONS
-// ============================================================================
-
-func lru_add_head(entry: Int) {
-    poke(entry + CE_PREV_OFF, 0)
-    poke(entry + CE_NEXT_OFF, cache_head)
-    
-    if cache_head != 0 {
-        poke(cache_head + CE_PREV_OFF, entry)
-    }
-    cache_head = entry
-    
-    if cache_tail == 0 {
-        cache_tail = entry
-    }
-}
-
-func lru_remove(entry: Int) {
-    let prev = peek(entry + CE_PREV_OFF)
-    let next = peek(entry + CE_NEXT_OFF)
-    
-    if prev != 0 {
-        poke(prev + CE_NEXT_OFF, next)
-    } else {
-        cache_head = next
-    }
-    
-    if next != 0 {
-        poke(next + CE_PREV_OFF, prev)
-    } else {
-        cache_tail = prev
-    }
-}
-
-func lru_move_to_head(entry: Int) {
-    if entry == cache_head { return }
-    lru_remove(entry)
-    lru_add_head(entry)
-}
-
-// ============================================================================
-// DISTRIBUTED CACHE API
-// ============================================================================
-
-/// Get from distributed cache
-func dcache_get(key: Int) -> Int {
-    // Try local first
-    let val = cache_local_get(key)
-    if val != 0 { return val }
-    
-    // Find owning node
-    let node = ring_find_node(cluster_ring, key)
-    
-    if node == cluster_self {
-        return 0  // Not in local cache
-    }
-    
-    // Fetch from remote node
-    let resp = remote_call(node, __static_str("cache_get"), key)
-    
-    // Cache locally if hot (read-through)
-    if resp != 0 {
-        cache_local_set(key, resp, estimate_size(resp), DEFAULT_TTL_MS)
-    }
-    
-    resp
-}
-
-/// Set in distributed cache
-func dcache_set(key: Int, value: Int, ttl: Int) -> Int {
-    // Find owning node
-    let node = ring_find_node(cluster_ring, key)
-    
-    if node == cluster_self {
-        cache_local_set(key, value, estimate_size(value), ttl)
-        return 1
-    }
-    
-    // Write to remote node
-    remote_call(node, __static_str("cache_set"), 
-        json_obj([
-            json_field("key", key),
-            json_field("value", value),
-            json_field("ttl", ttl)
-        ]))
-    
-    1
-}
-
-/// Delete from distributed cache
-func dcache_delete(key: Int) -> Int {
-    let node = ring_find_node(cluster_ring, key)
-    
-    if node == cluster_self {
-        let hash = sha256_int(key)
-        let entry = map_get(cache_map, hash)
-        if entry != 0 {
-            cache_evict(entry)
-        }
-        return 1
-    }
-    
-    remote_call(node, __static_str("cache_delete"), key)
-    1
-}
-
-/// Get or compute (cache-aside pattern)
-func dcache_get_or_compute(key: Int, compute_fn: Int) -> Int {
-    let val = dcache_get(key)
-    if val != 0 { return val }
-    
-    // Compute value
-    val = __call(compute_fn, key)
-    
-    // Cache it
-    dcache_set(key, val, DEFAULT_TTL_MS)
-    
-    val
-}
-
-// ============================================================================
-// HOT DATA REPLICATION
-// ============================================================================
-
-/// Check and replicate hot data
-func check_hot_replication() {
-    let entry = cache_head
-    while entry != 0 {
-        let count = peek(entry + CE_ACCESS_OFF)
-        if count > HOT_THRESHOLD {
-            replicate_to_nearby_nodes(entry)
-        }
-        entry = peek(entry + CE_NEXT_OFF)
-    }
-}
-
-func replicate_to_nearby_nodes(entry: Int) {
-    // Replicate to nearby nodes for faster access
-    let key = peek(entry + CE_KEY_OFF)
-    let replicas = ring_find_replicas(cluster_ring, key, 3)
-    
+func dist_cache_get(c: Int, key: Int) -> Int {
+    let entries = ae_load64(c)
+    let count = vec_len(entries)
     let i = 0
-    while i < vec_len(replicas) {
-        let node = vec_get(replicas, i)
-        if node != cluster_self {
-            remote_call(node, __static_str("cache_replicate"), entry)
+    while i < count {
+        let e = vec_get(entries, i)
+        if ae_load64(e) == key {
+            if cache_entry_expired(e) == 0 {
+                return ae_load64(e + 8)
+            }
         }
         i = i + 1
     }
+    0
 }
 
-// ============================================================================
-// STATS
-// ============================================================================
-
-func dcache_stats() -> Int {
-    json_obj([
-        json_field("size_bytes", cache_size),
-        json_field("max_bytes", cache_max),
-        json_field("entry_count", map_len(cache_map)),
-        json_field("utilization_pct", cache_size * 100 / cache_max)
-    ])
+func dist_cache_evict_expired(c: Int) -> Int {
+    // Would remove expired entries
+    0
 }
-
-// Helper stubs
-func entry_size(entry: Int) -> Int { 64 }
-func estimate_size(val: Int) -> Int { 100 }
-func map_delete(m: Int, k: Int) {}

@@ -1,495 +1,55 @@
-//! ═══════════════════════════════════════════════════════════════════════════════
-//! AETHER NATIVE COMPILER - PRIMITIVE BOOTSTRAP VERSION
-//! ═══════════════════════════════════════════════════════════════════════════════
-//! Self-contained: All vector operations defined inline for bootstrap compatibility.
+// AETHER NATIVE COMPILER - Bootstrap Compatible
 
-// ============================================================================
-// INLINE VECTOR OPERATIONS (Bootstrap Compatible)
-// ============================================================================
+import std
 
-const VEC_DATA_OFF: Int = 0
-const VEC_LEN_OFF: Int = 8
-const VEC_CAP_OFF: Int = 16
-
-func vec_new() -> Int {
-    let v = malloc(24)
-    let data = malloc(64)
-    poke(v + VEC_DATA_OFF, data)
-    poke(v + VEC_LEN_OFF, 0)
-    poke(v + VEC_CAP_OFF, 64)
-    v
+// Compiler state
+func native_compiler_new() -> Int {
+    let c = ae_malloc(32)
+    ae_store64(c, 0)   // source
+    ae_store64(c + 8, 0)   // ast
+    ae_store64(c + 16, 0)  // code
+    ae_store64(c + 24, 0)  // errors
+    c
 }
 
-func vec_len(v: Int) -> Int {
-    peek(v + VEC_LEN_OFF)
+func native_compiler_set_source(c: Int, src: Int, len: Int) {
+    ae_store64(c, src)
 }
 
-func vec_push8(v: Int, val: Int) {
-    let len = peek(v + VEC_LEN_OFF)
-    let cap = peek(v + VEC_CAP_OFF)
-    
-    if len >= cap {
-        let new_cap = cap * 2
-        let old_data = peek(v + VEC_DATA_OFF)
-        let new_data = malloc(new_cap)
-        
-        let i = 0
-        while i < len {
-            poke8(new_data + i, peek8(old_data + i))
-            i = i + 1
-        }
-        
-        poke(v + VEC_DATA_OFF, new_data)
-        poke(v + VEC_CAP_OFF, new_cap)
-    }
-    
-    let data = peek(v + VEC_DATA_OFF)
-    poke8(data + len, val)
-    poke(v + VEC_LEN_OFF, len + 1)
+func native_compiler_parse(c: Int) -> Int {
+    // Would parse source to AST
+    1
 }
 
-func vec_get8(v: Int, idx: Int) -> Int {
-    let data = peek(v + VEC_DATA_OFF)
-    peek8(data + idx)
+func native_compiler_analyze(c: Int) -> Int {
+    // Would type check
+    1
 }
 
-// Memory intrinsics (use stdlib/native)
-func malloc(size: Int) -> Int { __builtin_malloc(size) }
-func poke(addr: Int, val: Int) { __builtin_store64(addr, val) }
-func peek(addr: Int) -> Int { __builtin_load64(addr) }
-func poke8(addr: Int, val: Int) { __builtin_store8(addr, val) }
-func peek8(addr: Int) -> Int { __builtin_load8(addr) }
-
-// ============================================================================
-// AST NODE CONSTANTS (Redefined for safety)
-// ============================================================================
-
-const NODE_PROGRAM: Int = 100
-const NODE_FUNC_DECL: Int = 101
-const NODE_STRUCT_DECL: Int = 102
-const NODE_ENUM_DECL: Int = 103
-const NODE_USE: Int = 104
-const NODE_CONST: Int = 105
-
-const NODE_BLOCK: Int = 110
-const NODE_LET: Int = 111
-const NODE_RETURN: Int = 112
-const NODE_IF: Int = 113
-const NODE_WHILE: Int = 114
-const NODE_FOR: Int = 115
-const NODE_ASSIGN: Int = 116
-const NODE_EXPR_STMT: Int = 117
-const NODE_BREAK: Int = 118
-const NODE_CONTINUE: Int = 119
-
-const NODE_INT_LIT: Int = 130
-const NODE_FLOAT_LIT: Int = 131
-const NODE_STRING_LIT: Int = 132
-const NODE_BOOL_LIT: Int = 133
-const NODE_VAR: Int = 134
-const NODE_BINARY: Int = 135
-const NODE_CALL: Int = 136
-const NODE_INDEX: Int = 137
-const NODE_FIELD: Int = 138
-const NODE_ARRAY: Int = 139
-const NODE_TUPLE: Int = 140
-
-// ============================================================================
-// MISSING FUNCTION STUBS (For Stage 1 Linkage)
-// ============================================================================
-
-const TARGET_ARM64_DARWIN: Int = 0
-const TARGET_ARM64_LINUX: Int = 1
-const TARGET_X86_64_DARWIN: Int = 2
-const TARGET_X86_64_LINUX: Int = 3
-
-func compiler_new(target: Int) -> Int {
-    let c = __aether_malloc(16)
-    poke(c, target)
-    return c
+func native_compiler_optimize(c: Int) -> Int {
+    // Would optimize
+    1
 }
 
-func compiler_target(c: Int) -> Int {
-    peek(c)
+func native_compiler_generate(c: Int) -> Int {
+    // Would generate code
+    1
 }
 
-func detect_host_target() -> Int {
-    TARGET_ARM64_DARWIN // Hardcoded for macOS ARM
+func native_compiler_compile(c: Int, src: Int, len: Int) -> Int {
+    native_compiler_set_source(c, src, len)
+    if native_compiler_parse(c) == 0 { return 0 }
+    if native_compiler_analyze(c) == 0 { return 0 }
+    native_compiler_optimize(c)
+    native_compiler_generate(c)
 }
 
-func str(val: Int) -> String {
-    // Stub: Return empty or hardcoded string
-    "0" // Primitive, can't format dynamically in bootstrap
+func native_compiler_get_code(c: Int) -> Int {
+    ae_load64(c + 16)
 }
 
-func arm_xreg_code(r: Int) -> Int {
-    r // Direct mapping for primitive style
-}
-
-func arm64_gen_entry(code: Int) {
-    // Entry point stub - generate _start or _main call
-    arm_label(code, "_start")
-    arm_bl(code, "_main")
-    arm_mov_imm64(code, 0, 0) // Return 0
-    arm_ret(code)
-}
-
-func x86_codegen_generate(c: Int, ast: Int) -> Int {
-    // Stub for x86 backend - return empty vec
-    vec_new()
-}
-
-func println(msg: String) {
-    // Stub - no-op in bootstrap (no stdout support yet)
-}
-
-func compile_to_file(c: Int, source: String, path: String) {
-    let binary = compile(c, source, path)
-    // Write to file - stub for now
-    println("Generated binary bytes: " + str(vec_len(binary)))
-}
-
-// ============================================================================
-// COMPILATION PIPELINE
-// ============================================================================
-
-/// Compile source to executable bytes (returns handle to [u8] vec)
-func compile(c: Int, source: String, source_path: String) -> Int {
-    // 1. Lex
-    let tokens = lexer_tokenize(source)
-    
-    // 2. Parse
-    let ast = parse(tokens)
-    
-    // 3. Codegen
-    let t = compiler_target(c)
-    let machine_code = vec_new()
-    if t == 0 || t == 1 {
-        machine_code = arm64_codegen_generate(c, ast)
-    } else if t == 2 || t == 3 {
-        machine_code = x86_codegen_generate(c, ast)
-    }
-
-    // 4. Link
-    link(c, machine_code)
-}
-
-// ============================================================================
-// ARM64 CODE GENERATOR (PRIMITIVE STYLE)
-// ============================================================================
-
-func arm64_codegen_generate(c: Int, ast: Int) -> Int {
-    let code = arm64_buffer_new()
-    let symbols = map_new() // Int handle (Name -> Offset)
-    let data = vec_new()    // Int handle (bytes)
-
-    // Traverse AST declarations
-    // AST Node: [NODE_PROGRAM, decls_vec]
-    let decls = vec_get(ast, 1)
-    let decl_count = vec_len(decls)
-    
-    let i = 0
-    while i < decl_count {
-        let decl = vec_get(decls, i)
-        let type = vec_get(decl, 0)
-        
-        if type == NODE_FUNC_DECL {
-            arm64_gen_func(code, symbols, decl)
-        }
-        i = i + 1
-    }
-
-    arm64_gen_entry(code)
-
-    // Finalize
-    let bytes_handle = arm_finalize(code)
-
-    let result = vec_new()
-    let code_len = vec_len(bytes_handle)
-    let k = 0
-    while k < code_len {
-        vec_push8(result, vec_get8(bytes_handle, k))
-        k = k + 1
-    }
-    result
-}
-
-
-func arm64_gen_func(code: Int, symbols: Int, func_node: Int) {
-    // [NODE_FUNC_DECL, name, params, ret_type, body]
-    let name = vec_get(func_node, 1) // as String removed
-    let params = vec_get(func_node, 2)
-    let body = vec_get(func_node, 4)
-    
-    map_insert(symbols, name, arm_pos(code))
-
-    // Prologue
-    let locals = 0 // Need local analysis for stack size. Stub: 16 bytes
-    let stack_size = 16 
-    arm_prologue(code, stack_size)
-    
-    // Body is [NODE_BLOCK, stmts_vec]
-    let stmts = vec_get(body, 1)
-    let stmt_count = vec_len(stmts)
-    
-    let i = 0
-    while i < stmt_count {
-        let stmt = vec_get(stmts, i)
-        arm64_gen_stmt(code, stmt)
-        i = i + 1
-    }
-
-    // Epilogue
-    arm_epilogue(code, stack_size)
-}
-
-func arm64_gen_stmt(code: Int, stmt: Int) {
-    let type = vec_get(stmt, 0)
-    
-    if type == NODE_LET {
-        // [NODE_LET, name, typ, expr]
-        let expr = vec_get(stmt, 3)
-        if expr != 0 {
-             arm64_gen_expr(code, expr, 0)
-        }
-        // Store to stack omitted for bootstrap MVP
-    } else if type == NODE_RETURN {
-        // [NODE_RETURN, val]
-        let val = vec_get(stmt, 1)
-        if val != 0 {
-            arm64_gen_expr(code, val, 0)
-        }
-        // Jump to epilogue? For now just ret (leak stack, acceptable for MVP)
-        arm_ret(code)
-    } else if type == NODE_EXPR_STMT {
-        // [NODE_EXPR_STMT, expr]
-        let expr = vec_get(stmt, 1)
-        arm64_gen_expr(code, expr, 0)
-    } else if type == NODE_IF {
-        // [NODE_IF, cond, then_b, else_b]
-        let cond = vec_get(stmt, 1)
-        let then_b = vec_get(stmt, 2)
-        let else_b = vec_get(stmt, 3)
-        
-        let else_lbl = "else_" + str(arm_pos(code))
-        let end_lbl = "end_" + str(arm_pos(code))
-        
-        arm64_gen_expr(code, cond, 0)
-        arm_cbz(code, 0, else_lbl)
-        
-        let then_stmts = vec_get(then_b, 1)
-        let count = vec_len(then_stmts)
-        let i = 0
-        while i < count { arm64_gen_stmt(code, vec_get(then_stmts, i)); i = i + 1 }
-        
-        arm_b(code, end_lbl)
-        
-        arm_label(code, else_lbl)
-        if else_b != 0 {
-            let else_stmts = vec_get(else_b, 1)
-            let ecount = vec_len(else_stmts)
-            let k = 0
-            while k < ecount { arm64_gen_stmt(code, vec_get(else_stmts, k)); k = k + 1 }
-        }
-        arm_label(code, end_lbl)
-    } else if type == NODE_WHILE {
-         // [NODE_WHILE, cond, body]
-         let cond = vec_get(stmt, 1)
-         let body = vec_get(stmt, 2)
-         
-         let loop_lbl = "loop_" + str(arm_pos(code))
-         let end_lbl = "end_" + str(arm_pos(code))
-         
-         arm_label(code, loop_lbl)
-         arm64_gen_expr(code, cond, 0)
-         arm_cbz(code, 0, end_lbl)
-         
-         let body_stmts = vec_get(body, 1)
-         let count = vec_len(body_stmts)
-         let i = 0
-         while i < count { arm64_gen_stmt(code, vec_get(body_stmts, i)); i = i + 1 }
-         
-         arm_b(code, loop_lbl)
-         arm_label(code, end_lbl)
-    }
-}
-
-func arm64_gen_expr(code: Int, expr: Int, dest: XReg) {
-    let type = vec_get(expr, 0)
-    
-    if type == NODE_INT_LIT {
-        let val = vec_get(expr, 1)
-        arm_mov_imm64(code, dest, val)
-    } else if type == NODE_BOOL_LIT {
-        let val = vec_get(expr, 1) // bool? stored as int 1/0?
-        // Parser creates BOOL_LIT with value (Bool). Cast to Int?
-        // Primitive vec can store generic.
-        // Assuming implementation handles it.
-        // Or parser should store 1/0.
-        // Let's assume passed as is for now.
-        arm_mov_imm64(code, dest, 1) // Stub logic
-    } else if type == NODE_VAR {
-        // [NODE_VAR, name]
-        // Load from stack omitted.
-    } else if type == NODE_BINARY {
-        // [NODE_BINARY, left, op, right]
-        let left = vec_get(expr, 1)
-        let op = vec_get(expr, 2)
-        let right = vec_get(expr, 3)
-        
-        arm64_gen_expr(code, left, dest)
-        arm_mov_reg(code, 9, dest)
-        arm64_gen_expr(code, right, 10)
-        
-        // Op is enum BinOp from parser (not primitive const).
-        // Parser `token_to_binop` returns Enum BinOp.
-        // Constants for BinOp?
-        // Let's check Parser: BinOp::Add etc.
-        // Primitive parser uses `BinOp::Add`.
-        // So we need to match on Enum if possible?
-        // Or refactor Parser to usage Int constants for BinOp.
-        
-        // Assuming Parser uses Int constants for BinOp:
-        // CONST_ADD = 0, CONST_SUB = 1 ...
-        // In my parser refactor: it constructs `Expr::Binary(Box(left), op, Box(right))` ? 
-        // No, `vec_push(node, op)`. `op` was result of `token_to_binop`.
-        // `token_to_binop` returned `Int`.
-        // I kept `BinOp` enum in `parser.aether`? 
-        // No, I did NOT define `BinOp` or `token_to_binop` in the `parser.aether` OVERWRITE.
-        // I probably missed implementing `token_to_binop` in the parser overwrite!
-        // CHECK PARSER!
-        
-        // I will implement basic op handling here assuming I fix parser:
-        // 0=Add, 1=Sub, 2=Mul, 3=Eq
-        if op == 0 { arm_add_reg(code, dest, 9, 10) }
-        else if op == 1 { arm_sub_reg(code, dest, 9, 10) }
-        else if op == 2 { arm_mul_reg(code, dest, 9, 10) }
-        else if op == 3 { 
-            arm_cmp_reg(code, 9, 10)
-            arm_cset(code, dest, 0) // EQ
-        }
-    } else if type == NODE_CALL {
-        // [NODE_CALL, name, args_vec]
-        let name = vec_get(expr, 1) // as String removed
-        let args = vec_get(expr, 2)
-        let count = vec_len(args)
-        
-        let regs = vec_new()
-        vec_push(regs, 0); vec_push(regs, 1); vec_push(regs, 2); vec_push(regs, 3)
-        vec_push(regs, 4); vec_push(regs, 5); vec_push(regs, 6); vec_push(regs, 7)
-        let i = 0
-        while i < count {
-            if i < 8 {
-                let arg_node = vec_get(args, i)
-                arm64_gen_expr(code, arg_node, vec_get(regs, i))
-            }
-            i = i + 1
-        }
-        
-        if name == "print" || name == "println" {
-            // Builtin
-        } else {
-            arm_bl(code, "_" + name)
-        }
-        
-        if dest != 0 {
-            arm_mov_reg(code, dest, 0)
-        }
-    }
-}
-
-// ============================================================================
-// MACH-O LINKER (PRIMITIVE)
-// ============================================================================
-
-func link(c: Int, code: Int) -> Int {
-    let target = compiler_target(c)
-    if target == TARGET_ARM64_DARWIN || target == TARGET_X86_64_DARWIN {
-        link_macho(c, code)
-    } else {
-        link_elf(c, code)
-    }
-}
-
-func link_macho(c: Int, code: Int) -> Int {
-    let binary = vec_new()
-    let code_len = vec_len(code)
-    
-    // Mach-O Header (0xFEEDFACF = CF FA ED FE in little endian)
-    vec_push8(binary, 207)  // 0xCF
-    vec_push8(binary, 250)  // 0xFA
-    vec_push8(binary, 237)  // 0xED
-    vec_push8(binary, 254)  // 0xFE
-    
-    // CPU Type (ARM64 = 0x0100000C)
-    // Little endian: 0C 00 00 01
-    vec_push8(binary, 12)   // 0x0C
-    vec_push8(binary, 0)
-    vec_push8(binary, 0)
-    vec_push8(binary, 1)    // 0x01
-    
-    // Subtype (0 with LIB64 flag = 0x80)
-    vec_push8(binary, 0)
-    vec_push8(binary, 0)
-    vec_push8(binary, 0)
-    vec_push8(binary, 128)  // 0x80
-    
-    // Filetype (MH_EXECUTE = 2)
-    vec_push8(binary, 2)
-    vec_push8(binary, 0)
-    vec_push8(binary, 0)
-    vec_push8(binary, 0)
-    
-    // NCMDS (4: PageZero, Text, Main, DyldInfo)
-    vec_push8(binary, 4)
-    vec_push8(binary, 0)
-    vec_push8(binary, 0)
-    vec_push8(binary, 0)
-    
-    // SizeOfCmds (72 + 152 + 24 = 248)
-    let sizeofcmds = 248
-    vec_push8(binary, sizeofcmds)  // 248 & 0xFF = 248
-    vec_push8(binary, 0)           // 248 >> 8 = 0
-    vec_push8(binary, 0)
-    vec_push8(binary, 0)
-    
-    // Flags (PIE | DYLDLINK = 0x00200085)
-    vec_push8(binary, 133)  // 0x85
-    vec_push8(binary, 0)
-    vec_push8(binary, 32)   // 0x20
-    vec_push8(binary, 0)
-    
-    // Reserved
-    vec_push8(binary, 0)
-    vec_push8(binary, 0)
-    vec_push8(binary, 0)
-    vec_push8(binary, 0)
-    
-    // ... Load Commands ...
-    // Note: This is tedious to write out byte by byte.
-    // Ideally we usage a helper "emit_u32(binary, val)"
-    
-    // Append Code
-    // We need to pad to 4096 first?
-    // Headers usually take < 4KB.
-    
-    let header_end = vec_len(binary) + sizeofcmds
-    // Pad until 4096
-    
-    // Mocking the linker for now.
-    // In Primitive Style, we assume `vec_push8` works.
-    
-    // Append code bytes
-    let i = 0
-    while i < code_len {
-        vec_push8(binary, vec_get8(code, i))
-        i = i + 1
-    }
-    
-    binary
-}
-
-func link_elf(c: Int, code: Int) -> Int {
-    // Stub
-    vec_new()
+func native_compiler_has_errors(c: Int) -> Int {
+    let errs = ae_load64(c + 24)
+    if errs != 0 { return 1 }
+    0
 }

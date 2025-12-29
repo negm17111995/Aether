@@ -1,405 +1,79 @@
-//! ═══════════════════════════════════════════════════════════════════════════════
-//! AETHER CLUSTER - PLANET-SCALE DISTRIBUTED COMPUTING
-//! ═══════════════════════════════════════════════════════════════════════════════
-//! Built for 10,000+ servers and 7 BILLION concurrent users
-//! - Automatic node discovery
-//! - Consistent hashing for sharding
-//! - Raft consensus for coordination
-//! - Zero-downtime scaling
+// AETHER CLUSTER - Bootstrap Compatible
+// Distributed cluster management
 
-import std.runtime.net
-import std.runtime.concurrency
-import std.runtime.http
-import std.crypto.crypto
+import std
 
-// ============================================================================
-// CLUSTER CONFIGURATION
-// ============================================================================
-
-const MAX_NODES: Int = 100000           // Support 100k nodes
-const REPLICATION_FACTOR: Int = 3       // Data replicated 3x
-const HEARTBEAT_INTERVAL_MS: Int = 1000 // 1 second heartbeat
-const ELECTION_TIMEOUT_MS: Int = 5000   // 5 second election timeout
-
-// Node states
-const NODE_JOINING: Int = 0
+// Node: [id, host, port, status]
 const NODE_ACTIVE: Int = 1
-const NODE_LEAVING: Int = 2
-const NODE_DEAD: Int = 3
+const NODE_INACTIVE: Int = 0
 
-// ============================================================================
-// NODE IDENTITY
-// ============================================================================
-
-// Node: [id, addr, port, state, last_seen, cpu_load, mem_free, shard_ranges]
-const NODE_ID_OFF: Int = 0
-const NODE_ADDR_OFF: Int = 8
-const NODE_PORT_OFF: Int = 16
-const NODE_STATE_OFF: Int = 24
-const NODE_LAST_SEEN_OFF: Int = 32
-const NODE_CPU_OFF: Int = 40
-const NODE_MEM_OFF: Int = 48
-const NODE_SHARDS_OFF: Int = 56
-
-/// Create node identity
-func node_new(id: Int, addr: Int, port: Int) -> Int {
-    let node = malloc(64)
-    poke(node + NODE_ID_OFF, id)
-    poke(node + NODE_ADDR_OFF, addr)
-    poke(node + NODE_PORT_OFF, port)
-    poke(node + NODE_STATE_OFF, NODE_JOINING)
-    poke(node + NODE_LAST_SEEN_OFF, now_ms())
-    poke(node + NODE_CPU_OFF, 0)
-    poke(node + NODE_MEM_OFF, 0)
-    poke(node + NODE_SHARDS_OFF, vec_new())
-    node
+func node_new(id: Int, host: Int, port: Int) -> Int {
+    let n = ae_malloc(32)
+    ae_store64(n, id)
+    ae_store64(n + 8, host)
+    ae_store64(n + 16, port)
+    ae_store64(n + 24, NODE_ACTIVE)
+    n
 }
 
-/// Generate unique node ID from hostname + port
-func node_id(addr: Int, port: Int) -> Int {
-    let data = str_concat3(addr, ":", int_to_str(port))
-    sha256(data, str_len(data))
+func node_id(n: Int) -> Int { ae_load64(n) }
+func node_host(n: Int) -> Int { ae_load64(n + 8) }
+func node_port(n: Int) -> Int { ae_load64(n + 16) }
+func node_status(n: Int) -> Int { ae_load64(n + 24) }
+
+func node_set_status(n: Int, status: Int) {
+    ae_store64(n + 24, status)
 }
 
-// ============================================================================
-// CLUSTER STATE
-// ============================================================================
-
-var cluster_nodes: Int = 0      // Map<node_id, node>
-var cluster_ring: Int = 0       // Consistent hash ring
-var cluster_leader: Int = 0     // Current leader node ID
-var cluster_self: Int = 0       // This node's identity
-var cluster_term: Int = 0       // Raft term number
-
-/// Initialize cluster
-func cluster_init(addr: Int, port: Int) {
-    cluster_nodes = map_new()
-    cluster_ring = ring_new(MAX_NODES * 3)  // 3 virtual nodes each
-    cluster_self = node_new(node_id(addr, port), addr, port)
-    cluster_term = 0
-    cluster_leader = 0
-    
-    // Start background services
-    spawn(heartbeat_loop, 0)
-    spawn(gossip_loop, 0)
-    spawn(health_check_loop, 0)
+// Cluster: [nodes, node_count, leader]
+func cluster_new() -> Int {
+    let c = ae_malloc(24)
+    ae_store64(c, vec_new())  // nodes
+    ae_store64(c + 8, 0)      // count
+    ae_store64(c + 16, 0)     // leader
+    c
 }
 
-// ============================================================================
-// SERVICE DISCOVERY
-// ============================================================================
+func cluster_add_node(c: Int, node: Int) {
+    let nodes = ae_load64(c)
+    vec_push(nodes, node)
+    let count = ae_load64(c + 8)
+    ae_store64(c + 8, count + 1)
+}
 
-/// Join cluster by connecting to seed node
-func cluster_join(seed_addr: Int, seed_port: Int) -> Int {
-    let req = json_obj([
-        json_field("type", "join"),
-        json_field("node_id", peek(cluster_self + NODE_ID_OFF)),
-        json_field("addr", peek(cluster_self + NODE_ADDR_OFF)),
-        json_field("port", peek(cluster_self + NODE_PORT_OFF))
-    ])
-    
-    let url = str_concat4("http://", seed_addr, ":", int_to_str(seed_port), "/cluster/join")
-    let resp = http_post(url, json_stringify(req), [])
-    
-    if resp.status == 200 {
-        let data = parse_json(resp.body)
-        // Update cluster state from response
-        sync_cluster_state(data)
-        poke(cluster_self + NODE_STATE_OFF, NODE_ACTIVE)
-        return 1
+func cluster_remove_node(c: Int, node_id: Int) {
+    let count = ae_load64(c + 8)
+    ae_store64(c + 8, count - 1)
+}
+
+func cluster_get_node(c: Int, node_id: Int) -> Int {
+    let nodes = ae_load64(c)
+    let count = vec_len(nodes)
+    let i = 0
+    while i < count {
+        let n = vec_get(nodes, i)
+        if ae_load64(n) == node_id {
+            return n
+        }
+        i = i + 1
     }
     0
 }
 
-/// Leave cluster gracefully
-func cluster_leave() {
-    poke(cluster_self + NODE_STATE_OFF, NODE_LEAVING)
-    
-    // Notify all nodes
-    broadcast_message(json_obj([
-        json_field("type", "leave"),
-        json_field("node_id", peek(cluster_self + NODE_ID_OFF))
-    ]))
-    
-    // Wait for data migration
-    wait_for_handoff()
-}
-
-// ============================================================================
-// CONSISTENT HASHING (Data Sharding)
-// ============================================================================
-
-/// Create consistent hash ring
-func ring_new(size: Int) -> Int {
-    let ring = malloc(size * 16)  // [hash, node_id] pairs
-    poke(ring, 0)  // count
-    ring
-}
-
-/// Add node to ring with virtual nodes
-func ring_add_node(ring: Int, node_id: Int) {
-    let i = 0
-    while i < 3 {  // 3 virtual nodes
-        let virtual_id = sha256_int(node_id + i)
-        ring_insert(ring, virtual_id, node_id)
-        i = i + 1
+func cluster_elect_leader(c: Int) -> Int {
+    let nodes = ae_load64(c)
+    if vec_len(nodes) > 0 {
+        let leader = vec_get(nodes, 0)
+        ae_store64(c + 16, leader)
+        return ae_load64(leader)
     }
+    0
 }
 
-/// Find node for key (consistent hashing)
-func ring_find_node(ring: Int, key: Int) -> Int {
-    let hash = sha256_int(key)
-    let count = peek(ring)
-    
-    // Binary search for first node >= hash
-    let lo = 0
-    let hi = count
-    while lo < hi {
-        let mid = (lo + hi) / 2
-        let entry = ring + 8 + mid * 16
-        if peek(entry) < hash {
-            lo = mid + 1
-        } else {
-            hi = mid
-        }
-    }
-    
-    // Wrap around
-    if lo >= count { lo = 0 }
-    
-    peek(ring + 8 + lo * 16 + 8)  // Return node_id
+func cluster_get_leader(c: Int) -> Int {
+    ae_load64(c + 16)
 }
 
-/// Get N replica nodes for key
-func ring_find_replicas(ring: Int, key: Int, n: Int) -> Int {
-    let replicas = vec_new()
-    let hash = sha256_int(key)
-    let count = peek(ring)
-    
-    let idx = ring_search(ring, hash)
-    let added = 0
-    
-    while added < n && added < count {
-        let node_id = peek(ring + 8 + idx * 16 + 8)
-        
-        // Don't add duplicate nodes
-        if vec_contains(replicas, node_id) == 0 {
-            vec_push(replicas, node_id)
-            added = added + 1
-        }
-        
-        idx = (idx + 1) % count
-    }
-    
-    replicas
+func cluster_node_count(c: Int) -> Int {
+    ae_load64(c + 8)
 }
-
-// ============================================================================
-// LOAD BALANCING
-// ============================================================================
-
-/// Route request to optimal node
-func route_request(key: Int) -> Int {
-    // Get candidate nodes from ring
-    let candidates = ring_find_replicas(cluster_ring, key, REPLICATION_FACTOR)
-    
-    // Pick node with lowest load
-    let best_node = 0
-    let best_load = 999999999
-    
-    let i = 0
-    while i < vec_len(candidates) {
-        let node_id = vec_get(candidates, i)
-        let node = map_get(cluster_nodes, node_id)
-        
-        if node != 0 {
-            let load = peek(node + NODE_CPU_OFF)
-            if load < best_load {
-                best_load = load
-                best_node = node
-            }
-        }
-        i = i + 1
-    }
-    
-    best_node
-}
-
-/// Execute function on remote node
-func remote_call(node: Int, func_name: Int, args: Int) -> Int {
-    let addr = peek(node + NODE_ADDR_OFF)
-    let port = peek(node + NODE_PORT_OFF)
-    
-    let req = json_obj([
-        json_field("func", func_name),
-        json_field("args", args)
-    ])
-    
-    let url = str_concat4("http://", addr, ":", int_to_str(port), "/rpc")
-    let resp = http_post(url, json_stringify(req), [])
-    
-    if resp.status == 200 {
-        parse_json(resp.body)
-    } else {
-        0  // Error
-    }
-}
-
-// ============================================================================
-// RAFT CONSENSUS
-// ============================================================================
-
-/// Start leader election
-func start_election() {
-    cluster_term = cluster_term + 1
-    let votes = 1  // Vote for self
-    
-    // Request votes from all nodes
-    let node_ids = map_keys(cluster_nodes)
-    let i = 0
-    while i < vec_len(node_ids) {
-        let node_id = vec_get(node_ids, i)
-        let node = map_get(cluster_nodes, node_id)
-        
-        if node != 0 && peek(node + NODE_STATE_OFF) == NODE_ACTIVE {
-            let resp = request_vote(node)
-            if resp == 1 { votes = votes + 1 }
-        }
-        i = i + 1
-    }
-    
-    // Check if majority
-    let total = vec_len(node_ids) + 1
-    if votes > total / 2 {
-        become_leader()
-    }
-}
-
-/// Become cluster leader
-func become_leader() {
-    cluster_leader = peek(cluster_self + NODE_ID_OFF)
-    
-    // Broadcast leadership
-    broadcast_message(json_obj([
-        json_field("type", "leader"),
-        json_field("node_id", cluster_leader),
-        json_field("term", cluster_term)
-    ]))
-}
-
-// ============================================================================
-// GOSSIP PROTOCOL (Fast state propagation)
-// ============================================================================
-
-/// Gossip cluster state to random nodes
-func gossip_loop(arg: Int) {
-    while 1 {
-        sleep(500)  // Every 500ms
-        
-        // Pick 3 random nodes
-        let targets = pick_random_nodes(3)
-        
-        let state = collect_gossip_state()
-        
-        let i = 0
-        while i < vec_len(targets) {
-            let node = vec_get(targets, i)
-            send_gossip(node, state)
-            i = i + 1
-        }
-    }
-}
-
-/// Merge received gossip state
-func merge_gossip(received: Int) {
-    // Update node states based on gossip
-    // Uses vector clocks for conflict resolution
-}
-
-// ============================================================================
-// AUTO-SCALING
-// ============================================================================
-
-/// Check if scaling needed
-func check_auto_scale() {
-    let total_load = 0
-    let node_count = 0
-    
-    let ids = map_keys(cluster_nodes)
-    let i = 0
-    while i < vec_len(ids) {
-        let node = map_get(cluster_nodes, vec_get(ids, i))
-        if node != 0 && peek(node + NODE_STATE_OFF) == NODE_ACTIVE {
-            total_load = total_load + peek(node + NODE_CPU_OFF)
-            node_count = node_count + 1
-        }
-        i = i + 1
-    }
-    
-    let avg_load = total_load / node_count
-    
-    if avg_load > 80 {
-        request_scale_up()
-    } else if avg_load < 20 && node_count > 3 {
-        request_scale_down()
-    }
-}
-
-// ============================================================================
-// PUBLIC API
-// ============================================================================
-
-/// Execute function across cluster (sharded)
-func cluster_execute(key: Int, func_ptr: Int, arg: Int) -> Int {
-    let node = route_request(key)
-    
-    if node == cluster_self {
-        // Execute locally
-        __call(func_ptr, arg)
-    } else {
-        // Execute remotely
-        remote_call(node, func_ptr, arg)
-    }
-}
-
-/// Broadcast function to all nodes
-func cluster_broadcast(func_ptr: Int, arg: Int) {
-    let ids = map_keys(cluster_nodes)
-    let i = 0
-    while i < vec_len(ids) {
-        let node = map_get(cluster_nodes, vec_get(ids, i))
-        if node != 0 {
-            spawn(remote_call, node)
-        }
-        i = i + 1
-    }
-}
-
-/// Get cluster stats
-func cluster_stats() -> Int {
-    json_obj([
-        json_field("node_count", map_len(cluster_nodes)),
-        json_field("leader", cluster_leader),
-        json_field("term", cluster_term),
-        json_field("self_id", peek(cluster_self + NODE_ID_OFF))
-    ])
-}
-
-// Helper stubs
-func heartbeat_loop(arg: Int) {}
-func health_check_loop(arg: Int) {}
-func broadcast_message(msg: Int) {}
-func sync_cluster_state(data: Int) {}
-func wait_for_handoff() {}
-func ring_insert(ring: Int, hash: Int, node_id: Int) {}
-func ring_search(ring: Int, hash: Int) -> Int { 0 }
-func sha256_int(val: Int) -> Int { val }
-func pick_random_nodes(n: Int) -> Int { vec_new() }
-func collect_gossip_state() -> Int { 0 }
-func send_gossip(node: Int, state: Int) {}
-func request_vote(node: Int) -> Int { 0 }
-func request_scale_up() {}
-func request_scale_down() {}
-func vec_contains(v: Int, val: Int) -> Int { 0 }
-func map_keys(m: Int) -> Int { vec_new() }
-func map_len(m: Int) -> Int { 0 }

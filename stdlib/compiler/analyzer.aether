@@ -1,274 +1,61 @@
-//! ═══════════════════════════════════════════════════════════════════════════════
-//! AETHER STATIC ANALYZER - CATCH ALL ERRORS BEFORE DEPLOYMENT
-//! ═══════════════════════════════════════════════════════════════════════════════
-//! If it compiles, it WORKS. Zero runtime errors. Zero surprises.
-//! 
-//! Checks:
-//! - Type safety (no mismatches)
-//! - Null safety (no null pointer access)
-//! - Bounds safety (no array overflows)
-//! - Exhaustiveness (all cases handled)
-//! - Unused code detection
-//! - Resource leak detection
+// AETHER COMPILER ANALYZER - Bootstrap Compatible
 
-import std.runtime.vec
-import std.runtime.map
+import std
 
-// ============================================================================
-// ERROR TYPES
-// ============================================================================
+// Type info: [kind, name, params]
+const TYPE_INT: Int = 1
+const TYPE_BOOL: Int = 2
+const TYPE_VOID: Int = 3
+const TYPE_FUNC: Int = 4
+const TYPE_STRUCT: Int = 5
 
-const ERR_TYPE_MISMATCH: Int = 1
-const ERR_NULL_ACCESS: Int = 2
-const ERR_BOUNDS_OVERFLOW: Int = 3
-const ERR_UNDEFINED_VAR: Int = 4
-const ERR_UNUSED_VAR: Int = 5
-const ERR_DEAD_CODE: Int = 6
-const ERR_MISSING_RETURN: Int = 7
-const ERR_RESOURCE_LEAK: Int = 8
-const ERR_DIVISION_BY_ZERO: Int = 9
-const ERR_INFINITE_LOOP: Int = 10
-
-// Error: [type, line, column, message, suggestion]
-const ERR_TYPE_OFF: Int = 0
-const ERR_LINE_OFF: Int = 8
-const ERR_COL_OFF: Int = 16
-const ERR_MSG_OFF: Int = 24
-const ERR_FIX_OFF: Int = 32
-
-// ============================================================================
-// ANALYZER STATE
-// ============================================================================
-
-var errors: Int = 0        // List of errors
-var warnings: Int = 0      // List of warnings
-var symbols: Int = 0       // Symbol table
-var current_line: Int = 1
-var current_file: Int = 0
-
-func analyzer_init() {
-    errors = vec_new()
-    warnings = vec_new()
-    symbols = map_new()
+func analyzer_type_new(kind: Int, name: Int) -> Int {
+    let t = ae_malloc(24)
+    ae_store64(t, kind)
+    ae_store64(t + 8, name)
+    ae_store64(t + 16, 0)
+    t
 }
 
-// ============================================================================
-// ERROR REPORTING
-// ============================================================================
+func analyzer_type_kind(t: Int) -> Int { ae_load64(t) }
+func analyzer_type_name(t: Int) -> Int { ae_load64(t + 8) }
 
-/// Report compile error with helpful suggestion
-func report_error(err_type: Int, line: Int, col: Int, msg: Int, suggestion: Int) {
-    let err = malloc(40)
-    poke(err + ERR_TYPE_OFF, err_type)
-    poke(err + ERR_LINE_OFF, line)
-    poke(err + ERR_COL_OFF, col)
-    poke(err + ERR_MSG_OFF, msg)
-    poke(err + ERR_FIX_OFF, suggestion)
-    vec_push(errors, err)
+// Symbol: [name, type, scope]
+func analyzer_symbol_new(name: Int, typ: Int, scope: Int) -> Int {
+    let s = ae_malloc(24)
+    ae_store64(s, name)
+    ae_store64(s + 8, typ)
+    ae_store64(s + 16, scope)
+    s
 }
 
-/// Report warning
-func report_warning(line: Int, col: Int, msg: Int) {
-    let warn = malloc(24)
-    poke(warn, line)
-    poke(warn + 8, col)
-    poke(warn + 16, msg)
-    vec_push(warnings, warn)
+// Scope: [parent, symbols]
+func analyzer_scope_new(parent: Int) -> Int {
+    let s = ae_malloc(16)
+    ae_store64(s, parent)
+    ae_store64(s + 8, vec_new())
+    s
 }
 
-/// Check if any errors exist
-func has_errors() -> Int {
-    vec_len(errors) > 0
+func analyzer_scope_add(s: Int, sym: Int) {
+    let syms = ae_load64(s + 8)
+    vec_push(syms, sym)
 }
 
-/// Print all errors with beautiful formatting
-func print_errors() {
-    let count = vec_len(errors)
+func analyzer_scope_lookup(s: Int, name: Int) -> Int {
+    let syms = ae_load64(s + 8)
+    let count = vec_len(syms)
     let i = 0
     while i < count {
-        let err = vec_get(errors, i)
-        let line = peek(err + ERR_LINE_OFF)
-        let col = peek(err + ERR_COL_OFF)
-        let msg = peek(err + ERR_MSG_OFF)
-        let fix = peek(err + ERR_FIX_OFF)
-        
-        // Beautiful error output
-        // Error: Type mismatch
-        //   --> file.aether:10:5
-        //    |
-        // 10 |     let x: Int = "hello"
-        //    |              ^^^^^^^^^^^ expected Int, found String
-        //    |
-        // Fix: Use str_to_int("hello") to convert
-        
+        let sym = vec_get(syms, i)
+        if ae_load64(sym) == name {
+            return sym
+        }
         i = i + 1
     }
-}
-
-// ============================================================================
-// TYPE CHECKING
-// ============================================================================
-
-/// Check type compatibility
-func check_types(expected: Int, actual: Int, line: Int, col: Int) -> Int {
-    if expected != actual {
-        report_error(ERR_TYPE_MISMATCH, line, col,
-            __str_concat3("Expected ", type_name(expected), ", found ", type_name(actual)),
-            __suggest_conversion(expected, actual))
-        return 0
+    let parent = ae_load64(s)
+    if parent != 0 {
+        return analyzer_scope_lookup(parent, name)
     }
-    1
+    0
 }
-
-/// Get type name for error message
-func type_name(type_id: Int) -> Int {
-    if type_id == 1 { return __static_str("Int") }
-    if type_id == 2 { return __static_str("String") }
-    if type_id == 3 { return __static_str("Bool") }
-    if type_id == 4 { return __static_str("Float") }
-    if type_id == 5 { return __static_str("Array") }
-    __static_str("Unknown")
-}
-
-// ============================================================================
-// NULL SAFETY
-// ============================================================================
-
-/// Check for potential null access
-func check_null_safety(var_name: Int, line: Int, col: Int) -> Int {
-    let info = map_get(symbols, var_name)
-    if info == 0 {
-        return 1  // Unknown, assume safe
-    }
-    
-    let might_be_null = peek(info + 16)
-    if might_be_null == 1 {
-        report_error(ERR_NULL_ACCESS, line, col,
-            __str_concat("Variable '", var_name, "' might be null"),
-            __static_str("Add null check: if var != null { ... }"))
-        return 0
-    }
-    1
-}
-
-// ============================================================================
-// BOUNDS CHECKING
-// ============================================================================
-
-/// Check array access bounds at compile time
-func check_bounds(arr_name: Int, index_expr: Int, line: Int, col: Int) -> Int {
-    // If index is constant, check against known size
-    let arr_info = map_get(symbols, arr_name)
-    if arr_info != 0 {
-        let known_size = peek(arr_info + 24)
-        let const_index = eval_const_expr(index_expr)
-        
-        if const_index >= 0 && known_size > 0 {
-            if const_index >= known_size {
-                report_error(ERR_BOUNDS_OVERFLOW, line, col,
-                    __str_concat("Index ", int_to_str(const_index), 
-                        " out of bounds for array of size ", int_to_str(known_size)),
-                    __static_str("Check array size before access"))
-                return 0
-            }
-        }
-    }
-    1
-}
-
-// ============================================================================
-// EXHAUSTIVENESS CHECKING
-// ============================================================================
-
-/// Check if all match cases are covered
-func check_exhaustive(match_expr: Int, cases: Int, line: Int) -> Int {
-    // TODO: Implement exhaustiveness check for enums
-    1
-}
-
-// ============================================================================
-// DEAD CODE DETECTION
-// ============================================================================
-
-/// Check for unreachable code
-func check_reachable(stmt: Int, prev_returns: Int, line: Int) -> Int {
-    if prev_returns == 1 {
-        report_warning(line, 0, 
-            __static_str("Unreachable code - statement after return"))
-        return 0
-    }
-    1
-}
-
-// ============================================================================
-// RESOURCE LEAK DETECTION
-// ============================================================================
-
-/// Track allocated resources
-func track_alloc(var_name: Int, line: Int) {
-    let info = map_get(symbols, var_name)
-    if info == 0 {
-        info = malloc(32)
-        map_set(symbols, var_name, info)
-    }
-    poke(info + 8, 1)  // Mark as needs_free
-}
-
-/// Check for resource leaks at scope end
-func check_leaks(scope: Int) {
-    // Check all vars in scope for unfree'd resources
-    // Report warnings for potential leaks
-}
-
-// ============================================================================
-// COMPILE-TIME EVALUATION
-// ============================================================================
-
-/// Evaluate constant expression at compile time
-func eval_const_expr(expr: Int) -> Int {
-    // Return -1 if not constant
-    // Return value if constant
-    -1
-}
-
-// ============================================================================
-// MAIN ANALYSIS PASS
-// ============================================================================
-
-/// Run full static analysis on AST
-func analyze(ast: Int) -> Int {
-    analyzer_init()
-    
-    // Pass 1: Collect all declarations
-    collect_declarations(ast)
-    
-    // Pass 2: Type check all expressions
-    typecheck_all(ast)
-    
-    // Pass 3: Check null safety
-    check_all_null_safety(ast)
-    
-    // Pass 4: Check bounds
-    check_all_bounds(ast)
-    
-    // Pass 5: Dead code analysis
-    check_all_reachable(ast)
-    
-    // Pass 6: Resource leak analysis
-    check_all_leaks(ast)
-    
-    // Return 1 if no errors, 0 if errors
-    if has_errors() {
-        print_errors()
-        return 0
-    }
-    1
-}
-
-// Placeholder functions (would be implemented in full compiler)
-func collect_declarations(ast: Int) {}
-func typecheck_all(ast: Int) {}
-func check_all_null_safety(ast: Int) {}
-func check_all_bounds(ast: Int) {}
-func check_all_reachable(ast: Int) {}
-func check_all_leaks(ast: Int) {}

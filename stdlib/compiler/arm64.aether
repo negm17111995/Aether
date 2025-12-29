@@ -1,317 +1,70 @@
-// ═══════════════════════════════════════════════════════════════════════════════
-// AETHER ARM64 NATIVE CODE GENERATOR
-// ═══════════════════════════════════════════════════════════════════════════════
-// Pure Aether ARM64 machine code generation - NO C DEPENDENCY
-// Generates native ARM64 binaries directly
+// AETHER COMPILER ARM64 - Bootstrap Compatible
+// ARM64 code generation
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// ARM64 REGISTERS
-// ═══════════════════════════════════════════════════════════════════════════════
+import std
 
-const X0: Int = 0
-const X1: Int = 1
-const X2: Int = 2
-const X3: Int = 3
-const X4: Int = 4
-const X5: Int = 5
-const X6: Int = 6
-const X7: Int = 7
-const X8: Int = 8    // Indirect result
-const X9: Int = 9
-const X10: Int = 10
-const X11: Int = 11
-const X12: Int = 12
-const X13: Int = 13
-const X14: Int = 14
-const X15: Int = 15
-const X16: Int = 16  // IP0
-const X17: Int = 17  // IP1
-const X18: Int = 18  // Platform register
-const X19: Int = 19  // Callee-saved
-const X20: Int = 20
-const X21: Int = 21
-const X22: Int = 22
-const X23: Int = 23
-const X24: Int = 24
-const X25: Int = 25
-const X26: Int = 26
-const X27: Int = 27
-const X28: Int = 28
-const X29: Int = 29  // FP (Frame Pointer)
-const X30: Int = 30  // LR (Link Register)
-const XZR: Int = 31  // Zero Register / SP
+// ARM64 registers
+const ARM_X0: Int = 0
+const ARM_X1: Int = 1
+const ARM_X2: Int = 2
+const ARM_X3: Int = 3
+const ARM_LR: Int = 30
+const ARM_SP: Int = 31
 
-const FP: Int = 29
-const LR: Int = 30
-const SP: Int = 31
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// CODE BUFFER
-// ═══════════════════════════════════════════════════════════════════════════════
-
-func codebuf_new() -> Int {
-    let buf = vec_new()
-    buf
+// Instruction buffer
+func arm64_code_create() -> Int {
+    let c = ae_malloc(24)
+    ae_store64(c, ae_malloc(4096))
+    ae_store64(c + 8, 0)
+    ae_store64(c + 16, 4096)
+    c
 }
 
-func codebuf_emit32(buf: Int, instr: Int) {
-    // Emit 4 bytes (little-endian)
-    vec_push8(buf, instr & 0xFF)
-    vec_push8(buf, (instr >> 8) & 0xFF)
-    vec_push8(buf, (instr >> 16) & 0xFF)
-    vec_push8(buf, (instr >> 24) & 0xFF)
+func arm64_emit_32(c: Int, inst: Int) {
+    let buf = ae_load64(c)
+    let off = ae_load64(c + 8)
+    ae_store64(buf + off, inst)
+    ae_store64(c + 8, off + 4)
 }
 
-func codebuf_size(buf: Int) -> Int {
-    vec_len(buf)
+// Shift helper (no << operator)
+func arm64_shift_5(val: Int) -> Int {
+    val * 32
 }
 
-func codebuf_get(buf: Int, i: Int) -> Int {
-    vec_get8(buf, i)
+func arm64_shift_16(val: Int) -> Int {
+    val * 65536
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// ARM64 INSTRUCTION ENCODING
-// ═══════════════════════════════════════════════════════════════════════════════
-
-// MOV immediate (MOVZ): Rd = imm16 << (hw * 16)
-func arm64_movz(rd: Int, imm16: Int, hw: Int) -> Int {
-    let sf = 1  // 64-bit
-    (sf << 31) | (0x52 << 23) | (hw << 21) | ((imm16 & 0xFFFF) << 5) | rd
+// Common instructions (simplified without bit shifts)
+func arm64_emit_mov(c: Int, rd: Int, imm: Int) {
+    let inst = 0xD2800000 + (rd % 32) + arm64_shift_5(imm % 65536)
+    arm64_emit_32(c, inst)
 }
 
-// MOVK: Rd = Rd | (imm16 << (hw * 16))
-func arm64_movk(rd: Int, imm16: Int, hw: Int) -> Int {
-    let sf = 1
-    (sf << 31) | (0x72 << 23) | (hw << 21) | ((imm16 & 0xFFFF) << 5) | rd
+func arm64_emit_add(c: Int, rd: Int, rn: Int, rm: Int) {
+    let inst = 0x8B000000 + (rd % 32) + arm64_shift_5(rn % 32) + arm64_shift_16(rm % 32)
+    arm64_emit_32(c, inst)
 }
 
-// MOV register: Rd = Rm
-func arm64_mov_reg(rd: Int, rm: Int) -> Int {
-    // ORR Rd, XZR, Rm (shifted 0)
-    let sf = 1
-    (sf << 31) | (0x2A << 24) | (rm << 16) | (XZR << 5) | rd
+func arm64_emit_sub(c: Int, rd: Int, rn: Int, rm: Int) {
+    let inst = 0xCB000000 + (rd % 32) + arm64_shift_5(rn % 32) + arm64_shift_16(rm % 32)
+    arm64_emit_32(c, inst)
 }
 
-// ADD immediate: Rd = Rn + imm12
-func arm64_add_imm(rd: Int, rn: Int, imm12: Int) -> Int {
-    let sf = 1
-    (sf << 31) | (0x11 << 24) | ((imm12 & 0xFFF) << 10) | (rn << 5) | rd
+func arm64_emit_ret(c: Int) {
+    arm64_emit_32(c, 0xD65F03C0)
 }
 
-// SUB immediate: Rd = Rn - imm12
-func arm64_sub_imm(rd: Int, rn: Int, imm12: Int) -> Int {
-    let sf = 1
-    (sf << 31) | (0x51 << 24) | ((imm12 & 0xFFF) << 10) | (rn << 5) | rd
+func arm64_emit_bl(c: Int, offset: Int) {
+    let inst = 0x94000000 + (offset % 67108864)
+    arm64_emit_32(c, inst)
 }
 
-// ADD register: Rd = Rn + Rm
-func arm64_add_reg(rd: Int, rn: Int, rm: Int) -> Int {
-    let sf = 1
-    (sf << 31) | (0x0B << 24) | (rm << 16) | (rn << 5) | rd
+func arm64_get_code_size(c: Int) -> Int {
+    ae_load64(c + 8)
 }
 
-// SUB register: Rd = Rn - Rm
-func arm64_sub_reg(rd: Int, rn: Int, rm: Int) -> Int {
-    let sf = 1
-    (sf << 31) | (0x4B << 24) | (rm << 16) | (rn << 5) | rd
+func arm64_get_code_ptr(c: Int) -> Int {
+    ae_load64(c)
 }
-
-// MUL: Rd = Rn * Rm
-func arm64_mul(rd: Int, rn: Int, rm: Int) -> Int {
-    let sf = 1
-    (sf << 31) | (0x1B << 24) | (rm << 16) | (XZR << 10) | (rn << 5) | rd
-}
-
-// SDIV: Rd = Rn / Rm (signed)
-func arm64_sdiv(rd: Int, rn: Int, rm: Int) -> Int {
-    let sf = 1
-    (sf << 31) | (0x1A << 24) | (0xC0 << 10) | (rm << 16) | (rn << 5) | rd
-}
-
-// CMP register: flags = Rn - Rm
-func arm64_cmp_reg(rn: Int, rm: Int) -> Int {
-    let sf = 1
-    (sf << 31) | (0x6B << 24) | (rm << 16) | (rn << 5) | XZR
-}
-
-// CMP immediate: flags = Rn - imm12
-func arm64_cmp_imm(rn: Int, imm12: Int) -> Int {
-    let sf = 1
-    (sf << 31) | (0x71 << 24) | ((imm12 & 0xFFF) << 10) | (rn << 5) | XZR
-}
-
-// B (unconditional branch): PC += offset * 4
-func arm64_b(offset: Int) -> Int {
-    (0x05 << 26) | (offset & 0x3FFFFFF)
-}
-
-// B.cond (conditional branch)
-func arm64_bcond(cond: Int, offset: Int) -> Int {
-    (0x54 << 24) | ((offset & 0x7FFFF) << 5) | cond
-}
-
-// Condition codes
-const COND_EQ: Int = 0   // Equal
-const COND_NE: Int = 1   // Not equal
-const COND_LT: Int = 11  // Signed less than
-const COND_GE: Int = 10  // Signed greater or equal
-const COND_LE: Int = 13  // Signed less or equal
-const COND_GT: Int = 12  // Signed greater
-
-// BL (branch with link): LR = PC + 4; PC += offset * 4
-func arm64_bl(offset: Int) -> Int {
-    (0x25 << 26) | (offset & 0x3FFFFFF)
-}
-
-// BLR (branch to register with link)
-func arm64_blr(rn: Int) -> Int {
-    (0xD6 << 24) | (0x3F << 16) | (rn << 5)
-}
-
-// RET (return): PC = LR
-func arm64_ret() -> Int {
-    arm64_blr(LR) | (0x02 << 21)  // RET encoding
-}
-
-// STP (Store Pair): [Xn + offset*8] = Rt1, Rt2
-func arm64_stp_pre(rt1: Int, rt2: Int, rn: Int, offset: Int) -> Int {
-    let sf = 1
-    (sf << 31) | (0x29 << 24) | (0x03 << 22) | ((offset & 0x7F) << 15) | (rt2 << 10) | (rn << 5) | rt1
-}
-
-// LDP (Load Pair): Rt1, Rt2 = [Xn + offset*8]
-func arm64_ldp_post(rt1: Int, rt2: Int, rn: Int, offset: Int) -> Int {
-    let sf = 1
-    (sf << 31) | (0x28 << 24) | (0x03 << 22) | ((offset & 0x7F) << 15) | (rt2 << 10) | (rn << 5) | rt1
-}
-
-// STR (Store Register): [Xn + offset*8] = Rt
-func arm64_str_imm(rt: Int, rn: Int, offset: Int) -> Int {
-    let sf = 1
-    (sf << 30) | (0x39 << 24) | (((offset >> 3) & 0xFFF) << 10) | (rn << 5) | rt
-}
-
-// LDR (Load Register): Rt = [Xn + offset*8]
-func arm64_ldr_imm(rt: Int, rn: Int, offset: Int) -> Int {
-    let sf = 1
-    (sf << 30) | (0x39 << 24) | (0x01 << 22) | (((offset >> 3) & 0xFFF) << 10) | (rn << 5) | rt
-}
-
-// SVC (Supervisor Call / syscall)
-func arm64_svc(imm16: Int) -> Int {
-    (0xD4 << 24) | ((imm16 & 0xFFFF) << 5) | 0x01
-}
-
-// NOP
-func arm64_nop() -> Int {
-    0xD503201F
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// FUNCTION PROLOGUE/EPILOGUE
-// ═══════════════════════════════════════════════════════════════════════════════
-
-func emit_prologue(buf: Int, frame_size: Int) {
-    // stp x29, x30, [sp, #-frame_size]!
-    codebuf_emit32(buf, arm64_stp_pre(FP, LR, SP, 0 - (frame_size / 8)))
-    // mov x29, sp
-    codebuf_emit32(buf, arm64_mov_reg(FP, SP))
-}
-
-func emit_epilogue(buf: Int, frame_size: Int) {
-    // ldp x29, x30, [sp], #frame_size
-    codebuf_emit32(buf, arm64_ldp_post(FP, LR, SP, frame_size / 8))
-    // ret
-    codebuf_emit32(buf, arm64_ret())
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// MACOS SYSCALLS
-// ═══════════════════════════════════════════════════════════════════════════════
-
-const SYS_EXIT: Int = 0x2000001
-const SYS_WRITE: Int = 0x2000004
-
-func emit_syscall(buf: Int, syscall_num: Int) {
-    // mov x16, syscall_num
-    emit_mov_imm64(buf, X16, syscall_num)
-    // svc #0x80
-    codebuf_emit32(buf, arm64_svc(0x80))
-}
-
-func emit_exit(buf: Int, code: Int) {
-    // mov x0, code
-    codebuf_emit32(buf, arm64_movz(X0, code, 0))
-    // syscall exit
-    emit_syscall(buf, SYS_EXIT)
-}
-
-func emit_write(buf: Int, fd: Int, str_reg: Int, len_reg: Int) {
-    // x0 = fd, x1 = buf, x2 = len already set
-    emit_syscall(buf, SYS_WRITE)
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// HELPER: Load 64-bit immediate into register
-// ═══════════════════════════════════════════════════════════════════════════════
-
-func emit_mov_imm64(buf: Int, rd: Int, imm: Int) {
-    // MOVZ for bits 0-15
-    codebuf_emit32(buf, arm64_movz(rd, imm & 0xFFFF, 0))
-    
-    // MOVK for bits 16-31 if needed
-    if (imm >> 16) != 0 {
-        codebuf_emit32(buf, arm64_movk(rd, (imm >> 16) & 0xFFFF, 1))
-    }
-    
-    // MOVK for bits 32-47 if needed
-    if (imm >> 32) != 0 {
-        codebuf_emit32(buf, arm64_movk(rd, (imm >> 32) & 0xFFFF, 2))
-    }
-    
-    // MOVK for bits 48-63 if needed
-    if (imm >> 48) != 0 {
-        codebuf_emit32(buf, arm64_movk(rd, (imm >> 48) & 0xFFFF, 3))
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// VECTOR STUBS (for bootstrap compatibility)
-// ═══════════════════════════════════════════════════════════════════════════════
-
-const VEC_DATA: Int = 0
-const VEC_LEN: Int = 8
-const VEC_CAP: Int = 16
-
-func vec_new() -> Int {
-    let v = malloc(24)
-    let data = malloc(1024)
-    poke(v + VEC_DATA, data)
-    poke(v + VEC_LEN, 0)
-    poke(v + VEC_CAP, 1024)
-    v
-}
-
-func vec_len(v: Int) -> Int {
-    peek(v + VEC_LEN)
-}
-
-func vec_push8(v: Int, val: Int) {
-    let len = peek(v + VEC_LEN)
-    let data = peek(v + VEC_DATA)
-    poke8(data + len, val)
-    poke(v + VEC_LEN, len + 1)
-}
-
-func vec_get8(v: Int, i: Int) -> Int {
-    let data = peek(v + VEC_DATA)
-    peek8(data + i)
-}
-
-// Memory primitives
-func malloc(size: Int) -> Int { __builtin_malloc(size) }
-func poke(addr: Int, val: Int) { __builtin_store64(addr, val) }
-func peek(addr: Int) -> Int { __builtin_load64(addr) }
-func poke8(addr: Int, val: Int) { __builtin_store8(addr, val) }
-func peek8(addr: Int) -> Int { __builtin_load8(addr) }

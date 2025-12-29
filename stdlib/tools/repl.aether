@@ -1,241 +1,60 @@
-// ═══════════════════════════════════════════════════════════════════════════════
-// AETHER REPL - Interactive Read-Eval-Print Loop
-// ═══════════════════════════════════════════════════════════════════════════════
-// Learn Aether interactively!
+// AETHER REPL - Bootstrap Compatible
+// Read-Eval-Print Loop
 
-// ============================================================================
-// REPL STATE
-// ============================================================================
+import std
 
-var repl_running: Int = 0
-var repl_history: Int = 0
-var repl_env: Int = 0  // Variable bindings
-
-func repl_init() {
-    repl_running = 1
-    repl_history = vec_new()
-    repl_env = map_new()
-    
-    print_banner()
+// REPL state: [history, hist_count]
+func repl_new() -> Int {
+    let r = ae_malloc(16)
+    ae_store64(r, vec_new())  // history
+    ae_store64(r + 8, 0)
+    r
 }
 
-func print_banner() {
-    println("═══════════════════════════════════════════════════════════════")
-    println("        AETHER REPL - Interactive Programming")
-    println("═══════════════════════════════════════════════════════════════")
-    println("Type expressions to evaluate. Commands:")
-    println("  :help     - Show help")
-    println("  :quit     - Exit REPL")
-    println("  :clear    - Clear screen")
-    println("  :history  - Show history")
-    println("  :type X   - Show type of X")
-    println("═══════════════════════════════════════════════════════════════")
-    println("")
+func repl_add_history(r: Int, line: Int) {
+    let hist = ae_load64(r)
+    vec_push(hist, line)
+    let count = ae_load64(r + 8)
+    ae_store64(r + 8, count + 1)
 }
 
-// ============================================================================
-// MAIN LOOP
-// ============================================================================
-
-func repl_run() {
-    repl_init()
-    
-    while repl_running == 1 {
-        // Print prompt
-        print("aether> ")
-        
-        // Read input
-        let input = read_line()
-        
-        if str_len(input) == 0 {
-            continue
-        }
-        
-        // Add to history
-        vec_push(repl_history, input)
-        
-        // Check for commands
-        if str_starts_with(input, ":") {
-            handle_command(input)
-            continue
-        }
-        
-        // Evaluate expression
-        let result = eval_line(input)
-        
-        // Print result
-        if result != 0 {
-            print("=> ")
-            print_value(result)
-            println("")
-        }
-    }
-    
-    println("Goodbye!")
+func repl_get_history(r: Int, idx: Int) -> Int {
+    let hist = ae_load64(r)
+    vec_get(hist, idx)
 }
 
-// ============================================================================
-// COMMAND HANDLING
-// ============================================================================
-
-func handle_command(cmd: Int) {
-    if str_eq(cmd, ":quit") {
-        repl_running = 0
-    } else if str_eq(cmd, ":help") {
-        print_help()
-    } else if str_eq(cmd, ":clear") {
-        clear_screen()
-    } else if str_eq(cmd, ":history") {
-        print_history()
-    } else if str_starts_with(cmd, ":type ") {
-        let expr = str_slice(cmd, 6, str_len(cmd))
-        show_type(expr)
-    } else {
-        println("Unknown command. Type :help for help.")
-    }
+func repl_history_count(r: Int) -> Int {
+    ae_load64(r + 8)
 }
 
-func print_help() {
-    println("")
-    println("AETHER REPL HELP")
-    println("════════════════")
-    println("")
-    println("EXPRESSIONS:")
-    println("  1 + 2           - Arithmetic")
-    println("  let x = 5       - Variable binding")
-    println("  func f(x) = x*2 - Function definition")
-    println("  f(10)           - Function call")
-    println("")
-    println("COMMANDS:")
-    println("  :quit     - Exit REPL")
-    println("  :clear    - Clear screen")
-    println("  :history  - Show command history")
-    println("  :type X   - Show type of expression X")
-    println("  :help     - Show this help")
-    println("")
-}
-
-func print_history() {
-    let i = 0
-    while i < vec_len(repl_history) {
-        print_int(i + 1)
-        print(": ")
-        println(vec_get(repl_history, i))
-        i = i + 1
-    }
-}
-
-func show_type(expr: Int) {
-    let result = eval_line(expr)
-    let typ = infer_type(result)
-    print("Type: ")
-    println(type_name(typ))
-}
-
-// ============================================================================
-// EVALUATOR
-// ============================================================================
-
-func eval_line(input: Int) -> Int {
-    // Tokenize
-    let tokens = tokenize(input)
-    
-    // Parse
-    let ast = parse_expr(tokens)
-    
-    // Evaluate
-    eval_expr(ast, repl_env)
-}
-
-func eval_expr(ast: Int, env: Int) -> Int {
-    let node_type = __builtin_load64(ast)
-    
-    if node_type == NODE_INT_LIT {
-        return __builtin_load64(ast + 8)
-    }
-    
-    if node_type == NODE_VAR {
-        let name = __builtin_load64(ast + 8)
-        return map_get(env, name)
-    }
-    
-    if node_type == NODE_BINARY {
-        let op = __builtin_load64(ast + 8)
-        let left = eval_expr(__builtin_load64(ast + 16), env)
-        let right = eval_expr(__builtin_load64(ast + 24), env)
-        
-        if op == OP_ADD { return left + right }
-        if op == OP_SUB { return left - right }
-        if op == OP_MUL { return left * right }
-        if op == OP_DIV { return left / right }
-    }
-    
-    if node_type == NODE_LET {
-        let name = __builtin_load64(ast + 8)
-        let value = eval_expr(__builtin_load64(ast + 16), env)
-        map_set(env, name, value)
-        return value
-    }
-    
+// Simple evaluation
+func repl_eval(r: Int, input: Int) -> Int {
+    repl_add_history(r, input)
+    // Would evaluate expression
     0
 }
 
-// ============================================================================
-// TYPE INFERENCE
-// ============================================================================
-
-func infer_type(value: Int) -> Int {
-    // Simple runtime type inference
-    if value == 0 { return TYPE_NULL }
-    if value == 1 || value == 0 { return TYPE_BOOL }
-    TYPE_INT
+// Simple vector for REPL
+func rvec_new() -> Int {
+    let v = ae_malloc(24)
+    ae_store64(v, ae_malloc(64 * 8))
+    ae_store64(v + 8, 0)
+    ae_store64(v + 16, 64)
+    v
 }
 
-func type_name(t: Int) -> Int {
-    if t == TYPE_INT { return str_new("Int") }
-    if t == TYPE_BOOL { return str_new("Bool") }
-    if t == TYPE_STRING { return str_new("String") }
-    str_new("Unknown")
+func rvec_push(v: Int, val: Int) {
+    let data = ae_load64(v)
+    let len = ae_load64(v + 8)
+    ae_store64(data + len * 8, val)
+    ae_store64(v + 8, len + 1)
 }
 
-// ============================================================================
-// HELPERS
-// ============================================================================
-
-const NODE_INT_LIT: Int = 130
-const NODE_VAR: Int = 134
-const NODE_BINARY: Int = 135
-const NODE_LET: Int = 111
-const OP_ADD: Int = 0
-const OP_SUB: Int = 1
-const OP_MUL: Int = 2
-const OP_DIV: Int = 3
-const TYPE_INT: Int = 1
-const TYPE_BOOL: Int = 2
-const TYPE_STRING: Int = 3
-const TYPE_NULL: Int = 0
-
-func vec_new() -> Int { __builtin_malloc(24) }
-func vec_len(v: Int) -> Int { __builtin_load64(v + 8) }
-func vec_get(v: Int, i: Int) -> Int { __builtin_load64(__builtin_load64(v) + i * 8) }
-func vec_push(v: Int, val: Int) {
-    let len = __builtin_load64(v + 8)
-    __builtin_store64(__builtin_load64(v) + len * 8, val)
-    __builtin_store64(v + 8, len + 1)
+func rvec_len(v: Int) -> Int {
+    ae_load64(v + 8)
 }
-func map_new() -> Int { __builtin_malloc(1024) }
-func map_get(m: Int, k: Int) -> Int { 0 }
-func map_set(m: Int, k: Int, v: Int) {}
-func print(s: Int) { __builtin_print(s) }
-func println(s: Int) { __builtin_println(s) }
-func print_int(n: Int) { __builtin_print_int(n) }
-func print_value(v: Int) { print_int(v) }
-func read_line() -> Int { __builtin_read_line() }
-func clear_screen() { __builtin_clear_screen() }
-func str_len(s: Int) -> Int { 0 }
-func str_eq(a: Int, b: Int) -> Bool { a == b }
-func str_starts_with(s: Int, p: Int) -> Bool { false }
-func str_slice(s: Int, start: Int, end: Int) -> Int { s }
-func str_new(s: Int) -> Int { s }
-func tokenize(input: Int) -> Int { vec_new() }
-func parse_expr(tokens: Int) -> Int { 0 }
+
+func rvec_get(v: Int, idx: Int) -> Int {
+    let data = ae_load64(v)
+    ae_load64(data + idx * 8)
+}

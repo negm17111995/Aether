@@ -1,79 +1,60 @@
-//! ═══════════════════════════════════════════════════════════════════════════════
-//! AETHER REGEX - PATTERN MATCHING
-//! ═══════════════════════════════════════════════════════════════════════════════
+// AETHER REGEX - Bootstrap Compatible
+// Regular expression utilities
 
-import std.runtime.vec
-import std.runtime.str
+import std
 
-// ============================================================================
-// REGEX OPERATIONS
-// ============================================================================
-
-/// Compile regex pattern
-func regex_compile(pattern: Int) -> Int {
-    let rx = malloc(64)
-    __regex_compile(pattern, rx)
-    rx
+func regex_create(pattern: Int, len: Int) -> Int {
+    let r = ae_malloc(24)
+    ae_store64(r, pattern)
+    ae_store64(r + 8, len)
+    ae_store64(r + 16, 0)
+    r
 }
 
-/// Check if string matches pattern
-func regex_match(rx: Int, text: Int) -> Int {
-    __regex_match(rx, text, 0)
+func regex_get_pattern(r: Int) -> Int {
+    ae_load64(r)
 }
 
-/// Find first match, return start/end positions
-func regex_find(rx: Int, text: Int) -> Int {
-    let match = malloc(16)
-    let found = __regex_find(rx, text, match)
-    if found == 1 { match } else { 0 }
+func regex_get_len(r: Int) -> Int {
+    ae_load64(r + 8)
 }
 
-/// Find all matches
-func regex_find_all(rx: Int, text: Int) -> Int {
-    let matches = vec_new()
-    let offset = 0
-    let text_len = str_len(text)
+func regex_find(r: Int, text: Int, text_len: Int) -> Int {
+    let pattern = ae_load64(r)
+    let pat_len = ae_load64(r + 8)
     
-    while offset < text_len {
-        let match = malloc(16)
-        let found = __regex_find(rx, text + offset, match)
-        if found == 0 { break }
-        vec_push(matches, match)
-        offset = offset + peek(match + 8)  // end position
+    if pat_len > text_len {
+        return 0 - 1
     }
     
-    matches
+    let i = 0
+    let limit = text_len - pat_len + 1
+    while i < limit {
+        let j = 0
+        let matched = 1
+        while j < pat_len {
+            if matched == 1 {
+                let a = ae_load8(text + i + j)
+                let b = ae_load8(pattern + j)
+                if a != b {
+                    matched = 0
+                }
+            }
+            j = j + 1
+        }
+        if matched == 1 {
+            return i
+        }
+        i = i + 1
+    }
+    
+    0 - 1
 }
 
-/// Replace matches with replacement string
-func regex_replace(rx: Int, text: Int, replacement: Int) -> Int {
-    __regex_replace(rx, text, replacement)
+func regex_contains(r: Int, text: Int, text_len: Int) -> Int {
+    let pos = regex_find(r, text, text_len)
+    if pos > 0 - 1 {
+        return 1
+    }
+    0
 }
-
-/// Replace all matches
-func regex_replace_all(rx: Int, text: Int, replacement: Int) -> Int {
-    __regex_replace_all(rx, text, replacement)
-}
-
-/// Split string by pattern
-func regex_split(rx: Int, text: Int) -> Int {
-    let parts = vec_new()
-    __regex_split(rx, text, parts)
-    parts
-}
-
-// ============================================================================
-// COMMON PATTERNS
-// ============================================================================
-
-func pattern_email() -> Int { regex_compile("[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}") }
-func pattern_phone() -> Int { regex_compile("\\+?[0-9]{10,15}") }
-func pattern_url() -> Int { regex_compile("https?://[a-zA-Z0-9.-]+(/[a-zA-Z0-9._~:/?#@!$&'()*+,;=-]*)?") }
-func pattern_ipv4() -> Int { regex_compile("\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}") }
-func pattern_uuid() -> Int { regex_compile("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}") }
-
-/// Validate email
-func is_email(text: Int) -> Int { regex_match(pattern_email(), text) }
-
-/// Validate URL
-func is_url(text: Int) -> Int { regex_match(pattern_url(), text) }

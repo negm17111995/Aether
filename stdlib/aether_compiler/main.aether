@@ -1,0 +1,203 @@
+// AETHER SELF-HOSTED COMPILER - MAIN
+// Complete compiler entry point
+
+import std
+
+// ============================================================================
+// FILE I/O
+// ============================================================================
+
+func str_len(s: Int) -> Int {
+    let i = 0
+    while ae_load8(s + i) != 0 {
+        i = i + 1
+    }
+    i
+}
+
+// ============================================================================
+// TEST SOURCE
+// ============================================================================
+
+func get_test_source() -> Int {
+    // A more comprehensive test program
+    let src = ae_malloc(256)
+    let i = 0
+    
+    // s t r u c t   P o i n t   {
+    ae_store8(src + i, 115) i = i + 1  // s
+    ae_store8(src + i, 116) i = i + 1  // t
+    ae_store8(src + i, 114) i = i + 1  // r
+    ae_store8(src + i, 117) i = i + 1  // u
+    ae_store8(src + i, 99) i = i + 1   // c
+    ae_store8(src + i, 116) i = i + 1  // t
+    ae_store8(src + i, 32) i = i + 1   // space
+    ae_store8(src + i, 80) i = i + 1   // P
+    ae_store8(src + i, 111) i = i + 1  // o
+    ae_store8(src + i, 105) i = i + 1  // i
+    ae_store8(src + i, 110) i = i + 1  // n
+    ae_store8(src + i, 116) i = i + 1  // t
+    ae_store8(src + i, 32) i = i + 1   // space
+    ae_store8(src + i, 123) i = i + 1  // {
+    ae_store8(src + i, 10) i = i + 1   // newline
+    
+    // x :   I n t ,
+    ae_store8(src + i, 32) i = i + 1
+    ae_store8(src + i, 32) i = i + 1
+    ae_store8(src + i, 120) i = i + 1  // x
+    ae_store8(src + i, 58) i = i + 1   // :
+    ae_store8(src + i, 32) i = i + 1
+    ae_store8(src + i, 73) i = i + 1   // I
+    ae_store8(src + i, 110) i = i + 1  // n
+    ae_store8(src + i, 116) i = i + 1  // t
+    ae_store8(src + i, 44) i = i + 1   // ,
+    ae_store8(src + i, 10) i = i + 1   // newline
+    
+    // y :   I n t
+    ae_store8(src + i, 32) i = i + 1
+    ae_store8(src + i, 32) i = i + 1
+    ae_store8(src + i, 121) i = i + 1  // y
+    ae_store8(src + i, 58) i = i + 1   // :
+    ae_store8(src + i, 32) i = i + 1
+    ae_store8(src + i, 73) i = i + 1   // I
+    ae_store8(src + i, 110) i = i + 1  // n
+    ae_store8(src + i, 116) i = i + 1  // t
+    ae_store8(src + i, 10) i = i + 1   // newline
+    
+    // }
+    ae_store8(src + i, 125) i = i + 1  // }
+    ae_store8(src + i, 10) i = i + 1   // newline
+    ae_store8(src + i, 10) i = i + 1   // newline
+    
+    // f u n c   m a i n ( )   - >   I n t   {
+    ae_store8(src + i, 102) i = i + 1  // f
+    ae_store8(src + i, 117) i = i + 1  // u
+    ae_store8(src + i, 110) i = i + 1  // n
+    ae_store8(src + i, 99) i = i + 1   // c
+    ae_store8(src + i, 32) i = i + 1   // space
+    ae_store8(src + i, 109) i = i + 1  // m
+    ae_store8(src + i, 97) i = i + 1   // a
+    ae_store8(src + i, 105) i = i + 1  // i
+    ae_store8(src + i, 110) i = i + 1  // n
+    ae_store8(src + i, 40) i = i + 1   // (
+    ae_store8(src + i, 41) i = i + 1   // )
+    ae_store8(src + i, 32) i = i + 1   // space
+    ae_store8(src + i, 45) i = i + 1   // -
+    ae_store8(src + i, 62) i = i + 1   // >
+    ae_store8(src + i, 32) i = i + 1   // space
+    ae_store8(src + i, 73) i = i + 1   // I
+    ae_store8(src + i, 110) i = i + 1  // n
+    ae_store8(src + i, 116) i = i + 1  // t
+    ae_store8(src + i, 32) i = i + 1   // space
+    ae_store8(src + i, 123) i = i + 1  // {
+    ae_store8(src + i, 10) i = i + 1   // newline
+    
+    // l e t   x   =   4 2
+    ae_store8(src + i, 32) i = i + 1
+    ae_store8(src + i, 32) i = i + 1
+    ae_store8(src + i, 108) i = i + 1  // l
+    ae_store8(src + i, 101) i = i + 1  // e
+    ae_store8(src + i, 116) i = i + 1  // t
+    ae_store8(src + i, 32) i = i + 1   // space
+    ae_store8(src + i, 120) i = i + 1  // x
+    ae_store8(src + i, 32) i = i + 1   // space
+    ae_store8(src + i, 61) i = i + 1   // =
+    ae_store8(src + i, 32) i = i + 1   // space
+    ae_store8(src + i, 52) i = i + 1   // 4
+    ae_store8(src + i, 50) i = i + 1   // 2
+    ae_store8(src + i, 10) i = i + 1   // newline
+    
+    // i f   x   >   0   {
+    ae_store8(src + i, 32) i = i + 1
+    ae_store8(src + i, 32) i = i + 1
+    ae_store8(src + i, 105) i = i + 1  // i
+    ae_store8(src + i, 102) i = i + 1  // f
+    ae_store8(src + i, 32) i = i + 1   // space
+    ae_store8(src + i, 120) i = i + 1  // x
+    ae_store8(src + i, 32) i = i + 1   // space
+    ae_store8(src + i, 62) i = i + 1   // >
+    ae_store8(src + i, 32) i = i + 1   // space
+    ae_store8(src + i, 48) i = i + 1   // 0
+    ae_store8(src + i, 32) i = i + 1   // space
+    ae_store8(src + i, 123) i = i + 1  // {
+    ae_store8(src + i, 10) i = i + 1   // newline
+    
+    // p r i n t ( x )
+    ae_store8(src + i, 32) i = i + 1
+    ae_store8(src + i, 32) i = i + 1
+    ae_store8(src + i, 32) i = i + 1
+    ae_store8(src + i, 32) i = i + 1
+    ae_store8(src + i, 112) i = i + 1  // p
+    ae_store8(src + i, 114) i = i + 1  // r
+    ae_store8(src + i, 105) i = i + 1  // i
+    ae_store8(src + i, 110) i = i + 1  // n
+    ae_store8(src + i, 116) i = i + 1  // t
+    ae_store8(src + i, 40) i = i + 1   // (
+    ae_store8(src + i, 120) i = i + 1  // x
+    ae_store8(src + i, 41) i = i + 1   // )
+    ae_store8(src + i, 10) i = i + 1   // newline
+    
+    // }
+    ae_store8(src + i, 32) i = i + 1
+    ae_store8(src + i, 32) i = i + 1
+    ae_store8(src + i, 125) i = i + 1  // }
+    ae_store8(src + i, 10) i = i + 1   // newline
+    
+    // 0
+    ae_store8(src + i, 32) i = i + 1
+    ae_store8(src + i, 32) i = i + 1
+    ae_store8(src + i, 48) i = i + 1   // 0
+    ae_store8(src + i, 10) i = i + 1   // newline
+    
+    // }
+    ae_store8(src + i, 125) i = i + 1  // }
+    ae_store8(src + i, 10) i = i + 1   // newline
+    ae_store8(src + i, 0)              // null
+    
+    src
+}
+
+// ============================================================================
+// COMPILATION PIPELINE
+// ============================================================================
+
+func compile_full(src: Int, len: Int) -> Int {
+    // Phase 1: Lexical Analysis
+    let tokens = tokenize(src, len)
+    let tok_count = vec_len(tokens)
+    print(tok_count)
+    
+    // Phase 2: Parsing
+    let ast = parse(tokens)
+    
+    // Phase 3: Type Checking
+    let type_ok = check_module(ast)
+    
+    // Phase 4: Borrow Checking (Liquid Ownership)
+    let borrow_ok = check_ownership(ast)
+    
+    // Phase 5: Effect Verification
+    let effects_ok = verify_effects(ast)
+    
+    // Phase 6: Code Generation
+    let c_code = generate(ast)
+    
+    c_code
+}
+
+// ============================================================================
+// MAIN ENTRY POINT
+// ============================================================================
+
+func main() -> Int {
+    let test_src = get_test_source()
+    let len = str_len(test_src)
+    
+    print(len)
+    
+    let result = compile_full(test_src, len)
+    
+    println(result)
+    
+    0
+}

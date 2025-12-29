@@ -1,57 +1,47 @@
-// Minimal Prelude for Bootstrap Compiler
-// Automagically imported by all files
+// AETHER PRELUDE - Bootstrap Compatible
+// Basic prelude functions
 
-// Core Imports (if needed, but we define primitives here)
-// use core::* 
+import std
 
-// ----------------------------------------------------------------------------
-// OPTIONS & RESULTS (Int Stubs)
-// ----------------------------------------------------------------------------
+// Basic type aliases (conceptual)
+const PRELUDE_INT: Int = 1
+const PRELUDE_BOOL: Int = 2
+const PRELUDE_VOID: Int = 3
 
-func unwrap(opt: Int) -> Int {
-    opt
+// Boolean helpers
+func prelude_and(a: Int, b: Int) -> Int {
+    if a == 1 && b == 1 { return 1 }
+    0
 }
 
-func unwrap_or(opt: Int, default: Int) -> Int {
-    if opt == 0 { default } else { opt }
+func prelude_or(a: Int, b: Int) -> Int {
+    if a == 1 || b == 1 { return 1 }
+    0
 }
 
-func unwrap_result(res: Int) -> Int {
-    res 
+func prelude_not(a: Int) -> Int {
+    if a == 0 { return 1 }
+    0
 }
 
-func map_option(opt: Int, f: Int) -> Int {
-    opt 
+// Math helpers
+func prelude_min(a: Int, b: Int) -> Int {
+    if a < b { return a }
+    b
 }
 
-func map_result(res: Int, f: Int) -> Int {
-    res 
+func prelude_max(a: Int, b: Int) -> Int {
+    if a > b { return a }
+    b
 }
 
-// ----------------------------------------------------------------------------
-// UTILS
-// ----------------------------------------------------------------------------
-
-func dbg(value: Int) -> Int {
-    value
+func prelude_abs(a: Int) -> Int {
+    if a < 0 { return 0 - a }
+    a
 }
 
-func timed(label: String, f: Int) -> Int {
-    f
+func prelude_clamp(val: Int, lo: Int, hi: Int) -> Int {
+    if val < lo { return lo }
+    if val > hi { return hi }
+    val
 }
-
-func times(n: Int, f: Int) {
-    // Stub
-}
-
-func forever(f: Int) {
-    // Stub
-}
-
-// ----------------------------------------------------------------------------
-// STUBS FOR TYPES
-// ----------------------------------------------------------------------------
-
-// These specific type aliases might not be supported by bootstrap
-// type Unit = ()
-// type Bytes = [Int]

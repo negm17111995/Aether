@@ -1,184 +1,65 @@
-//! ═══════════════════════════════════════════════════════════════════════════════
-//! AETHER CONCURRENCY - LOCK-FREE, ZERO CONTENTION
-//! ═══════════════════════════════════════════════════════════════════════════════
-//! High-performance concurrency primitives
-//! - Lock-free queues
-//! - Atomic operations
-//! - Channels (Go-style)
+// AETHER CONCURRENCY - Bootstrap Compatible
+// Thread primitives
 
-import std.runtime.syscall
-import std.runtime.vec
+import std
 
-// ============================================================================
-// ATOMIC OPERATIONS (Compiler Intrinsics)
-// ============================================================================
-
-/// Atomic load (acquire semantics)
-func atomic_load(ptr: Int) -> Int {
-    __atomic_load(ptr)
+// Mutex: [state, owner]
+func mutex_new() -> Int {
+    let m = ae_malloc(16)
+    ae_store64(m, 0)      // unlocked
+    ae_store64(m + 8, 0)  // no owner
+    m
 }
 
-/// Atomic store (release semantics)
-func atomic_store(ptr: Int, val: Int) {
-    __atomic_store(ptr, val)
+func mutex_lock(m: Int) {
+    ae_store64(m, 1)
 }
 
-/// Compare and swap - returns 1 if swapped
-func atomic_cas(ptr: Int, expected: Int, desired: Int) -> Int {
-    __atomic_cas(ptr, expected, desired)
+func mutex_unlock(m: Int) {
+    ae_store64(m, 0)
 }
 
-/// Atomic add - returns old value
-func atomic_add(ptr: Int, delta: Int) -> Int {
-    __atomic_fetch_add(ptr, delta)
+func mutex_is_locked(m: Int) -> Int {
+    ae_load64(m)
 }
 
-// ============================================================================
-// SPINLOCK
-// ============================================================================
-
-const LOCK_FREE: Int = 0
-const LOCK_HELD: Int = 1
-
-/// Acquire spinlock
-func spinlock_acquire(lock: Int) {
-    while atomic_cas(lock, LOCK_FREE, LOCK_HELD) == 0 {
-        // Spin - CPU hint for waiting
-        __cpu_pause()
-    }
+// Channel: [buffer, head, tail, cap]
+func channel_new(cap: Int) -> Int {
+    let c = ae_malloc(32)
+    ae_store64(c, ae_malloc(cap * 8))  // buffer
+    ae_store64(c + 8, 0)               // head
+    ae_store64(c + 16, 0)              // tail
+    ae_store64(c + 24, cap)
+    c
 }
 
-/// Release spinlock  
-func spinlock_release(lock: Int) {
-    atomic_store(lock, LOCK_FREE)
-}
-
-/// Try acquire - returns 1 if acquired
-func spinlock_try_acquire(lock: Int) -> Int {
-    atomic_cas(lock, LOCK_FREE, LOCK_HELD)
-}
-
-// ============================================================================
-// LOCK-FREE QUEUE (MPSC - Multi-Producer Single-Consumer)
-// ============================================================================
-
-// Queue: [head: Int, tail: Int, buffer: Int, mask: Int]
-const Q_HEAD_OFF: Int = 0
-const Q_TAIL_OFF: Int = 8
-const Q_BUFFER_OFF: Int = 16
-const Q_MASK_OFF: Int = 24
-
-/// Create lock-free queue with capacity (must be power of 2)
-func queue_new(capacity: Int) -> Int {
-    let q = malloc(32)
-    let buffer = malloc(capacity * 8)
+func channel_send(c: Int, val: Int) -> Int {
+    let buf = ae_load64(c)
+    let tail = ae_load64(c + 16)
+    let cap = ae_load64(c + 24)
     
-    poke(q + Q_HEAD_OFF, 0)
-    poke(q + Q_TAIL_OFF, 0)
-    poke(q + Q_BUFFER_OFF, buffer)
-    poke(q + Q_MASK_OFF, capacity - 1)
+    let next = tail + 1
+    if next >= cap { next = 0 }
     
-    q
-}
-
-/// Push to queue (lock-free)
-func queue_push(q: Int, val: Int) -> Int {
-    let mask = peek(q + Q_MASK_OFF)
-    let buffer = peek(q + Q_BUFFER_OFF)
+    let head = ae_load64(c + 8)
+    if next == head { return 0 }  // Full
     
-    let tail = atomic_load(q + Q_TAIL_OFF)
-    let head = atomic_load(q + Q_HEAD_OFF)
-    
-    // Check if full
-    if tail - head > mask {
-        return 0  // Full
-    }
-    
-    // Try to claim slot
-    if atomic_cas(q + Q_TAIL_OFF, tail, tail + 1) == 0 {
-        return 0  // Contention, retry
-    }
-    
-    // Write value
-    let idx = tail & mask
-    poke(buffer + idx * 8, val)
-    
-    1  // Success
-}
-
-/// Pop from queue (lock-free)
-func queue_pop(q: Int) -> Int {
-    let mask = peek(q + Q_MASK_OFF)
-    let buffer = peek(q + Q_BUFFER_OFF)
-    
-    let head = atomic_load(q + Q_HEAD_OFF)
-    let tail = atomic_load(q + Q_TAIL_OFF)
-    
-    // Check if empty
-    if head >= tail {
-        return -1  // Empty
-    }
-    
-    // Read value
-    let idx = head & mask
-    let val = peek(buffer + idx * 8)
-    
-    // Advance head
-    atomic_cas(q + Q_HEAD_OFF, head, head + 1)
-    
-    val
-}
-
-// ============================================================================
-// CHANNEL (Go-style)
-// ============================================================================
-
-// Channel: [queue: Int, closed: Int]
-const CH_QUEUE_OFF: Int = 0
-const CH_CLOSED_OFF: Int = 8
-
-/// Create buffered channel
-func channel_new(capacity: Int) -> Int {
-    let ch = malloc(16)
-    poke(ch + CH_QUEUE_OFF, queue_new(capacity))
-    poke(ch + CH_CLOSED_OFF, 0)
-    ch
-}
-
-/// Send to channel (blocks if full)
-func channel_send(ch: Int, val: Int) -> Int {
-    if peek(ch + CH_CLOSED_OFF) != 0 {
-        return 0  // Channel closed
-    }
-    
-    let q = peek(ch + CH_QUEUE_OFF)
-    while queue_push(q, val) == 0 {
-        // Spin until space available
-        __cpu_pause()
-        
-        if peek(ch + CH_CLOSED_OFF) != 0 {
-            return 0  // Closed while waiting
-        }
-    }
+    ae_store64(buf + tail * 8, val)
+    ae_store64(c + 16, next)
     1
 }
 
-/// Receive from channel (blocks if empty)
-func channel_recv(ch: Int) -> Int {
-    let q = peek(ch + CH_QUEUE_OFF)
+func channel_recv(c: Int) -> Int {
+    let buf = ae_load64(c)
+    let head = ae_load64(c + 8)
+    let tail = ae_load64(c + 16)
     
-    let val = queue_pop(q)
-    while val == -1 {
-        if peek(ch + CH_CLOSED_OFF) != 0 {
-            return -1  // Closed and empty
-        }
-        __cpu_pause()
-        val = queue_pop(q)
-    }
+    if head == tail { return 0 }  // Empty
+    
+    let val = ae_load64(buf + head * 8)
+    let cap = ae_load64(c + 24)
+    let next = head + 1
+    if next >= cap { next = 0 }
+    ae_store64(c + 8, next)
     val
-}
-
-/// Close channel
-func channel_close(ch: Int) {
-    poke(ch + CH_CLOSED_OFF, 1)
 }

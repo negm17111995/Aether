@@ -1,210 +1,59 @@
-// ═══════════════════════════════════════════════════════════════════════════════
-// AETHER CODE FORMATTER - Beautiful, Consistent Code
-// ═══════════════════════════════════════════════════════════════════════════════
-// Auto-format Aether source code to consistent style
+// AETHER FORMATTER - Bootstrap Compatible
+// Code formatting utilities
 
-// ============================================================================
-// FORMATTER CONFIG
-// ============================================================================
+import std
 
-const INDENT_SIZE: Int = 4
-const MAX_LINE_LENGTH: Int = 100
-const BRACE_STYLE_SAME_LINE: Int = 1
-
-var config_indent: Int = INDENT_SIZE
-var config_max_line: Int = MAX_LINE_LENGTH
-var config_brace: Int = BRACE_STYLE_SAME_LINE
-
-// ============================================================================
-// MAIN FORMATTER
-// ============================================================================
-
-func format_file(path: Int) -> Int {
-    let source = file_read(path)
-    let formatted = format_source(source)
-    file_write(path, formatted)
-    1
+// Formatter state
+func formatter_new() -> Int {
+    let f = ae_malloc(24)
+    ae_store64(f, 0)   // indent level
+    ae_store64(f + 8, 4)   // indent size (spaces)
+    ae_store64(f + 16, vec_new())  // output lines
+    f
 }
 
-func format_source(source: Int) -> Int {
-    // Tokenize
-    let tokens = tokenize(source)
-    
-    // Format with proper indentation
-    let output = vec_new()
-    let indent_level = 0
-    
-    let i = 0
-    while i < vec_len(tokens) {
-        let token = vec_get(tokens, i)
-        let typ = token_type(token)
-        
-        // Handle indentation changes
-        if typ == TOK_LBRACE {
-            emit_token(output, token, indent_level)
-            emit_newline(output)
-            indent_level = indent_level + 1
-        } else if typ == TOK_RBRACE {
-            indent_level = indent_level - 1
-            emit_indent(output, indent_level)
-            emit_token(output, token, 0)
-            emit_newline(output)
-        } else if typ == TOK_NEWLINE {
-            emit_newline(output)
-            emit_indent(output, indent_level)
-        } else {
-            emit_token(output, token, indent_level)
-        }
-        
-        i = i + 1
-    }
-    
-    vec_join(output, "")
+func formatter_indent(f: Int) {
+    let level = ae_load64(f)
+    ae_store64(f, level + 1)
 }
 
-// ============================================================================
-// FORMATTING RULES
-// ============================================================================
-
-// Format function declaration
-func format_func(tokens: Int, start: Int) -> Int {
-    // func name(args) -> Type {
-    //     body
-    // }
-    let output = vec_new()
-    
-    vec_push(output, "func ")
-    // Add name
-    // Add args with proper spacing
-    // Add return type
-    // Add body with indentation
-    
-    output
-}
-
-// Format struct declaration
-func format_struct(tokens: Int, start: Int) -> Int {
-    // struct Name {
-    //     field1: Type,
-    //     field2: Type,
-    // }
-    let output = vec_new()
-    output
-}
-
-// Format if expression
-func format_if(tokens: Int, start: Int, indent: Int) -> Int {
-    // if condition {
-    //     body
-    // } else {
-    //     other
-    // }
-    let output = vec_new()
-    output
-}
-
-// ============================================================================
-// EMIT HELPERS
-// ============================================================================
-
-func emit_token(output: Int, token: Int, indent: Int) {
-    let lexeme = token_lexeme(token)
-    vec_push(output, lexeme)
-    
-    // Add space after certain tokens
-    let typ = token_type(token)
-    if needs_trailing_space(typ) {
-        vec_push(output, " ")
+func formatter_dedent(f: Int) {
+    let level = ae_load64(f)
+    if level > 0 {
+        ae_store64(f, level - 1)
     }
 }
 
-func emit_newline(output: Int) {
-    vec_push(output, "\n")
+func formatter_emit(f: Int, line: Int) {
+    let lines = ae_load64(f + 16)
+    vec_push(lines, line)
 }
 
-func emit_indent(output: Int, level: Int) {
-    let i = 0
-    while i < level * config_indent {
-        vec_push(output, " ")
-        i = i + 1
-    }
+func formatter_get_output(f: Int) -> Int {
+    ae_load64(f + 16)
 }
 
-func emit_space(output: Int) {
-    vec_push(output, " ")
+// Simple vec for formatter
+func fvec_new() -> Int {
+    let v = ae_malloc(24)
+    ae_store64(v, ae_malloc(64 * 8))
+    ae_store64(v + 8, 0)
+    ae_store64(v + 16, 64)
+    v
 }
 
-// ============================================================================
-// SPACING RULES
-// ============================================================================
-
-func needs_trailing_space(token_type: Int) -> Bool {
-    // Tokens that need space after
-    token_type == TOK_KEYWORD ||
-    token_type == TOK_COMMA ||
-    token_type == TOK_COLON ||
-    token_type == TOK_ARROW ||
-    token_type == TOK_EQ ||
-    token_type == TOK_FAT_ARROW
+func fvec_push(v: Int, val: Int) {
+    let data = ae_load64(v)
+    let len = ae_load64(v + 8)
+    ae_store64(data + len * 8, val)
+    ae_store64(v + 8, len + 1)
 }
 
-func needs_leading_space(token_type: Int) -> Bool {
-    // Tokens that need space before
-    token_type == TOK_LBRACE ||
-    token_type == TOK_EQ
+func fvec_len(v: Int) -> Int {
+    ae_load64(v + 8)
 }
 
-// ============================================================================
-// LONG LINE HANDLING
-// ============================================================================
-
-func break_long_line(line: Int) -> Int {
-    if str_len(line) <= config_max_line {
-        return line
-    }
-    
-    // Find best break point
-    let break_points = find_break_points(line)
-    
-    // Break at best point and indent continuation
-    let parts = vec_new()
-    // Split and indent
-    
-    vec_join(parts, "\n")
+func fvec_get(v: Int, idx: Int) -> Int {
+    let data = ae_load64(v)
+    ae_load64(data + idx * 8)
 }
-
-func find_break_points(line: Int) -> Int {
-    // Good break points: after comma, before operator
-    let points = vec_new()
-    points
-}
-
-// ============================================================================
-// HELPERS
-// ============================================================================
-
-const TOK_KEYWORD: Int = 5
-const TOK_LBRACE: Int = 42
-const TOK_RBRACE: Int = 43
-const TOK_NEWLINE: Int = 44
-const TOK_COMMA: Int = 34
-const TOK_COLON: Int = 31
-const TOK_ARROW: Int = 27
-const TOK_FAT_ARROW: Int = 28
-const TOK_EQ: Int = 11
-
-func vec_new() -> Int { __builtin_malloc(24) }
-func vec_len(v: Int) -> Int { __builtin_load64(v + 8) }
-func vec_get(v: Int, i: Int) -> Int { __builtin_load64(__builtin_load64(v) + i * 8) }
-func vec_push(v: Int, val: Int) {
-    let len = __builtin_load64(v + 8)
-    __builtin_store64(__builtin_load64(v) + len * 8, val)
-    __builtin_store64(v + 8, len + 1)
-}
-func vec_join(v: Int, sep: Int) -> Int { 0 }
-func file_read(path: Int) -> Int { 0 }
-func file_write(path: Int, content: Int) -> Int { 0 }
-func tokenize(source: Int) -> Int { vec_new() }
-func token_type(t: Int) -> Int { __builtin_load64(t) }
-func token_lexeme(t: Int) -> Int { __builtin_load64(t + 8) }
-func str_len(s: Int) -> Int { 0 }

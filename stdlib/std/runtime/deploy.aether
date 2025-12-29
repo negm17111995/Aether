@@ -1,305 +1,48 @@
-// ═══════════════════════════════════════════════════════════════════════════════
-// AETHER DEPLOY - WORLD-CLASS DEPLOYMENT WITH ZERO ERRORS
-// ═══════════════════════════════════════════════════════════════════════════════
-// - Shows ALL errors at once before deployment
-// - Self-maintaining after deployment
-// - Zero lag, zero stuck, zero failures
-// - Automatic recovery from any state
+// AETHER DEPLOY - Bootstrap Compatible
+// Hot deployment primitives
 
-// ============================================================================
-// ERROR COLLECTION SYSTEM
-// ============================================================================
+import std
 
-// Error: [type, message, line, column, file, suggestion]
-const ERR_TYPE: Int = 0
-const ERR_MSG: Int = 8
-const ERR_LINE: Int = 16
-const ERR_COL: Int = 24
-const ERR_FILE: Int = 32
-const ERR_FIX: Int = 40
-
-// Error types
-const ERR_SYNTAX: Int = 1
-const ERR_TYPE_MISMATCH: Int = 2
-const ERR_UNDEFINED: Int = 3
-const ERR_RESOURCE: Int = 4
-const ERR_NETWORK: Int = 5
-const ERR_PERMISSION: Int = 6
-const ERR_CONFIG: Int = 7
-const ERR_DEPENDENCY: Int = 8
-
-// Global error collector
-var deploy_errors: Int = 0
-var error_count: Int = 0
-
-// ============================================================================
-// DEPLOYMENT VALIDATOR
-// ============================================================================
-
-// Validate EVERYTHING before deployment - collect ALL errors
-func validate_deployment(module: Int) -> Int {
-    deploy_errors = vec_new()
-    error_count = 0
-    
-    // 1. Syntax validation
-    validate_syntax(module)
-    
-    // 2. Type checking
-    validate_types(module)
-    
-    // 3. Resource availability
-    validate_resources(module)
-    
-    // 4. Network connectivity
-    validate_network(module)
-    
-    // 5. Permissions
-    validate_permissions(module)
-    
-    // 6. Configuration
-    validate_config(module)
-    
-    // 7. Dependencies
-    validate_dependencies(module)
-    
-    // 8. Memory requirements
-    validate_memory(module)
-    
-    // Return error count (0 = ready to deploy)
-    error_count
+// Module: [name, version, code_ptr, size]
+func module_new(name: Int, version: Int, code_ptr: Int, size: Int) -> Int {
+    let m = ae_malloc(32)
+    ae_store64(m, name)
+    ae_store64(m + 8, version)
+    ae_store64(m + 16, code_ptr)
+    ae_store64(m + 24, size)
+    m
 }
 
-// Add error to collection
-func add_error(typ: Int, msg: Int, line: Int, col: Int, file: Int, fix: Int) {
-    let err = __builtin_malloc(48)
-    __builtin_store64(err + ERR_TYPE, typ)
-    __builtin_store64(err + ERR_MSG, msg)
-    __builtin_store64(err + ERR_LINE, line)
-    __builtin_store64(err + ERR_COL, col)
-    __builtin_store64(err + ERR_FILE, file)
-    __builtin_store64(err + ERR_FIX, fix)
-    
-    vec_push(deploy_errors, err)
-    error_count = error_count + 1
+func module_name(m: Int) -> Int { ae_load64(m) }
+func module_version(m: Int) -> Int { ae_load64(m + 8) }
+func module_code(m: Int) -> Int { ae_load64(m + 16) }
+func module_size(m: Int) -> Int { ae_load64(m + 24) }
+
+// Module registry
+func registry_new() -> Int {
+    let r = ae_malloc(16)
+    ae_store64(r, vec_new())  // modules
+    ae_store64(r + 8, 0)      // count
+    r
 }
 
-// Get all errors as formatted report
-func get_deployment_report() -> Int {
-    let report = vec_new()
-    
-    // Header
-    vec_push(report, make_str("═══════════════════════════════════════════════════════════════"))
-    vec_push(report, make_str("DEPLOYMENT VALIDATION REPORT"))
-    vec_push(report, make_str("═══════════════════════════════════════════════════════════════"))
-    
-    if error_count == 0 {
-        vec_push(report, make_str("✅ All checks passed - ready to deploy!"))
-        return report
-    }
-    
-    vec_push(report, make_str(""))
-    vec_push(report, format_int(error_count))
-    vec_push(report, make_str(" errors found:"))
-    vec_push(report, make_str(""))
-    
-    // Group by type
+func registry_add(r: Int, m: Int) {
+    let mods = ae_load64(r)
+    vec_push(mods, m)
+    let count = ae_load64(r + 8)
+    ae_store64(r + 8, count + 1)
+}
+
+func registry_find(r: Int, name: Int) -> Int {
+    let mods = ae_load64(r)
+    let count = vec_len(mods)
     let i = 0
-    while i < error_count {
-        let err = vec_get(deploy_errors, i)
-        let typ = __builtin_load64(err + ERR_TYPE)
-        let msg = __builtin_load64(err + ERR_MSG)
-        let line = __builtin_load64(err + ERR_LINE)
-        let file = __builtin_load64(err + ERR_FILE)
-        let fix = __builtin_load64(err + ERR_FIX)
-        
-        // Format: [ERROR TYPE] file:line - message
-        //         Fix: suggestion
-        vec_push(report, format_error(typ, file, line, msg))
-        if fix != 0 {
-            vec_push(report, make_str("   💡 Fix: "))
-            vec_push(report, fix)
+    while i < count {
+        let m = vec_get(mods, i)
+        if module_name(m) == name {
+            return m
         }
-        vec_push(report, make_str(""))
-        
         i = i + 1
     }
-    
-    vec_push(report, make_str("───────────────────────────────────────────────────────────────"))
-    vec_push(report, make_str("Fix all errors above and run deploy again."))
-    
-    report
+    0
 }
-
-// ============================================================================
-// VALIDATION FUNCTIONS
-// ============================================================================
-
-func validate_syntax(m: Int) {
-    // Parse and collect all syntax errors
-}
-
-func validate_types(m: Int) {
-    // Type check all functions
-}
-
-func validate_resources(m: Int) {
-    // Check disk space, file handles, etc.
-}
-
-func validate_network(m: Int) {
-    // Check network connectivity to required services
-}
-
-func validate_permissions(m: Int) {
-    // Check file/network permissions
-}
-
-func validate_config(m: Int) {
-    // Validate configuration files
-}
-
-func validate_dependencies(m: Int) {
-    // Check all dependencies are available
-}
-
-func validate_memory(m: Int) {
-    // Ensure enough memory for operation
-}
-
-// ============================================================================
-// SELF-MAINTAINING DEPLOYMENT
-// ============================================================================
-
-// Deploy function that maintains itself forever
-func deploy_forever(fn: Int, config: Int) -> Int {
-    // Validate first
-    let errors = validate_deployment(fn)
-    if errors > 0 {
-        // Return error report
-        return get_deployment_report()
-    }
-    
-    // Create self-healing wrapper
-    let deployment = create_deployment(fn, config)
-    
-    // Start monitoring
-    start_self_healing(deployment)
-    
-    // Return deployment ID
-    deployment
-}
-
-// Deployment wrapper with self-healing
-func create_deployment(fn: Int, config: Int) -> Int {
-    let d = __builtin_malloc(64)
-    __builtin_store64(d, fn)
-    __builtin_store64(d + 8, config)
-    __builtin_store64(d + 16, 0)  // status: active
-    __builtin_store64(d + 24, now_ms())  // start time
-    __builtin_store64(d + 32, 0)  // restart count
-    __builtin_store64(d + 40, 0)  // last checkpoint
-    __builtin_store64(d + 48, 0)  // state snapshot
-    d
-}
-
-// Self-healing loop
-func start_self_healing(d: Int) {
-    // Run in background
-    let fn = __builtin_load64(d)
-    
-    // Main execution loop - never exits
-    while 1 {
-        // Checkpoint before execution
-        let state = capture_full_state(d)
-        __builtin_store64(d + 48, state)
-        __builtin_store64(d + 40, now_ms())
-        
-        // Execute with protection
-        let result = protected_execute(fn, d)
-        
-        if result < 0 {
-            // Error - auto-recover
-            recover_and_restart(d)
-        }
-        
-        // Rate limit to prevent CPU spin
-        if result == 0 {
-            __builtin_sleep_us(100)  // 100 microseconds
-        }
-    }
-}
-
-// Execute with full protection
-func protected_execute(fn: Int, d: Int) -> Int {
-    // Set up recovery handler
-    let recovery_point = __builtin_setjmp()
-    
-    if recovery_point != 0 {
-        // We jumped here from a crash - return error
-        return 0 - 1
-    }
-    
-    // Normal execution
-    __builtin_call(fn, d)
-}
-
-// Recover from any failure
-func recover_and_restart(d: Int) {
-    // Load last checkpoint
-    let state = __builtin_load64(d + 48)
-    
-    // Increment restart counter
-    let restarts = __builtin_load64(d + 32)
-    __builtin_store64(d + 32, restarts + 1)
-    
-    // Restore state
-    restore_full_state(d, state)
-    
-    // Log recovery (async to not block)
-    log_recovery(d, restarts + 1)
-}
-
-// ============================================================================
-// STATE MANAGEMENT (Zero Lag)
-// ============================================================================
-
-// Capture full state - optimized for speed
-func capture_full_state(d: Int) -> Int {
-    // Use memory-mapped snapshot for zero-copy
-    let state = __builtin_malloc(1024)
-    
-    // Capture registers, stack pointer, heap references
-    __builtin_capture_registers(state)
-    __builtin_capture_stack(state + 256)
-    __builtin_capture_heap_roots(state + 512)
-    
-    state
-}
-
-// Restore full state - optimized for speed
-func restore_full_state(d: Int, state: Int) {
-    __builtin_restore_registers(state)
-    __builtin_restore_stack(state + 256)
-    // Heap is already intact - just update roots
-}
-
-// ============================================================================
-// HELPER FUNCTIONS
-// ============================================================================
-
-func vec_new() -> Int { __builtin_malloc(24) }
-func vec_push(v: Int, val: Int) {
-    let len = __builtin_load64(v + 8)
-    let data = __builtin_load64(v)
-    __builtin_store64(data + len * 8, val)
-    __builtin_store64(v + 8, len + 1)
-}
-func vec_get(v: Int, i: Int) -> Int {
-    let data = __builtin_load64(v)
-    __builtin_load64(data + i * 8)
-}
-func now_ms() -> Int { __builtin_now_ms() }
-func make_str(s: Int) -> Int { s }
-func format_int(n: Int) -> Int { n }
-func format_error(t: Int, f: Int, l: Int, m: Int) -> Int { m }
-func log_recovery(d: Int, n: Int) {}

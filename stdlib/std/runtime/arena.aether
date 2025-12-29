@@ -1,114 +1,40 @@
-//! ═══════════════════════════════════════════════════════════════════════════════
-//! AETHER ARENA ALLOCATOR - ZERO GC, INSTANT DEALLOCATION
-//! ═══════════════════════════════════════════════════════════════════════════════
-//! All allocations from arena - freed together in O(1) time
-//! No garbage collection, no fragmentation, no overhead
+// AETHER ARENA ALLOCATOR - Bootstrap Compatible
 
-import std.runtime.syscall
+import std
 
-// ============================================================================
-// ARENA LAYOUT
-// ============================================================================
-// Arena: [start: Int, pos: Int, end: Int, next_arena: Int]
-// 32 bytes header, rest is usable memory
-
-const ARENA_START_OFF: Int = 0
-const ARENA_POS_OFF: Int = 8
-const ARENA_END_OFF: Int = 16
-const ARENA_NEXT_OFF: Int = 24
-const ARENA_HEADER_SIZE: Int = 32
-const ARENA_DEFAULT_SIZE: Int = 1048576  // 1MB
-
-// ============================================================================
-// ARENA OPERATIONS
-// ============================================================================
-
-/// Create a new arena with given size
+// Arena: [base, size, used]
 func arena_new(size: Int) -> Int {
-    let total = ARENA_HEADER_SIZE + size
-    let mem = sys_mmap(total)
-    if mem == -1 {
-        return 0  // Allocation failed
+    let a = ae_malloc(24)
+    ae_store64(a, ae_malloc(size))  // base
+    ae_store64(a + 8, size)          // size
+    ae_store64(a + 16, 0)            // used
+    a
+}
+
+func arena_alloc(a: Int, size: Int) -> Int {
+    let base = ae_load64(a)
+    let cap = ae_load64(a + 8)
+    let used = ae_load64(a + 16)
+    
+    if used + size > cap {
+        return 0  // Out of memory
     }
     
-    let data_start = mem + ARENA_HEADER_SIZE
-    poke(mem + ARENA_START_OFF, data_start)
-    poke(mem + ARENA_POS_OFF, data_start)
-    poke(mem + ARENA_END_OFF, data_start + size)
-    poke(mem + ARENA_NEXT_OFF, 0)
-    
-    mem
+    let ptr = base + used
+    ae_store64(a + 16, used + size)
+    ptr
 }
 
-/// Create default 1MB arena
-func arena_default() -> Int {
-    arena_new(ARENA_DEFAULT_SIZE)
+func arena_reset(a: Int) {
+    ae_store64(a + 16, 0)
 }
 
-/// Allocate bytes from arena (O(1), no GC)
-func arena_alloc(arena: Int, size: Int) -> Int {
-    let pos = peek(arena + ARENA_POS_OFF)
-    let end = peek(arena + ARENA_END_OFF)
-    
-    // Align to 8 bytes
-    let aligned = (size + 7) & ~7
-    let new_pos = pos + aligned
-    
-    if new_pos > end {
-        // Arena full - chain a new one
-        let next = peek(arena + ARENA_NEXT_OFF)
-        if next == 0 {
-            // Create new arena
-            let new_arena = arena_new(ARENA_DEFAULT_SIZE)
-            if new_arena == 0 {
-                return 0  // OOM
-            }
-            poke(arena + ARENA_NEXT_OFF, new_arena)
-            return arena_alloc(new_arena, size)
-        }
-        return arena_alloc(next, size)
-    }
-    
-    poke(arena + ARENA_POS_OFF, new_pos)
-    pos
+func arena_used(a: Int) -> Int {
+    ae_load64(a + 16)
 }
 
-/// Reset arena for reuse (O(1) - instant!)
-func arena_reset(arena: Int) {
-    let start = peek(arena + ARENA_START_OFF)
-    poke(arena + ARENA_POS_OFF, start)
-    
-    // Reset chained arenas too
-    let next = peek(arena + ARENA_NEXT_OFF)
-    if next != 0 {
-        arena_reset(next)
-    }
-}
-
-/// Free arena and all memory (O(n) where n = chain length)
-func arena_free(arena: Int) {
-    // Free chained arenas first
-    let next = peek(arena + ARENA_NEXT_OFF)
-    if next != 0 {
-        arena_free(next)
-    }
-    
-    let start = peek(arena + ARENA_START_OFF)
-    let end = peek(arena + ARENA_END_OFF)
-    let size = end - start + ARENA_HEADER_SIZE
-    sys_munmap(arena, size)
-}
-
-/// Get bytes used in arena
-func arena_used(arena: Int) -> Int {
-    let start = peek(arena + ARENA_START_OFF)
-    let pos = peek(arena + ARENA_POS_OFF)
-    pos - start
-}
-
-/// Get bytes remaining in arena
-func arena_remaining(arena: Int) -> Int {
-    let pos = peek(arena + ARENA_POS_OFF)
-    let end = peek(arena + ARENA_END_OFF)
-    end - pos
+func arena_free(a: Int) {
+    let base = ae_load64(a)
+    __builtin_free(base)
+    __builtin_free(a)
 }

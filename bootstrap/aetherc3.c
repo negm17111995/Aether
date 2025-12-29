@@ -17,7 +17,8 @@ enum { T_EOF, T_ID, T_INT, T_STR, T_PLUS, T_MINUS, T_STAR, T_SLASH, T_PCT,
        T_COMMA, T_AT, T_LPAR, T_RPAR, T_LBRK, T_RBRK, T_LBRC, T_RBRC,
        T_FUNC, T_LET, T_MUT, T_CONST, T_IF, T_ELSE, T_WHILE, T_FOR, T_IN,
        T_RET, T_STRUCT, T_ENUM, T_IMPL, T_TRAIT, T_MATCH, T_IMPORT, T_USE,
-       T_TRUE, T_FALSE, T_SELF, T_PUB, T_BREAK, T_CONT, T_NL };
+       T_TRUE, T_FALSE, T_SELF, T_PUB, T_BREAK, T_CONT, T_NL,
+       T_XOR, T_SHL, T_SHR };
 
 typedef struct { int type, line; char *lex; long long ival; } Tok;
 static Tok toks[MAX_TOK]; static int ntok, cur;
@@ -94,12 +95,13 @@ static void lex(char *s) {
         OP2('<','=',T_LE,T_LT) OP2('>','=',T_GE,T_GT)
         OP2('&','&',T_AND,T_AMP) OP2('|','|',T_OR,T_PIPE)
         OP2(':',':',T_DCOLON,T_COLON)
+        OP2('<','<',T_SHL,T_LT) OP2('>','>',T_SHR,T_GT)
         OP1('+',T_PLUS) OP1('-',T_MINUS) OP1('*',T_STAR) OP1('/',T_SLASH)
         OP1('%',T_PCT) OP1('=',T_EQ) OP1('<',T_LT) OP1('>',T_GT)
         OP1('!',T_NOT) OP1('&',T_AMP) OP1('|',T_PIPE) OP1('.',T_DOT)
         OP1(':',T_COLON) OP1(';',T_SEMI) OP1(',',T_COMMA) OP1('@',T_AT)
         OP1('(',T_LPAR) OP1(')',T_RPAR) OP1('[',T_LBRK) OP1(']',T_RBRK)
-        OP1('{',T_LBRC) OP1('}',T_RBRC)
+        OP1('{',T_LBRC) OP1('}',T_RBRC) OP1('^',T_XOR)
         s++;
     }
     toks[ntok++] = (Tok){T_EOF, ln, NULL, 0};
@@ -272,8 +274,10 @@ static int prec(int t) {
     if (t==T_OR) return 1; if (t==T_AND) return 2;
     if (t==T_EQEQ||t==T_NE) return 3;
     if (t==T_LT||t==T_LE||t==T_GT||t==T_GE) return 4;
-    if (t==T_PLUS||t==T_MINUS) return 5;
-    if (t==T_STAR||t==T_SLASH||t==T_PCT) return 6;
+    if (t==T_SHL||t==T_SHR) return 5;
+    if (t==T_PLUS||t==T_MINUS) return 6;
+    if (t==T_STAR||t==T_SLASH||t==T_PCT) return 7;
+    if (t==T_XOR) return 8;
     return 0;
 }
 
@@ -282,7 +286,8 @@ static const char *op2c(int t) {
     case T_STAR:return"*"; case T_SLASH:return"/"; case T_PCT:return"%";
     case T_EQEQ:return"=="; case T_NE:return"!="; case T_LT:return"<";
     case T_LE:return"<="; case T_GT:return">"; case T_GE:return">=";
-    case T_AND:return"&&"; case T_OR:return"||"; } return "?";
+    case T_AND:return"&&"; case T_OR:return"||";
+    case T_XOR:return"^"; case T_SHL:return"<<"; case T_SHR:return">>"; } return "?";
 }
 
 static void gen_binary(int mp) {

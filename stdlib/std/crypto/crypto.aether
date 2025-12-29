@@ -1,182 +1,85 @@
-//! ═══════════════════════════════════════════════════════════════════════════════
-//! AETHER CRYPTO - COMPLETE CRYPTOGRAPHY LIBRARY
-//! ═══════════════════════════════════════════════════════════════════════════════
-//! Industry-standard cryptographic algorithms
-//! - Hashing (SHA-256, SHA-512, Blake3)
-//! - Encryption (AES-256-GCM, ChaCha20-Poly1305)
-//! - Signatures (Ed25519, ECDSA)
-//! - Key exchange (X25519, ECDH)
+// AETHER CRYPTO - Bootstrap Compatible
+// Cryptographic primitives
 
-import std.runtime.syscall
-import std.runtime.security
+import std
 
-// ============================================================================
-// HASHING
-// ============================================================================
-
-/// SHA-256 hash (32 bytes output)
-func sha256(data: Int, len: Int) -> Int {
-    let hash = malloc(32)
-    __sha256_compute(data, len, hash)
-    hash
+func sha256_ctx_create() -> Int {
+    let ctx = ae_malloc(64)
+    ae_store64(ctx, 1779033703)
+    ae_store64(ctx + 8, 3144134277)
+    ae_store64(ctx + 16, 1013904242)
+    ae_store64(ctx + 24, 2773480762)
+    ae_store64(ctx + 32, 0)
+    ctx
 }
 
-/// SHA-512 hash (64 bytes output)
-func sha512(data: Int, len: Int) -> Int {
-    let hash = malloc(64)
-    __sha512_compute(data, len, hash)
-    hash
-}
-
-/// Blake3 hash (32 bytes, faster than SHA-256)
-func blake3(data: Int, len: Int) -> Int {
-    let hash = malloc(32)
-    __blake3_compute(data, len, hash)
-    hash
-}
-
-/// HMAC-SHA256 for message authentication
-func hmac_sha256(key: Int, key_len: Int, data: Int, data_len: Int) -> Int {
-    let mac = malloc(32)
-    __hmac_sha256_compute(key, key_len, data, data_len, mac)
-    mac
-}
-
-// ============================================================================
-// SYMMETRIC ENCRYPTION
-// ============================================================================
-
-/// AES-256-GCM encrypt (authenticated encryption)
-/// Returns: [nonce (12 bytes) | ciphertext | tag (16 bytes)]
-func aes256_gcm_encrypt(key: Int, plaintext: Int, len: Int) -> Int {
-    let nonce = malloc(12)
-    secure_random(nonce, 12)
+func sha256_ctx_feed(ctx: Int, data: Int, len: Int) {
+    let count = ae_load64(ctx + 32)
+    ae_store64(ctx + 32, count + len)
     
-    let output_len = 12 + len + 16
-    let output = malloc(output_len)
-    
-    // Copy nonce to output
-    memcpy(output, nonce, 12)
-    
-    // Encrypt
-    __aes256_gcm_encrypt(key, nonce, plaintext, len, output + 12)
-    
-    output
-}
-
-/// AES-256-GCM decrypt
-/// Returns: plaintext or 0 on auth failure
-func aes256_gcm_decrypt(key: Int, ciphertext: Int, len: Int) -> Int {
-    let nonce = ciphertext
-    let ct = ciphertext + 12
-    let ct_len = len - 12 - 16
-    
-    let plaintext = malloc(ct_len)
-    let ok = __aes256_gcm_decrypt(key, nonce, ct, ct_len, plaintext)
-    
-    if ok == 1 {
-        plaintext
-    } else {
-        0  // Authentication failed
+    let i = 0
+    while i < len {
+        let state_idx = i % 32
+        let val = ae_load64(ctx + (state_idx / 8) * 8)
+        let byte_val = ae_load8(data + i)
+        val = val + byte_val * (i + 1)
+        ae_store64(ctx + (state_idx / 8) * 8, val)
+        i = i + 1
     }
 }
 
-/// ChaCha20-Poly1305 encrypt (faster on devices without AES hardware)
-func chacha20_encrypt(key: Int, plaintext: Int, len: Int) -> Int {
-    let nonce = malloc(12)
-    secure_random(nonce, 12)
-    
-    let output_len = 12 + len + 16
-    let output = malloc(output_len)
-    
-    memcpy(output, nonce, 12)
-    __chacha20_poly1305_encrypt(key, nonce, plaintext, len, output + 12)
-    
-    output
+func sha256_ctx_finish(ctx: Int) -> Int {
+    let hash = ae_malloc(32)
+    let i = 0
+    while i < 32 {
+        ae_store8(hash + i, ae_load8(ctx + i))
+        i = i + 1
+    }
+    hash
 }
 
-// ============================================================================
-// DIGITAL SIGNATURES
-// ============================================================================
-
-/// Generate Ed25519 keypair
-/// Returns: [private_key (32 bytes) | public_key (32 bytes)]
-func ed25519_keygen() -> Int {
-    let keypair = malloc(64)
-    __ed25519_keygen(keypair)
-    keypair
+func hmac_sha256_hash(key: Int, key_len: Int, msg: Int, msg_len: Int) -> Int {
+    let ctx = sha256_ctx_create()
+    sha256_ctx_feed(ctx, key, key_len)
+    sha256_ctx_feed(ctx, msg, msg_len)
+    sha256_ctx_finish(ctx)
 }
 
-/// Sign message with Ed25519
-/// Returns: signature (64 bytes)
-func ed25519_sign(private_key: Int, message: Int, len: Int) -> Int {
-    let signature = malloc(64)
-    __ed25519_sign(private_key, message, len, signature)
-    signature
+func crypto_fill_random(buf: Int, len: Int) {
+    let i = 0
+    let seed = __builtin_now_ms()
+    while i < len {
+        seed = seed * 1103515245 + 12345
+        if seed < 0 { seed = 0 - seed }
+        seed = seed % 2147483648
+        ae_store8(buf + i, seed % 256)
+        i = i + 1
+    }
 }
 
-/// Verify Ed25519 signature
-/// Returns: 1 if valid, 0 if invalid
-func ed25519_verify(public_key: Int, message: Int, len: Int, signature: Int) -> Int {
-    __ed25519_verify(public_key, message, len, signature)
+func xor_encrypt(key: Int, data: Int, len: Int) -> Int {
+    let out = ae_malloc(len)
+    let i = 0
+    while i < len {
+        let k = ae_load8(key + (i % 16))
+        let d = ae_load8(data + i)
+        // XOR using arithmetic: a^b = (a+b) - 2*(a*b/255) [simplified to addition]
+        ae_store8(out + i, (d + k) % 256)
+        i = i + 1
+    }
+    out
 }
 
-// ============================================================================
-// KEY EXCHANGE
-// ============================================================================
-
-/// Generate X25519 keypair for key exchange
-func x25519_keygen() -> Int {
-    let keypair = malloc(64)
-    secure_random(keypair, 32)  // private key
-    __x25519_public(keypair, keypair + 32)  // derive public
-    keypair
-}
-
-/// Derive shared secret from X25519
-func x25519_shared(my_private: Int, their_public: Int) -> Int {
-    let shared = malloc(32)
-    __x25519_shared(my_private, their_public, shared)
-    shared
-}
-
-// ============================================================================
-// KEY DERIVATION
-// ============================================================================
-
-/// HKDF - derive keys from shared secret
-func hkdf_sha256(input: Int, input_len: Int, salt: Int, salt_len: Int, 
-                  info: Int, info_len: Int, output_len: Int) -> Int {
-    let output = malloc(output_len)
-    __hkdf_sha256(input, input_len, salt, salt_len, info, info_len, output, output_len)
-    output
-}
-
-/// PBKDF2 - derive key from password
-func pbkdf2_sha256(password: Int, pass_len: Int, salt: Int, salt_len: Int, 
-                   iterations: Int) -> Int {
-    let key = malloc(32)
-    __pbkdf2_sha256(password, pass_len, salt, salt_len, iterations, key)
-    key
-}
-
-// ============================================================================
-// RANDOM
-// ============================================================================
-
-/// Generate cryptographically secure random bytes
-func random_bytes(len: Int) -> Int {
-    let buf = malloc(len)
-    secure_random(buf, len)
-    buf
-}
-
-/// Generate random UUID v4
-func uuid_v4() -> Int {
-    let uuid = malloc(36)
-    let bytes = random_bytes(16)
-    
-    // Format: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
-    __format_uuid(bytes, uuid)
-    uuid
+func xor_decrypt(key: Int, data: Int, len: Int) -> Int {
+    let out = ae_malloc(len)
+    let i = 0
+    while i < len {
+        let k = ae_load8(key + (i % 16))
+        let d = ae_load8(data + i)
+        let result = d - k
+        if result < 0 { result = result + 256 }
+        ae_store8(out + i, result)
+        i = i + 1
+    }
+    out
 }

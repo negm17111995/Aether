@@ -1,0 +1,397 @@
+// AETHER SELF-HOSTED COMPILER - BORROW CHECKER
+// Liquid Ownership verification - ensures memory safety
+
+import std
+
+// ============================================================================
+// OWNERSHIP STATES
+// ============================================================================
+
+const OWN_OWNED: Int = 1      // Variable owns the value
+const OWN_BORROWED: Int = 2   // Immutable borrow
+const OWN_MUT_BORROWED: Int = 3 // Mutable borrow
+const OWN_MOVED: Int = 4      // Value moved out
+const OWN_PARTIAL: Int = 5    // Partially moved (struct fields)
+
+// ============================================================================
+// BORROW TRACKING
+// ============================================================================
+
+// Borrow: [target_var, borrow_kind, start_scope, end_scope]
+const BORROW_SIZE: Int = 32
+
+func borrow_new(target: Int, kind: Int, start: Int) -> Int {
+    let b = ae_malloc(BORROW_SIZE)
+    ae_store64(b, target)
+    ae_store64(b + 8, kind)
+    ae_store64(b + 16, start)
+    ae_store64(b + 24, 0)  // end scope (filled when borrow ends)
+    b
+}
+
+func borrow_target(b: Int) -> Int { ae_load64(b) }
+func borrow_kind(b: Int) -> Int { ae_load64(b + 8) }
+func borrow_start(b: Int) -> Int { ae_load64(b + 16) }
+func borrow_end(b: Int) -> Int { ae_load64(b + 24) }
+func borrow_set_end(b: Int, e: Int) { ae_store64(b + 24, e) }
+
+// ============================================================================
+// OWNERSHIP CONTEXT
+// ============================================================================
+
+// OwnershipCtx: [vars (name -> state), borrows, scope_id, parent]
+func ownership_ctx_new(parent: Int, scope_id: Int) -> Int {
+    let ctx = ae_malloc(32)
+    ae_store64(ctx, vec_new())      // variable states
+    ae_store64(ctx + 8, vec_new())  // active borrows
+    ae_store64(ctx + 16, scope_id)
+    ae_store64(ctx + 24, parent)
+    ctx
+}
+
+func ctx_vars(ctx: Int) -> Int { ae_load64(ctx) }
+func ctx_borrows(ctx: Int) -> Int { ae_load64(ctx + 8) }
+func ctx_scope(ctx: Int) -> Int { ae_load64(ctx + 16) }
+func ctx_parent(ctx: Int) -> Int { ae_load64(ctx + 24) }
+
+// VarState: [name, state, drop_generated]
+func var_state_new(name: Int, state: Int) -> Int {
+    let vs = ae_malloc(24)
+    ae_store64(vs, name)
+    ae_store64(vs + 8, state)
+    ae_store64(vs + 16, 0)  // drop not yet generated
+    vs
+}
+
+func var_state_name(vs: Int) -> Int { ae_load64(vs) }
+func var_state_get(vs: Int) -> Int { ae_load64(vs + 8) }
+func var_state_set(vs: Int, s: Int) { ae_store64(vs + 8, s) }
+func var_state_dropped(vs: Int) -> Int { ae_load64(vs + 16) }
+func var_state_mark_dropped(vs: Int) { ae_store64(vs + 16, 1) }
+
+// ============================================================================
+// OWNERSHIP OPERATIONS
+// ============================================================================
+
+func ctx_add_var(ctx: Int, name: Int) {
+    vec_push(ctx_vars(ctx), var_state_new(name, OWN_OWNED))
+}
+
+func ctx_find_var(ctx: Int, name: Int) -> Int {
+    if ctx == 0 { return 0 }
+    
+    let vars = ctx_vars(ctx)
+    let count = vec_len(vars)
+    let i = 0
+    while i < count {
+        let vs = vec_get(vars, i)
+        if str_eq(var_state_name(vs), name) == 1 {
+            return vs
+        }
+        i = i + 1
+    }
+    
+    ctx_find_var(ctx_parent(ctx), name)
+}
+
+func ctx_move_var(ctx: Int, name: Int) -> Int {
+    let vs = ctx_find_var(ctx, name)
+    if vs == 0 { return 0 }
+    
+    let state = var_state_get(vs)
+    
+    // Check if already moved
+    if state == OWN_MOVED {
+        // ERROR: use of moved value
+        return 0 - 1
+    }
+    
+    // Check if borrowed
+    if state == OWN_BORROWED || state == OWN_MUT_BORROWED {
+        // ERROR: cannot move while borrowed
+        return 0 - 2
+    }
+    
+    var_state_set(vs, OWN_MOVED)
+    1
+}
+
+func ctx_borrow_var(ctx: Int, name: Int, is_mut: Int) -> Int {
+    let vs = ctx_find_var(ctx, name)
+    if vs == 0 { return 0 }
+    
+    let state = var_state_get(vs)
+    
+    // Check if moved
+    if state == OWN_MOVED {
+        // ERROR: cannot borrow moved value
+        return 0 - 1
+    }
+    
+    // Check for conflicting borrows
+    if is_mut == 1 {
+        // Mutable borrow - must be no other borrows
+        if state == OWN_BORROWED || state == OWN_MUT_BORROWED {
+            return 0 - 2  // ERROR: cannot mut borrow while borrowed
+        }
+        var_state_set(vs, OWN_MUT_BORROWED)
+    } else {
+        // Immutable borrow - no mut borrows allowed
+        if state == OWN_MUT_BORROWED {
+            return 0 - 3  // ERROR: cannot borrow while mut borrowed
+        }
+        var_state_set(vs, OWN_BORROWED)
+    }
+    
+    // Track the borrow
+    let borrow = borrow_new(name, is_mut, ctx_scope(ctx))
+    vec_push(ctx_borrows(ctx), borrow)
+    
+    1
+}
+
+func ctx_return_borrow(ctx: Int, name: Int) {
+    let vs = ctx_find_var(ctx, name)
+    if vs == 0 { return }
+    
+    // Check if this was the last borrow
+    let borrows = ctx_borrows(ctx)
+    let count = vec_len(borrows)
+    let remaining_borrows = 0
+    let i = 0
+    while i < count {
+        let b = vec_get(borrows, i)
+        if str_eq(borrow_target(b), name) == 1 {
+            if borrow_end(b) == 0 {
+                // Still active - mark as ended
+                borrow_set_end(b, ctx_scope(ctx))
+            }
+        }
+        i = i + 1
+    }
+    
+    // Reset state to owned
+    var_state_set(vs, OWN_OWNED)
+}
+
+// ============================================================================
+// DROP GENERATION
+// ============================================================================
+
+// Get list of variables that need drop at scope exit
+func ctx_get_drops(ctx: Int) -> Int {
+    let drops = vec_new()
+    let vars = ctx_vars(ctx)
+    let count = vec_len(vars)
+    let i = 0
+    while i < count {
+        let vs = vec_get(vars, i)
+        let state = var_state_get(vs)
+        
+        // Only drop owned, non-moved variables
+        if state == OWN_OWNED {
+            if var_state_dropped(vs) == 0 {
+                vec_push(drops, var_state_name(vs))
+                var_state_mark_dropped(vs)
+            }
+        }
+        i = i + 1
+    }
+    drops
+}
+
+// ============================================================================
+// BORROW CHECKING EXPRESSIONS
+// ============================================================================
+
+func check_expr_ownership(ctx: Int, node: Int) -> Int {
+    if node == 0 { return 1 }
+    
+    let kind = ast_kind(node)
+    
+    // Identifier - could be move or copy
+    if kind == AST_IDENT {
+        let name = ast_data1(node)
+        let vs = ctx_find_var(ctx, name)
+        if vs != 0 {
+            let state = var_state_get(vs)
+            if state == OWN_MOVED {
+                // ERROR: use of moved value
+                return 0
+            }
+        }
+        return 1
+    }
+    
+    // Unary & - borrow
+    if kind == AST_UNARY {
+        let op = ast_data1(node)
+        let operand = ast_data2(node)
+        
+        if op == TOK_AMP {
+            // Immutable borrow
+            if ast_kind(operand) == AST_IDENT {
+                return ctx_borrow_var(ctx, ast_data1(operand), 0)
+            }
+        }
+        
+        if op == TOK_STAR {
+            // Dereference - check borrowed value is valid
+            return check_expr_ownership(ctx, operand)
+        }
+        
+        return check_expr_ownership(ctx, operand)
+    }
+    
+    // Binary operations
+    if kind == AST_BINARY {
+        let r1 = check_expr_ownership(ctx, ast_data2(node))
+        let r2 = check_expr_ownership(ctx, ast_data3(node))
+        if r1 < 1 { return r1 }
+        if r2 < 1 { return r2 }
+        return 1
+    }
+    
+    // Function call - arguments might be moved
+    if kind == AST_CALL {
+        let args = ast_data2(node)
+        let count = vec_len(args)
+        let i = 0
+        while i < count {
+            let arg = vec_get(args, i)
+            // For now, assume all args are moved (Copy types would be different)
+            if ast_kind(arg) == AST_IDENT {
+                let result = ctx_move_var(ctx, ast_data1(arg))
+                if result < 0 { return result }
+            } else {
+                let result = check_expr_ownership(ctx, arg)
+                if result < 1 { return result }
+            }
+            i = i + 1
+        }
+        return check_expr_ownership(ctx, ast_data1(node))
+    }
+    
+    1
+}
+
+// ============================================================================
+// BORROW CHECKING STATEMENTS
+// ============================================================================
+
+func check_stmt_ownership(ctx: Int, node: Int) -> Int {
+    if node == 0 { return 1 }
+    
+    let kind = ast_kind(node)
+    
+    // Let statement - creates owned variable
+    if kind == AST_LET {
+        let name = ast_data1(node)
+        let init = ast_data3(node)
+        
+        // Check initializer
+        let result = check_expr_ownership(ctx, init)
+        if result < 1 { return result }
+        
+        // Add variable as owned
+        ctx_add_var(ctx, name)
+        return 1
+    }
+    
+    // Assignment - might move value
+    if kind == AST_ASSIGN {
+        let target = ast_data1(node)
+        let value = ast_data2(node)
+        
+        // Check value expression
+        let result = check_expr_ownership(ctx, value)
+        if result < 1 { return result }
+        
+        return 1
+    }
+    
+    // Return - might move value
+    if kind == AST_RETURN {
+        return check_expr_ownership(ctx, ast_data1(node))
+    }
+    
+    // If statement
+    if kind == AST_IF {
+        check_expr_ownership(ctx, ast_data1(node))
+        check_block_ownership(ctx, ast_data2(node))
+        let else_blk = ast_data3(node)
+        if else_blk != 0 {
+            check_block_ownership(ctx, else_blk)
+        }
+        return 1
+    }
+    
+    // While statement
+    if kind == AST_WHILE {
+        check_expr_ownership(ctx, ast_data1(node))
+        check_block_ownership(ctx, ast_data2(node))
+        return 1
+    }
+    
+    // Expression statement
+    if kind == AST_EXPR_STMT {
+        return check_expr_ownership(ctx, ast_data1(node))
+    }
+    
+    1
+}
+
+func check_block_ownership(parent_ctx: Int, block: Int) -> Int {
+    if block == 0 { return 1 }
+    
+    let scope_id = ctx_scope(parent_ctx) + 1
+    let ctx = ownership_ctx_new(parent_ctx, scope_id)
+    
+    let stmts = ast_data1(block)
+    if stmts == 0 { return 1 }
+    
+    let count = vec_len(stmts)
+    let i = 0
+    while i < count {
+        let result = check_stmt_ownership(ctx, vec_get(stmts, i))
+        if result < 1 { return result }
+        i = i + 1
+    }
+    
+    // Generate drops for scope exit
+    let drops = ctx_get_drops(ctx)
+    // The drops list can be used to insert drop calls
+    
+    1
+}
+
+// ============================================================================
+// MAIN ENTRY POINT
+// ============================================================================
+
+func check_ownership(module: Int) -> Int {
+    let decls = ast_data1(module)
+    let count = vec_len(decls)
+    let i = 0
+    while i < count {
+        let decl = vec_get(decls, i)
+        if ast_kind(decl) == AST_FUNC {
+            let ctx = ownership_ctx_new(0, 0)
+            
+            // Add parameters as owned
+            let params = ast_data2(decl)
+            let pcount = vec_len(params)
+            let j = 0
+            while j < pcount {
+                let param = vec_get(params, j)
+                ctx_add_var(ctx, ae_load64(param))
+                j = j + 1
+            }
+            
+            let result = check_block_ownership(ctx, ast_data4(decl))
+            if result < 1 { return result }
+        }
+        i = i + 1
+    }
+    1
+}

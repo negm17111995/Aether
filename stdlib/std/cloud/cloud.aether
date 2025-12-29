@@ -1,69 +1,104 @@
-// AETHER CLOUD - SHIM V5
-// Simplified: Handles and Offsets. No structs.
-// This bypasses any bugs in 'struct' parsing.
+// AETHER CLOUD - Bootstrap Compatible
+// Cloud primitives using Int handles
 
-// Constants
+import std
+
+// Cloud provider constants
 const CLOUD_AWS: Int = 0
 const CLOUD_GCP: Int = 1
 const CLOUD_AZURE: Int = 2
 
-// CloudConfig Offsets
+// Config offsets
 const CFG_PROVIDER: Int = 0
 const CFG_REGION: Int = 8
 const CFG_CREDS: Int = 16
 const CFG_PROJ: Int = 24
 
-// ServerlessFunction Offsets
-const SL_HANDLER: Int = 0
-const SL_CONFIG: Int = 8
-const SL_RUNTIME: Int = 16
+func cloud_config_new(provider: Int, region: Int) -> Int {
+    let cfg = ae_malloc(32)
+    ae_store64(cfg + CFG_PROVIDER, provider)
+    ae_store64(cfg + CFG_REGION, region)
+    ae_store64(cfg + CFG_CREDS, 0)
+    ae_store64(cfg + CFG_PROJ, 0)
+    cfg
+}
 
-func ServerlessFunction_deploy(self: Int, provider: Int) -> Int {
+func cloud_config_get_provider(cfg: Int) -> Int {
+    ae_load64(cfg + CFG_PROVIDER)
+}
+
+// Serverless function
+func serverless_new(handler: Int, runtime: Int) -> Int {
+    let f = ae_malloc(24)
+    ae_store64(f, handler)
+    ae_store64(f + 8, 0)  // config
+    ae_store64(f + 16, runtime)
+    f
+}
+
+func serverless_deploy(f: Int, provider: Int) -> Int {
+    // Stub for deployment
     0
 }
 
-// Storage Offsets
-const ST_BACKEND: Int = 0
+// Storage
+func storage_new(backend: Int) -> Int {
+    let s = ae_malloc(8)
+    ae_store64(s, backend)
+    s
+}
 
-func Storage_get(self: Int, key: Int) -> Int {
+func storage_get(s: Int, key: Int) -> Int {
     0
 }
 
-func Storage_put(self: Int, key: Int, value: Int) -> Int {
+func storage_put(s: Int, key: Int, value: Int) -> Int {
     0
 }
 
-// Database Offsets
-const DB_CONN: Int = 0
+// Database
+func database_connect(url: Int) -> Int {
+    let db = ae_malloc(8)
+    ae_store64(db, url)
+    db
+}
 
-func Database_connect(url: Int) -> Int {
+func database_query(db: Int, sql: Int, params: Int) -> Int {
     0
 }
 
-func Database_query(self: Int, sql: Int, params: Int) -> Int {
+// Message queue
+func mq_new(backend: Int) -> Int {
+    let mq = ae_malloc(8)
+    ae_store64(mq, backend)
+    mq
+}
+
+func mq_send(mq: Int, message: Int) -> Int {
     0
 }
 
-// MessageQueue Offsets
-const MQ_BACKEND: Int = 0
+// Cache
+func cache_new(backend: Int) -> Int {
+    let c = ae_malloc(8)
+    ae_store64(c, backend)
+    c
+}
 
-func MessageQueue_send(self: Int, message: Int) -> Int {
+func cache_get(c: Int, key: Int) -> Int {
     0
 }
 
-// Cache Offsets
-const CH_BACKEND: Int = 0
-
-func Cache_get(self: Int, key: Int) -> Int {
-    0
+func cache_set(c: Int, key: Int, val: Int, ttl: Int) {
 }
 
-func Cache_set(self: Int, key: Int, val: Int, ttl: Int) {
+// Deployment
+func deployment_new(config: Int) -> Int {
+    let d = ae_malloc(8)
+    ae_store64(d, config)
+    d
 }
 
-// Deployment Offsets
-const DEP_CONFIG: Int = 0
-
-func Deployment_deploy(self: Int) -> Int {
+func deployment_deploy(d: Int) -> Int {
     0
 }

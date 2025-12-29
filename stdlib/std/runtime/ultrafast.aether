@@ -1,308 +1,58 @@
-//! ═══════════════════════════════════════════════════════════════════════════════
-//! AETHER ULTRA-CONCURRENCY - FASTEST POSSIBLE CONCURRENT EXECUTION
-//! ═══════════════════════════════════════════════════════════════════════════════
-//! - Lock-free EVERYTHING
-//! - Work-stealing scheduler
-//! - Millions of lightweight tasks
-//! - Zero contention
+// AETHER ULTRAFAST - Bootstrap Compatible
+// High performance primitives
 
-import std.runtime.zerocopy
+import std
 
-// ============================================================================
-// ULTRA-LIGHTWEIGHT TASKS (256 bytes each)
-// ============================================================================
+// Fast vector (pre-allocated)
+func fast_vec_new(cap: Int) -> Int {
+    let v = ae_malloc(24)
+    ae_store64(v, ae_malloc(cap * 8))
+    ae_store64(v + 8, 0)    // len
+    ae_store64(v + 16, cap)
+    v
+}
 
-const TASK_SIZE: Int = 256
-const MAX_TASKS: Int = 10000000  // 10 million tasks
-
-// Task: [func, arg, result, state, next, worker_id, priority]
-const TASK_FUNC_OFF: Int = 0
-const TASK_ARG_OFF: Int = 8
-const TASK_RESULT_OFF: Int = 16
-const TASK_STATE_OFF: Int = 24
-const TASK_NEXT_OFF: Int = 32
-const TASK_WORKER_OFF: Int = 40
-const TASK_PRIORITY_OFF: Int = 48
-const TASK_STACK_OFF: Int = 64   // 192 bytes for minimal stack
-
-const TASK_PENDING: Int = 0
-const TASK_RUNNING: Int = 1
-const TASK_DONE: Int = 2
-
-var task_pool: Int = 0           // Slab allocator for tasks
-var num_workers: Int = 0         // Number of worker threads
-var worker_queues: Int = 0       // Per-worker task queues
-var global_queue: Int = 0        // Global task queue
-
-// ============================================================================
-// SCHEDULER INITIALIZATION
-// ============================================================================
-
-/// Initialize ultra-concurrency runtime
-func ultra_init() {
-    // Detect CPU cores
-    num_workers = cpu_count()
+func fast_vec_push(v: Int, val: Int) -> Int {
+    let data = ae_load64(v)
+    let len = ae_load64(v + 8)
+    let cap = ae_load64(v + 16)
     
-    // Create task pool (O(1) allocation)
-    task_pool = slab_new(TASK_SIZE, MAX_TASKS)
+    if len >= cap { return 0 }  // Full
     
-    // Create per-worker queues (lock-free)
-    worker_queues = malloc(num_workers * 8)
+    ae_store64(data + len * 8, val)
+    ae_store64(v + 8, len + 1)
+    1
+}
+
+func fast_vec_get(v: Int, idx: Int) -> Int {
+    let data = ae_load64(v)
+    ae_load64(data + idx * 8)
+}
+
+func fast_vec_len(v: Int) -> Int {
+    ae_load64(v + 8)
+}
+
+// Fast sum (unrolled loop)
+func fast_sum(data: Int, count: Int) -> Int {
+    let sum = 0
     let i = 0
-    while i < num_workers {
-        poke(worker_queues + i * 8, ring_buf_new(65536))  // 64K tasks per worker
+    let chunks = count / 4
+    
+    while i < chunks {
+        let base = i * 32
+        sum = sum + ae_load64(data + base)
+        sum = sum + ae_load64(data + base + 8)
+        sum = sum + ae_load64(data + base + 16)
+        sum = sum + ae_load64(data + base + 24)
         i = i + 1
     }
     
-    // Create global queue
-    global_queue = ring_buf_new(1048576)  // 1M global queue
-    
-    // Spawn worker threads (pinned to CPU cores)
-    i = 0
-    while i < num_workers {
-        spawn_worker(i)
-        i = i + 1
-    }
-}
-
-// ============================================================================
-// TASK CREATION AND SCHEDULING
-// ============================================================================
-
-/// Spawn task (O(1), lock-free)
-
-func spawn_task(fn: Int, arg: Int) -> Int {
-    let task = slab_alloc(task_pool)
-    if task == 0 { return 0 }
-    
-    poke(task + TASK_FUNC_OFF, fn)
-    poke(task + TASK_ARG_OFF, arg)
-    poke(task + TASK_STATE_OFF, TASK_PENDING)
-    poke(task + TASK_PRIORITY_OFF, 0)
-    
-    // Add to current worker's local queue (no lock)
-    let worker_id = current_worker_id()
-    let queue = peek(worker_queues + worker_id * 8)
-    
-    if ring_push(queue, task) == 0 {
-        // Local queue full - push to global
-        ring_push(global_queue, task)
+    let rest = chunks * 4
+    while rest < count {
+        sum = sum + ae_load64(data + rest * 8)
+        rest = rest + 1
     }
     
-    task
+    sum
 }
-
-/// Spawn high-priority task
-
-func spawn_urgent(fn: Int, arg: Int) -> Int {
-    let task = spawn_task(fn, arg)
-    if task != 0 {
-        poke(task + TASK_PRIORITY_OFF, 1)
-    }
-    task
-}
-
-/// Wait for task completion
-func task_await(task: Int) -> Int {
-    // Spin-wait with backoff
-    let spins = 0
-    while __atomic_load(task + TASK_STATE_OFF) != TASK_DONE {
-        if spins < 100 {
-            __cpu_pause()
-        } else if spins < 1000 {
-            __yield()
-        } else {
-            sleep(0)  // Yield to OS
-        }
-        spins = spins + 1
-    }
-    
-    peek(task + TASK_RESULT_OFF)
-}
-
-// ============================================================================
-// WORK-STEALING SCHEDULER
-// ============================================================================
-
-/// Worker main loop
-func worker_loop(worker_id: Int) {
-    let my_queue = peek(worker_queues + worker_id * 8)
-    
-    while 1 {
-        // 1. Try local queue first
-        let task = ring_pop(my_queue)
-        
-        // 2. Try global queue
-        if task == 0 {
-            task = ring_pop(global_queue)
-        }
-        
-        // 3. Steal from other workers
-        if task == 0 {
-            task = steal_task(worker_id)
-        }
-        
-        // 4. No work - spin/sleep
-        if task == 0 {
-            __cpu_pause()
-            continue
-        }
-        
-        // Execute task
-        execute_task(task)
-    }
-}
-
-/// Steal task from random other worker
-func steal_task(my_id: Int) -> Int {
-    let victim = (my_id + 1) % num_workers
-    let attempts = 0
-    
-    while attempts < num_workers - 1 {
-        let queue = peek(worker_queues + victim * 8)
-        let task = ring_pop(queue)  // Steal from tail
-        
-        if task != 0 {
-            return task
-        }
-        
-        victim = (victim + 1) % num_workers
-        attempts = attempts + 1
-    }
-    
-    0
-}
-
-/// Execute single task
-
-func execute_task(task: Int) {
-    poke(task + TASK_STATE_OFF, TASK_RUNNING)
-    
-    let fn = peek(task + TASK_FUNC_OFF)
-    let arg = peek(task + TASK_ARG_OFF)
-    
-    let result = __call(fn, arg)
-    
-    poke(task + TASK_RESULT_OFF, result)
-    __atomic_store(task + TASK_STATE_OFF, TASK_DONE)
-}
-
-// ============================================================================
-// PARALLEL PRIMITIVES
-// ============================================================================
-
-/// Parallel map over array
-func parallel_map(arr: Int, len: Int, fn: Int) -> Int {
-    let results = malloc(len * 8)
-    let tasks = malloc(len * 8)
-    
-    // Spawn all tasks
-    let i = 0
-    while i < len {
-        let item = peek(arr + i * 8)
-        poke(tasks + i * 8, spawn_task(fn, item))
-        i = i + 1
-    }
-    
-    // Collect results
-    i = 0
-    while i < len {
-        let task = peek(tasks + i * 8)
-        poke(results + i * 8, task_await(task))
-        slab_free(task_pool, task)
-        i = i + 1
-    }
-    
-    free(tasks)
-    results
-}
-
-/// Parallel reduce
-func parallel_reduce(arr: Int, len: Int, fn: Int, initial: Int) -> Int {
-    if len == 0 { return initial }
-    if len == 1 { return __call(fn, pack2(initial, peek(arr))) }
-    
-    // Divide and conquer
-    let mid = len / 2
-    
-    let left_task = spawn_task(parallel_reduce_helper, 
-        pack4(arr, mid, fn, initial))
-    
-    let right = parallel_reduce(arr + mid * 8, len - mid, fn, initial)
-    let left = task_await(left_task)
-    slab_free(task_pool, left_task)
-    
-    __call(fn, pack2(left, right))
-}
-
-/// Parallel for loop
-func parallel_for(start: Int, end: Int, fn: Int) {
-    let chunk_size = (end - start) / num_workers
-    if chunk_size < 1 { chunk_size = 1 }
-    
-    let tasks = vec_new()
-    let i = start
-    while i < end {
-        let chunk_end = i + chunk_size
-        if chunk_end > end { chunk_end = end }
-        
-        vec_push(tasks, spawn_task(for_chunk, pack3(i, chunk_end, fn)))
-        i = chunk_end
-    }
-    
-    // Wait for all
-    i = 0
-    while i < vec_len(tasks) {
-        let task = vec_get(tasks, i)
-        task_await(task)
-        slab_free(task_pool, task)
-        i = i + 1
-    }
-}
-
-func for_chunk(args: Int) -> Int {
-    let start = unpack_0(args)
-    let end = unpack_1(args)
-    let fn = unpack_2(args)
-    
-    let i = start
-    while i < end {
-        __call(fn, i)
-        i = i + 1
-    }
-    0
-}
-
-// ============================================================================
-// STATS
-// ============================================================================
-
-func ultra_stats() -> Int {
-    let total_queued = 0
-    let i = 0
-    while i < num_workers {
-        let queue = peek(worker_queues + i * 8)
-        total_queued = total_queued + ring_len(queue)
-        i = i + 1
-    }
-    
-    json_obj([
-        json_field("workers", num_workers),
-        json_field("queued_tasks", total_queued + ring_len(global_queue))
-    ])
-}
-
-// Helper stubs
-func cpu_count() -> Int { 8 }
-func spawn_worker(id: Int) {}
-func current_worker_id() -> Int { 0 }
-func __cpu_pause() {}
-func __yield() {}
-func ring_len(ring: Int) -> Int { 0 }
-func pack2(a: Int, b: Int) -> Int { 0 }
-func pack3(a: Int, b: Int, c: Int) -> Int { 0 }
-func pack4(a: Int, b: Int, c: Int, d: Int) -> Int { 0 }
-func unpack_0(p: Int) -> Int { 0 }
-func unpack_1(p: Int) -> Int { 0 }
-func unpack_2(p: Int) -> Int { 0 }
-func parallel_reduce_helper(args: Int) -> Int { 0 }

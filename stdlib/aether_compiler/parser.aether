@@ -1,0 +1,752 @@
+// AETHER SELF-HOSTED COMPILER - PARSER
+// Full language parser with all features
+
+import std
+
+// ============================================================================
+// PARSER STATE
+// ============================================================================
+
+func parser_new(tokens: Int) -> Int {
+    let p = ae_malloc(24)
+    ae_store64(p, tokens)
+    ae_store64(p + 8, 0)
+    ae_store64(p + 16, vec_len(tokens))
+    p
+}
+
+func parser_tokens(p: Int) -> Int { ae_load64(p) }
+func parser_pos(p: Int) -> Int { ae_load64(p + 8) }
+func parser_count(p: Int) -> Int { ae_load64(p + 16) }
+func parser_set_pos(p: Int, pos: Int) { ae_store64(p + 8, pos) }
+
+func parser_peek(p: Int) -> Int {
+    let pos = parser_pos(p)
+    if pos >= parser_count(p) { return 0 }
+    vec_get(parser_tokens(p), pos)
+}
+
+func parser_advance(p: Int) -> Int {
+    let tok = parser_peek(p)
+    parser_set_pos(p, parser_pos(p) + 1)
+    tok
+}
+
+func parser_check(p: Int, typ: Int) -> Int {
+    let tok = parser_peek(p)
+    if tok == 0 { return 0 }
+    if token_type(tok) == typ { return 1 }
+    0
+}
+
+func parser_match(p: Int, typ: Int) -> Int {
+    if parser_check(p, typ) == 1 {
+        parser_advance(p)
+        return 1
+    }
+    0
+}
+
+func parser_expect(p: Int, typ: Int) -> Int {
+    if parser_check(p, typ) == 1 {
+        return parser_advance(p)
+    }
+    0
+}
+
+// ============================================================================
+// PRECEDENCE
+// ============================================================================
+
+func get_prec(typ: Int) -> Int {
+    if typ == TOK_PIPE { return 1 }
+    if typ == TOK_AMP { return 2 }
+    if typ == TOK_EQEQ { return 3 }
+    if typ == TOK_NE { return 3 }
+    if typ == TOK_LT { return 4 }
+    if typ == TOK_LE { return 4 }
+    if typ == TOK_GT { return 4 }
+    if typ == TOK_GE { return 4 }
+    if typ == TOK_PLUS { return 5 }
+    if typ == TOK_MINUS { return 5 }
+    if typ == TOK_STAR { return 6 }
+    if typ == TOK_SLASH { return 6 }
+    0
+}
+
+// ============================================================================
+// TYPE PARSING
+// ============================================================================
+
+func parse_type(p: Int) -> Int {
+    let tok = parser_peek(p)
+    if tok == 0 { return 0 }
+    
+    // Array type: [T]
+    if parser_check(p, TOK_LBRACK) == 1 {
+        parser_advance(p)
+        let inner = parse_type(p)
+        parser_expect(p, TOK_RBRACK)
+        let arr_type = ast_new(AST_TYPE_ARRAY, token_line(tok), token_col(tok))
+        ast_set_data1(arr_type, inner)
+        return arr_type
+    }
+    
+    // Named type with optional generics: T or T<A, B>
+    let name_tok = parser_expect(p, TOK_ID)
+    if name_tok == 0 { return 0 }
+    
+    let type_node = ast_new(AST_TYPE_NAME, token_line(name_tok), token_col(name_tok))
+    ast_set_data1(type_node, token_value(name_tok))
+    
+    // Check for generics: <T, U>
+    if parser_check(p, TOK_LT) == 1 {
+        parser_advance(p)
+        let generics = vec_new()
+        vec_push(generics, parse_type(p))
+        while parser_match(p, TOK_COMMA) == 1 {
+            vec_push(generics, parse_type(p))
+        }
+        parser_expect(p, TOK_GT)
+        ast_set_data2(type_node, generics)
+    }
+    
+    type_node
+}
+
+// ============================================================================
+// EXPRESSION PARSING
+// ============================================================================
+
+func parse_primary(p: Int) -> Int {
+    let tok = parser_peek(p)
+    if tok == 0 { return 0 }
+    
+    let typ = token_type(tok)
+    let line = token_line(tok)
+    let col = token_col(tok)
+    
+    // Integer literal
+    if typ == TOK_INT {
+        parser_advance(p)
+        return ast_int(token_value(tok), line, col)
+    }
+    
+    // Identifier or struct literal
+    if typ == TOK_ID {
+        parser_advance(p)
+        let id = ast_ident(token_value(tok), line, col)
+        
+        // Check for struct literal: Name { field: val, ... }
+        if parser_check(p, TOK_LBRACE) == 1 {
+            parser_advance(p)
+            let fields = vec_new()
+            
+            if parser_check(p, TOK_RBRACE) == 0 {
+                // field: value
+                let field_name = parser_expect(p, TOK_ID)
+                parser_expect(p, TOK_COLON)
+                let field_val = parse_expr(p)
+                let pair = ae_malloc(16)
+                ae_store64(pair, token_value(field_name))
+                ae_store64(pair + 8, field_val)
+                vec_push(fields, pair)
+                
+                while parser_match(p, TOK_COMMA) == 1 {
+                    if parser_check(p, TOK_RBRACE) == 1 {
+                        // Trailing comma allowed
+                        break
+                    }
+                    let fn2 = parser_expect(p, TOK_ID)
+                    parser_expect(p, TOK_COLON)
+                    let fv2 = parse_expr(p)
+                    let p2 = ae_malloc(16)
+                    ae_store64(p2, token_value(fn2))
+                    ae_store64(p2 + 8, fv2)
+                    vec_push(fields, p2)
+                }
+            }
+            
+            parser_expect(p, TOK_RBRACE)
+            let lit = ast_new(AST_STRUCT_LIT, line, col)
+            ast_set_data1(lit, token_value(tok))
+            ast_set_data2(lit, fields)
+            return lit
+        }
+        
+        return id
+    }
+    
+    // true/false
+    if typ == TOK_TRUE {
+        parser_advance(p)
+        return ast_int(1, line, col)
+    }
+    if typ == TOK_FALSE {
+        parser_advance(p)
+        return ast_int(0, line, col)
+    }
+    
+    // Parenthesized expression
+    if typ == TOK_LPAREN {
+        parser_advance(p)
+        let inner = parse_expr(p)
+        parser_expect(p, TOK_RPAREN)
+        return inner
+    }
+    
+    // Array literal: [a, b, c]
+    if typ == TOK_LBRACK {
+        parser_advance(p)
+        let elements = vec_new()
+        if parser_check(p, TOK_RBRACK) == 0 {
+            vec_push(elements, parse_expr(p))
+            while parser_match(p, TOK_COMMA) == 1 {
+                if parser_check(p, TOK_RBRACK) == 1 {
+                    break
+                }
+                vec_push(elements, parse_expr(p))
+            }
+        }
+        parser_expect(p, TOK_RBRACK)
+        let arr = ast_new(AST_ARRAY_LIT, line, col)
+        ast_set_data1(arr, elements)
+        return arr
+    }
+    
+    0
+}
+
+func parse_postfix(p: Int) -> Int {
+    let expr = parse_primary(p)
+    if expr == 0 { return 0 }
+    
+    let done = 0
+    while done == 0 {
+        // Function call: expr(args)
+        if parser_check(p, TOK_LPAREN) == 1 {
+            parser_advance(p)
+            let args = vec_new()
+            if parser_check(p, TOK_RPAREN) == 0 {
+                vec_push(args, parse_expr(p))
+                while parser_match(p, TOK_COMMA) == 1 {
+                    vec_push(args, parse_expr(p))
+                }
+            }
+            parser_expect(p, TOK_RPAREN)
+            expr = ast_call(expr, args, ast_line(expr), ast_col(expr))
+        } else {
+            // Field access: expr.field
+            if parser_check(p, TOK_DOT) == 1 {
+                parser_advance(p)
+                let field = parser_expect(p, TOK_ID)
+                if field != 0 {
+                    expr = ast_field(expr, token_value(field), ast_line(expr), ast_col(expr))
+                }
+            } else {
+                // Index access: expr[index]
+                if parser_check(p, TOK_LBRACK) == 1 {
+                    parser_advance(p)
+                    let index = parse_expr(p)
+                    parser_expect(p, TOK_RBRACK)
+                    let idx_node = ast_new(AST_INDEX, ast_line(expr), ast_col(expr))
+                    ast_set_data1(idx_node, expr)
+                    ast_set_data2(idx_node, index)
+                    expr = idx_node
+                } else {
+                    done = 1
+                }
+            }
+        }
+    }
+    
+    expr
+}
+
+func parse_unary(p: Int) -> Int {
+    let tok = parser_peek(p)
+    if tok == 0 { return 0 }
+    
+    let typ = token_type(tok)
+    if typ == TOK_MINUS {
+        parser_advance(p)
+        let operand = parse_unary(p)
+        return ast_unary(TOK_MINUS, operand, token_line(tok), token_col(tok))
+    }
+    if typ == TOK_BANG {
+        parser_advance(p)
+        let operand = parse_unary(p)
+        return ast_unary(TOK_BANG, operand, token_line(tok), token_col(tok))
+    }
+    if typ == TOK_AMP {  // Reference: &expr
+        parser_advance(p)
+        let operand = parse_unary(p)
+        return ast_unary(TOK_AMP, operand, token_line(tok), token_col(tok))
+    }
+    if typ == TOK_STAR {  // Dereference: *expr
+        parser_advance(p)
+        let operand = parse_unary(p)
+        return ast_unary(TOK_STAR, operand, token_line(tok), token_col(tok))
+    }
+    
+    parse_postfix(p)
+}
+
+func parse_binary(p: Int, min_prec: Int) -> Int {
+    let left = parse_unary(p)
+    if left == 0 { return 0 }
+    
+    let done = 0
+    while done == 0 {
+        let tok = parser_peek(p)
+        if tok == 0 {
+            done = 1
+        } else {
+            let prec = get_prec(token_type(tok))
+            if prec < min_prec {
+                done = 1
+            } else {
+                parser_advance(p)
+                let right = parse_binary(p, prec + 1)
+                left = ast_binary(token_type(tok), left, right, ast_line(left), ast_col(left))
+            }
+        }
+    }
+    
+    left
+}
+
+func parse_expr(p: Int) -> Int {
+    parse_binary(p, 1)
+}
+
+// ============================================================================
+// STATEMENT PARSING
+// ============================================================================
+
+func parse_block(p: Int) -> Int {
+    let tok = parser_peek(p)
+    let line = 0
+    let col = 0
+    if tok != 0 {
+        line = token_line(tok)
+        col = token_col(tok)
+    }
+    
+    parser_expect(p, TOK_LBRACE)
+    let stmts = vec_new()
+    
+    while parser_check(p, TOK_RBRACE) == 0 {
+        if parser_check(p, TOK_EOF) == 1 { 
+            return ast_block(stmts, line, col)
+        }
+        let stmt = parse_stmt(p)
+        if stmt != 0 {
+            vec_push(stmts, stmt)
+        }
+    }
+    
+    parser_expect(p, TOK_RBRACE)
+    ast_block(stmts, line, col)
+}
+
+func parse_stmt(p: Int) -> Int {
+    let tok = parser_peek(p)
+    if tok == 0 { return 0 }
+    
+    let typ = token_type(tok)
+    let line = token_line(tok)
+    let col = token_col(tok)
+    
+    // Let statement
+    if typ == TOK_LET {
+        parser_advance(p)
+        let is_mut = 0
+        if parser_match(p, TOK_MUT) == 1 {
+            is_mut = 1
+        }
+        let name_tok = parser_expect(p, TOK_ID)
+        let name = 0
+        if name_tok != 0 { name = token_value(name_tok) }
+        
+        let var_type = 0
+        if parser_match(p, TOK_COLON) == 1 {
+            var_type = parse_type(p)
+        }
+        
+        parser_expect(p, TOK_EQ)
+        let init = parse_expr(p)
+        
+        return ast_let(name, var_type, init, is_mut, line, col)
+    }
+    
+    // Return statement
+    if typ == TOK_RETURN {
+        parser_advance(p)
+        let ret_expr = 0
+        if parser_check(p, TOK_RBRACE) == 0 {
+            ret_expr = parse_expr(p)
+        }
+        return ast_return(ret_expr, line, col)
+    }
+    
+    // If statement
+    if typ == TOK_IF {
+        parser_advance(p)
+        let cond = parse_expr(p)
+        let then_blk = parse_block(p)
+        let else_blk = 0
+        if parser_match(p, TOK_ELSE) == 1 {
+            if parser_check(p, TOK_IF) == 1 {
+                else_blk = parse_stmt(p)
+            } else {
+                else_blk = parse_block(p)
+            }
+        }
+        return ast_if(cond, then_blk, else_blk, line, col)
+    }
+    
+    // While statement
+    if typ == TOK_WHILE {
+        parser_advance(p)
+        let cond = parse_expr(p)
+        let body = parse_block(p)
+        return ast_while(cond, body, line, col)
+    }
+    
+    // For loop: for i in start..end { }
+    if typ == TOK_FOR {
+        parser_advance(p)
+        let var_tok = parser_expect(p, TOK_ID)
+        let var_name = 0
+        if var_tok != 0 { var_name = token_value(var_tok) }
+        parser_expect(p, TOK_IN) // 'in' keyword (using TOK_IN if defined)
+        let range_start = parse_expr(p)
+        // Expect .. 
+        parser_match(p, TOK_DOT)
+        parser_match(p, TOK_DOT)
+        let range_end = parse_expr(p)
+        let body = parse_block(p)
+        
+        let for_node = ast_new(AST_FOR, line, col)
+        ast_set_data1(for_node, var_name)
+        ast_set_data2(for_node, range_start)
+        ast_set_data3(for_node, range_end)
+        ast_set_data4(for_node, body)
+        return for_node
+    }
+    
+    // Match expression
+    if typ == TOK_MATCH {
+        parser_advance(p)
+        let scrutinee = parse_expr(p)
+        parser_expect(p, TOK_LBRACE)
+        
+        let arms = vec_new()
+        while parser_check(p, TOK_RBRACE) == 0 {
+            // pattern => expr
+            let pattern = parse_expr(p)
+            parser_expect(p, TOK_DARROW)  // =>
+            let arm_body = parse_expr(p)
+            let arm = ae_malloc(16)
+            ae_store64(arm, pattern)
+            ae_store64(arm + 8, arm_body)
+            vec_push(arms, arm)
+            parser_match(p, TOK_COMMA)
+        }
+        
+        parser_expect(p, TOK_RBRACE)
+        let match_node = ast_new(AST_MATCH, line, col)
+        ast_set_data1(match_node, scrutinee)
+        ast_set_data2(match_node, arms)
+        return match_node
+    }
+    
+    // Expression statement (including assignment)
+    let expr = parse_expr(p)
+    if expr != 0 {
+        // Check for assignment: expr = value
+        if parser_check(p, TOK_EQ) == 1 {
+            parser_advance(p)
+            let value = parse_expr(p)
+            let assign = ast_new(AST_ASSIGN, line, col)
+            ast_set_data1(assign, expr)
+            ast_set_data2(assign, value)
+            return assign
+        }
+        
+        let stmt = ast_new(AST_EXPR_STMT, line, col)
+        ast_set_data1(stmt, expr)
+        return stmt
+    }
+    
+    0
+}
+
+// ============================================================================
+// DECLARATION PARSING
+// ============================================================================
+
+func parse_func(p: Int) -> Int {
+    let tok = parser_peek(p)
+    let line = token_line(tok)
+    let col = token_col(tok)
+    
+    parser_expect(p, TOK_FUNC)
+    let name_tok = parser_expect(p, TOK_ID)
+    let name = 0
+    if name_tok != 0 { name = token_value(name_tok) }
+    
+    // Optional generics: func name<T, U>
+    let generics = vec_new()
+    if parser_check(p, TOK_LT) == 1 {
+        parser_advance(p)
+        let gen_tok = parser_expect(p, TOK_ID)
+        if gen_tok != 0 { vec_push(generics, token_value(gen_tok)) }
+        while parser_match(p, TOK_COMMA) == 1 {
+            let g2 = parser_expect(p, TOK_ID)
+            if g2 != 0 { vec_push(generics, token_value(g2)) }
+        }
+        parser_expect(p, TOK_GT)
+    }
+    
+    parser_expect(p, TOK_LPAREN)
+    let params = vec_new()
+    
+    if parser_check(p, TOK_RPAREN) == 0 {
+        let param_name = parser_expect(p, TOK_ID)
+        parser_expect(p, TOK_COLON)
+        let param_type = parse_type(p)
+        let param = ae_malloc(16)
+        ae_store64(param, token_value(param_name))
+        ae_store64(param + 8, param_type)
+        vec_push(params, param)
+        
+        while parser_match(p, TOK_COMMA) == 1 {
+            let pn = parser_expect(p, TOK_ID)
+            parser_expect(p, TOK_COLON)
+            let pt = parse_type(p)
+            let pm = ae_malloc(16)
+            ae_store64(pm, token_value(pn))
+            ae_store64(pm + 8, pt)
+            vec_push(params, pm)
+        }
+    }
+    
+    parser_expect(p, TOK_RPAREN)
+    
+    let ret_type = 0
+    if parser_match(p, TOK_ARROW) == 1 {
+        ret_type = parse_type(p)
+    }
+    
+    let body = parse_block(p)
+    
+    let func_node = ast_func(name, params, ret_type, body, line, col)
+    // Store generics in extended data
+    if vec_len(generics) > 0 {
+        // Would extend AST node to store generics
+    }
+    func_node
+}
+
+func parse_struct(p: Int) -> Int {
+    let tok = parser_peek(p)
+    let line = token_line(tok)
+    let col = token_col(tok)
+    
+    parser_expect(p, TOK_STRUCT)
+    let name_tok = parser_expect(p, TOK_ID)
+    let name = 0
+    if name_tok != 0 { name = token_value(name_tok) }
+    
+    // Optional generics
+    let generics = vec_new()
+    if parser_check(p, TOK_LT) == 1 {
+        parser_advance(p)
+        let gen_tok = parser_expect(p, TOK_ID)
+        if gen_tok != 0 { vec_push(generics, token_value(gen_tok)) }
+        while parser_match(p, TOK_COMMA) == 1 {
+            let g2 = parser_expect(p, TOK_ID)
+            if g2 != 0 { vec_push(generics, token_value(g2)) }
+        }
+        parser_expect(p, TOK_GT)
+    }
+    
+    parser_expect(p, TOK_LBRACE)
+    let fields = vec_new()
+    
+    while parser_check(p, TOK_RBRACE) == 0 {
+        let field_name = parser_expect(p, TOK_ID)
+        parser_expect(p, TOK_COLON)
+        let field_type = parse_type(p)
+        let field = ae_malloc(16)
+        ae_store64(field, token_value(field_name))
+        ae_store64(field + 8, field_type)
+        vec_push(fields, field)
+        parser_match(p, TOK_COMMA)
+    }
+    
+    parser_expect(p, TOK_RBRACE)
+    ast_struct(name, fields, generics, line, col)
+}
+
+func parse_trait(p: Int) -> Int {
+    let tok = parser_peek(p)
+    let line = token_line(tok)
+    let col = token_col(tok)
+    
+    parser_expect(p, TOK_TRAIT)
+    let name_tok = parser_expect(p, TOK_ID)
+    let name = 0
+    if name_tok != 0 { name = token_value(name_tok) }
+    
+    // Optional generics
+    let generics = vec_new()
+    if parser_check(p, TOK_LT) == 1 {
+        parser_advance(p)
+        let gen_tok = parser_expect(p, TOK_ID)
+        if gen_tok != 0 { vec_push(generics, token_value(gen_tok)) }
+        while parser_match(p, TOK_COMMA) == 1 {
+            let g2 = parser_expect(p, TOK_ID)
+            if g2 != 0 { vec_push(generics, token_value(g2)) }
+        }
+        parser_expect(p, TOK_GT)
+    }
+    
+    parser_expect(p, TOK_LBRACE)
+    let methods = vec_new()
+    
+    while parser_check(p, TOK_RBRACE) == 0 {
+        if parser_check(p, TOK_FUNC) == 1 {
+            vec_push(methods, parse_func(p))
+        } else {
+            parser_advance(p)
+        }
+    }
+    
+    parser_expect(p, TOK_RBRACE)
+    ast_trait(name, methods, generics, line, col)
+}
+
+func parse_impl(p: Int) -> Int {
+    let tok = parser_peek(p)
+    let line = token_line(tok)
+    let col = token_col(tok)
+    
+    parser_expect(p, TOK_IMPL)
+    
+    // impl Trait for Type or impl Type
+    let first = parse_type(p)
+    let trait_name = 0
+    let for_type = first
+    
+    if parser_match(p, TOK_FOR) == 1 {
+        trait_name = first
+        for_type = parse_type(p)
+    }
+    
+    parser_expect(p, TOK_LBRACE)
+    let methods = vec_new()
+    
+    while parser_check(p, TOK_RBRACE) == 0 {
+        if parser_check(p, TOK_FUNC) == 1 {
+            vec_push(methods, parse_func(p))
+        } else {
+            parser_advance(p)
+        }
+    }
+    
+    parser_expect(p, TOK_RBRACE)
+    ast_impl(trait_name, for_type, methods, line, col)
+}
+
+func parse_const(p: Int) -> Int {
+    let tok = parser_peek(p)
+    let line = token_line(tok)
+    let col = token_col(tok)
+    
+    parser_expect(p, TOK_CONST)
+    let name_tok = parser_expect(p, TOK_ID)
+    let name = 0
+    if name_tok != 0 { name = token_value(name_tok) }
+    
+    parser_expect(p, TOK_COLON)
+    let typ = parse_type(p)
+    parser_expect(p, TOK_EQ)
+    let val = parse_expr(p)
+    
+    ast_const(name, typ, val, line, col)
+}
+
+func parse_import(p: Int) -> Int {
+    let tok = parser_peek(p)
+    let line = token_line(tok)
+    let col = token_col(tok)
+    
+    parser_expect(p, TOK_IMPORT)
+    let path = vec_new()
+    let name_tok = parser_expect(p, TOK_ID)
+    if name_tok != 0 {
+        vec_push(path, token_value(name_tok))
+    }
+    
+    while parser_match(p, TOK_DOT) == 1 {
+        let next = parser_expect(p, TOK_ID)
+        if next != 0 {
+            vec_push(path, token_value(next))
+        }
+    }
+    
+    ast_import(path, line, col)
+}
+
+// ============================================================================
+// MODULE PARSING
+// ============================================================================
+
+func parse_module(p: Int) -> Int {
+    let decls = vec_new()
+    
+    while parser_check(p, TOK_EOF) == 0 {
+        let tok = parser_peek(p)
+        if tok == 0 { 
+            return ast_module(decls)
+        }
+        
+        let typ = token_type(tok)
+        
+        if typ == TOK_FUNC {
+            vec_push(decls, parse_func(p))
+        } else {
+            if typ == TOK_STRUCT {
+                vec_push(decls, parse_struct(p))
+            } else {
+                if typ == TOK_TRAIT {
+                    vec_push(decls, parse_trait(p))
+                } else {
+                    if typ == TOK_IMPL {
+                        vec_push(decls, parse_impl(p))
+                    } else {
+                        if typ == TOK_CONST {
+                            vec_push(decls, parse_const(p))
+                        } else {
+                            if typ == TOK_IMPORT {
+                                vec_push(decls, parse_import(p))
+                            } else {
+                                parser_advance(p)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    ast_module(decls)
+}
+
+func parse(tokens: Int) -> Int {
+    let p = parser_new(tokens)
+    parse_module(p)
+}

@@ -1,42 +1,39 @@
-// AETHER INDESTRUCTIBLE - NEVER FAIL, NEVER CRASH, NEVER LAG
-// Bootstrap Stub Version
+// AETHER INDESTRUCTIBLE - Bootstrap Compatible
+// Immortal reference counting
 
 import std
 
-// Configuration
-const MAX_RETRIES: Int = 1000000
-const WF_PENDING: Int = 0
-const WF_RUNNING: Int = 1
-const WF_COMPLETED: Int = 2
-const WF_FAILED: Int = 3
-
-// Workflow engine stubs
-func indestructible_init() {
-    // Stub
+// Ref: [ptr, count, destructor]
+func ref_new(ptr: Int, destructor: Int) -> Int {
+    let r = ae_malloc(24)
+    ae_store64(r, ptr)
+    ae_store64(r + 8, 1)  // count = 1
+    ae_store64(r + 16, destructor)
+    r
 }
 
-func never_fail(fn: Int, arg: Int) -> Int {
-    // Just run it directly for now
-    __builtin_call(fn, arg)
+func ref_get(r: Int) -> Int {
+    ae_load64(r)
 }
 
-func workflow_run(name: Int, fn: Int, arg: Int) -> Int {
-    never_fail(fn, arg)
+func ref_clone(r: Int) -> Int {
+    let count = ae_load64(r + 8)
+    ae_store64(r + 8, count + 1)
+    r
 }
 
-func activity(name: Int, fn: Int, arg: Int) -> Int {
-    never_fail(fn, arg)
+func ref_drop(r: Int) {
+    let count = ae_load64(r + 8)
+    count = count - 1
+    ae_store64(r + 8, count)
+    
+    if count == 0 {
+        let ptr = ae_load64(r)
+        __builtin_free(ptr)
+        __builtin_free(r)
+    }
 }
 
-func workflow_schedule(name: Int, fn: Int, arg: Int, delay_ms: Int) -> Int {
-    0 // Stub
+func ref_count(r: Int) -> Int {
+    ae_load64(r + 8)
 }
-
-func workflow_cancel(wf_id: Int) {}
-func workflow_status(wf_id: Int) -> Int { 0 }
-
-// Helpers
-func sleep(ms: Int) {}
-func now_ms() -> Int { 0 }
-func random_int() -> Int { 0 }
-

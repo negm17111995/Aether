@@ -1,134 +1,35 @@
-//! ═══════════════════════════════════════════════════════════════════════════════
-//! AETHER DATETIME - DATE AND TIME HANDLING
-//! ═══════════════════════════════════════════════════════════════════════════════
+// AETHER DATETIME - Bootstrap Compatible
+// Date and time utilities
 
-import std.runtime.syscall
+import std
 
-// ============================================================================
-// TIME TYPES
-// ============================================================================
-
-/// Unix timestamp in milliseconds
-func now_ms() -> Int {
-    __clock_gettime_ms()
+func datetime_now_ms() -> Int {
+    __builtin_now_ms()
 }
 
-/// Unix timestamp in seconds
-func now() -> Int {
-    now_ms() / 1000
+func datetime_sec(ms: Int) -> Int {
+    ms / 1000
 }
 
-/// Current time in nanoseconds (for benchmarking)
-func now_ns() -> Int {
-    __clock_gettime_ns()
+func datetime_min(ms: Int) -> Int {
+    ms / 60000
 }
 
-// ============================================================================
-// DATE/TIME COMPONENTS
-// ============================================================================
-
-/// Get year from timestamp
-func year(ts: Int) -> Int { __time_year(ts) }
-
-/// Get month (1-12)
-func month(ts: Int) -> Int { __time_month(ts) }
-
-/// Get day of month (1-31)
-func day(ts: Int) -> Int { __time_day(ts) }
-
-/// Get hour (0-23)
-func hour(ts: Int) -> Int { __time_hour(ts) }
-
-/// Get minute (0-59)
-func minute(ts: Int) -> Int { __time_minute(ts) }
-
-/// Get second (0-59)
-func second(ts: Int) -> Int { __time_second(ts) }
-
-/// Get day of week (0=Sunday, 6=Saturday)
-func weekday(ts: Int) -> Int { __time_weekday(ts) }
-
-// ============================================================================
-// FORMATTING
-// ============================================================================
-
-/// Format timestamp as ISO 8601xxxxxxxxxx
-func format_iso(ts: Int) -> Int {
-    // "2024-12-28T02:00:40Z"
-    __time_format_iso(ts)
+func datetime_hour(ms: Int) -> Int {
+    ms / 3600000
 }
 
-/// Format with custom pattern
-/// %Y=year, %m=month, %d=day, %H=hour, %M=minute, %S=second
-func format(ts: Int, pattern: Int) -> Int {
-    __time_format(ts, pattern)
-}
-
-/// Parse ISO 8601 string to timestamp
-func parse_iso(s: Int) -> Int {
-    __time_parse_iso(s)
-}
-
-// ============================================================================
-// DURATION
-// ============================================================================
-
-const SECOND: Int = 1000
-const MINUTE: Int = 60000
-const HOUR: Int = 3600000
-const DAY: Int = 86400000
-const WEEK: Int = 604800000
-
-/// Add duration to timestamp
-func add(ts: Int, duration: Int) -> Int { ts + duration }
-
-/// Subtract duration from timestamp
-func sub(ts: Int, duration: Int) -> Int { ts - duration }
-
-/// Difference between two timestamps in ms
-func diff(ts1: Int, ts2: Int) -> Int { ts1 - ts2 }
-
-// ============================================================================
-// TIMEZONE
-// ============================================================================
-
-/// Convert UTC to local time
-func to_local(ts: Int) -> Int { __time_to_local(ts) }
-
-/// Convert local to UTC
-func to_utc(ts: Int) -> Int { __time_to_utc(ts) }
-
-/// Convert to timezone
-func to_tz(ts: Int, tz: Int) -> Int { __time_to_tz(ts, tz) }
-
-// ============================================================================
-// UTILITIES
-// ============================================================================
-
-/// Check if year is leap year
-func is_leap_year(y: Int) -> Int {
-    (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0)
-}
-
-/// Get days in month
-func days_in_month(y: Int, m: Int) -> Int {
-    if m == 2 {
-        if is_leap_year(y) { 29 } else { 28 }
-    } else if m == 4 || m == 6 || m == 9 || m == 11 {
-        30
-    } else {
-        31
+func datetime_sleep_ms(ms: Int) {
+    let end = __builtin_now_ms() + ms
+    while __builtin_now_ms() < end {
+        // Spin
     }
 }
 
-/// Sleep for milliseconds
-func sleep(ms: Int) {
-    __sleep_ms(ms)
+func datetime_days_since_epoch(ms: Int) -> Int {
+    ms / 86400000
 }
 
-/// Measure execution time
-func measure(fn: Int) -> Int {
-    let start = now_ns()
-    __call(fn, 0)
-    now_ns() - start
+func datetime_add_days(ms: Int, days: Int) -> Int {
+    ms + days * 86400000
 }

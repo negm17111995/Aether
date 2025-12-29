@@ -1,95 +1,20 @@
-//! ═══════════════════════════════════════════════════════════════════════════════
-//! AETHER PURE ENTRY POINT - NO C DEPENDENCY
-//! ═══════════════════════════════════════════════════════════════════════════════
-//! This replaces bootstrap/runtime.c with pure Aether + assembly
-//! 
-//! The chain is:
-//! 1. _start (pure assembly, 10 lines)
-//! 2. aether_main() (pure Aether)
-//! 3. Your main() function
+// AETHER NATIVE ENTRY - Bootstrap Compatible
+// Entry point for native execution
 
-import std.runtime.syscall
+import std
 
-// ============================================================================
-// PROGRAM ENTRY POINT
-// ============================================================================
-
-/// This is called by _start (assembly). argc and argv are passed in registers.
-/// 
-/// On macOS ARM64:
-///   x0 = argc
-///   x1 = argv (pointer to array of pointers)
-///   x2 = envp (pointer to environment)
-
-func aether_main(argc: Int, argv: Int, envp: Int) -> Int {
-    // Initialize heap (mmap a region for malloc)
-    heap_init()
-    
-    // Initialize global state
-    init_globals()
-    
-    // Call user's main function
-    let result = main()
-    
-    // Clean exit
-    sys_exit(result)
-    
-    result
-}
-
-// ============================================================================
-// HEAP INITIALIZATION (replaces C malloc)
-// ============================================================================
-
-var heap_start: Int = 0
-var heap_pos: Int = 0
-var heap_end: Int = 0
-
-func heap_init() {
-    // Allocate 64MB heap via mmap
-    let size = 67108864  // 64 MB
-    heap_start = sys_mmap(size)
-    heap_pos = heap_start
-    heap_end = heap_start + size
-}
-
-/// Pure Aether malloc - no C dependency
-
-func malloc(size: Int) -> Int {
-    // Align to 8 bytes
-    let aligned = (size + 7) & ~7
-    let ptr = heap_pos
-    heap_pos = heap_pos + aligned
-    
-    if heap_pos > heap_end {
-        // Out of memory - could grow heap here
-        sys_exit(137)  // OOM exit code
-    }
-    
-    ptr
-}
-
-/// Pure Aether free (no-op for bump allocator)
-
-func free(ptr: Int) {
-    // Bump allocator doesn't free individual allocations
-    // Use arena allocator for scoped deallocation
-}
-
-// ============================================================================
-// GLOBAL INITIALIZATION
-// ============================================================================
-
-func init_globals() {
-    // Initialize any global state needed by stdlib
-}
-
-// ============================================================================
-// DEFAULT MAIN (if user doesn't define one)
-// ============================================================================
-
-
-func main() -> Int {
-    // Default: just exit 0
+func aether_native_main(argc: Int, argv: Int, envp: Int) -> Int {
     0
+}
+
+func heap_alloc(size: Int) -> Int {
+    ae_malloc(size)
+}
+
+func heap_free(ptr: Int) {
+    __builtin_free(ptr)
+}
+
+func native_init_globals() {
+    // Initialize global state
 }

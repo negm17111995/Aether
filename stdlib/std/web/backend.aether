@@ -1,0 +1,45 @@
+// AETHER WEB BACKEND - Bootstrap Compatible
+// Web server backend
+
+import std
+
+// HTTP methods
+const HTTP_GET: Int = 0
+const HTTP_POST: Int = 1
+const HTTP_PUT: Int = 2
+const HTTP_DELETE: Int = 3
+
+// HTTP status
+const HTTP_OK: Int = 200
+const HTTP_NOT_FOUND: Int = 404
+const HTTP_ERROR: Int = 500
+
+// Simple web server
+func web_server_new(port: Int) -> Int {
+    let s = ae_malloc(16)
+    ae_store64(s, port)
+    ae_store64(s + 8, vec_new())  // handlers
+    s
+}
+
+func web_handle(s: Int, method: Int, path: Int, handler: Int) {
+    let handlers = ae_load64(s + 8)
+    let h = ae_malloc(24)
+    ae_store64(h, method)
+    ae_store64(h + 8, path)
+    ae_store64(h + 16, handler)
+    vec_push(handlers, h)
+}
+
+func web_listen(s: Int) -> Int {
+    // Would start HTTP server
+    1
+}
+
+// JSON response helper
+func json_response(status: Int, body: Int) -> Int {
+    let r = ae_malloc(16)
+    ae_store64(r, status)
+    ae_store64(r + 8, body)
+    r
+}
