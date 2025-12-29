@@ -37,6 +37,13 @@ const TOK_AMP: Int = 32
 const TOK_PIPE: Int = 33
 const TOK_BANG: Int = 34
 const TOK_DCOLON: Int = 35
+const TOK_PERCENT: Int = 36
+const TOK_CARET: Int = 37
+const TOK_AMPAMP: Int = 38
+const TOK_PIPEPIPE: Int = 39
+const TOK_TILDE: Int = 40
+const TOK_LE: Int = 25
+const TOK_GE: Int = 27
 
 // Keywords
 const TOK_FUNC: Int = 50
@@ -56,6 +63,26 @@ const TOK_PUB: Int = 63
 const TOK_MATCH: Int = 64
 const TOK_TRUE: Int = 65
 const TOK_FALSE: Int = 66
+const TOK_IN: Int = 67
+const TOK_DARROW: Int = 68
+
+// Veritas Feature Tokens
+const TOK_COMPTIME: Int = 70
+const TOK_WHERE: Int = 71
+const TOK_ACTOR: Int = 72
+const TOK_SEND: Int = 73
+const TOK_RECEIVE: Int = 74
+const TOK_EFFECT: Int = 75
+const TOK_HANDLE: Int = 76
+const TOK_RESUME: Int = 77
+const TOK_EXTERN: Int = 78
+const TOK_HOT: Int = 79
+const TOK_PERFORM: Int = 80
+const TOK_TRY: Int = 81
+const TOK_SPAWN: Int = 82
+const TOK_CFG: Int = 83
+const TOK_SIZEOF: Int = 84
+const TOK_AT: Int = 85
 
 // ============================================================================
 // TOKEN STRUCTURE

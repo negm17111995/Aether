@@ -1,0 +1,15 @@
+// AETHER NATIVE COMPILER - MAIN DRIVER
+// Self-hosting compiler that generates native machine code directly
+
+import std
+
+// ============================================================================
+// MAIN ENTRY POINT
+// ============================================================================
+
+func main() -> Int {
+    // Run native backend test to verify it works
+    let size = native_test()
+    print(size)
+    0
+}

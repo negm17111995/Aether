@@ -1,0 +1,293 @@
+// AETHER SELF-HOSTED COMPILER - BIT-LEVEL FFI
+// C interop with exact struct layout control
+
+import std
+
+// ============================================================================
+// FFI TYPES
+// ============================================================================
+
+const FFI_VOID: Int = 0
+const FFI_I8: Int = 1
+const FFI_I16: Int = 2
+const FFI_I32: Int = 3
+const FFI_I64: Int = 4
+const FFI_U8: Int = 5
+const FFI_U16: Int = 6
+const FFI_U32: Int = 7
+const FFI_U64: Int = 8
+const FFI_F32: Int = 9
+const FFI_F64: Int = 10
+const FFI_PTR: Int = 11
+const FFI_STRUCT: Int = 12
+
+// ============================================================================
+// FFI TYPE REPRESENTATION
+// ============================================================================
+
+// FfiType: [kind, size, alignment, name]
+func ffi_type_new(kind: Int, size: Int, align: Int) -> Int {
+    let t = ae_malloc(32)
+    ae_store64(t, kind)
+    ae_store64(t + 8, size)
+    ae_store64(t + 16, align)
+    ae_store64(t + 24, 0)
+    t
+}
+
+func ffi_type_kind(t: Int) -> Int { ae_load64(t) }
+func ffi_type_size(t: Int) -> Int { ae_load64(t + 8) }
+func ffi_type_align(t: Int) -> Int { ae_load64(t + 16) }
+func ffi_type_name(t: Int) -> Int { ae_load64(t + 24) }
+func ffi_type_set_name(t: Int, n: Int) { ae_store64(t + 24, n) }
+
+// Primitive FFI types
+func ffi_i8() -> Int { ffi_type_new(FFI_I8, 1, 1) }
+func ffi_i16() -> Int { ffi_type_new(FFI_I16, 2, 2) }
+func ffi_i32() -> Int { ffi_type_new(FFI_I32, 4, 4) }
+func ffi_i64() -> Int { ffi_type_new(FFI_I64, 8, 8) }
+func ffi_u8() -> Int { ffi_type_new(FFI_U8, 1, 1) }
+func ffi_u16() -> Int { ffi_type_new(FFI_U16, 2, 2) }
+func ffi_u32() -> Int { ffi_type_new(FFI_U32, 4, 4) }
+func ffi_u64() -> Int { ffi_type_new(FFI_U64, 8, 8) }
+func ffi_f32() -> Int { ffi_type_new(FFI_F32, 4, 4) }
+func ffi_f64() -> Int { ffi_type_new(FFI_F64, 8, 8) }
+func ffi_ptr() -> Int { ffi_type_new(FFI_PTR, 8, 8) }
+
+// ============================================================================
+// FFI STRUCT WITH EXACT LAYOUT
+// ============================================================================
+
+// FfiStruct: [name, fields, packed, total_size]
+func ffi_struct_new(name: Int, packed: Int) -> Int {
+    let s = ae_malloc(32)
+    ae_store64(s, name)
+    ae_store64(s + 8, vec_new())
+    ae_store64(s + 16, packed)
+    ae_store64(s + 24, 0)
+    s
+}
+
+func ffi_struct_name(s: Int) -> Int { ae_load64(s) }
+func ffi_struct_fields(s: Int) -> Int { ae_load64(s + 8) }
+func ffi_struct_packed(s: Int) -> Int { ae_load64(s + 16) }
+func ffi_struct_size(s: Int) -> Int { ae_load64(s + 24) }
+func ffi_struct_set_size(s: Int, sz: Int) { ae_store64(s + 24, sz) }
+
+// FfiField: [name, type, offset]
+func ffi_field_new(name: Int, typ: Int, offset: Int) -> Int {
+    let f = ae_malloc(24)
+    ae_store64(f, name)
+    ae_store64(f + 8, typ)
+    ae_store64(f + 16, offset)
+    f
+}
+
+func ffi_field_name(f: Int) -> Int { ae_load64(f) }
+func ffi_field_type(f: Int) -> Int { ae_load64(f + 8) }
+func ffi_field_offset(f: Int) -> Int { ae_load64(f + 16) }
+
+// Add field to struct with proper alignment
+func ffi_struct_add_field(s: Int, name: Int, typ: Int) {
+    let fields = ffi_struct_fields(s)
+    let current_offset = ffi_struct_size(s)
+    
+    let field_align = ffi_type_align(typ)
+    let field_size = ffi_type_size(typ)
+    
+    // Calculate aligned offset (unless packed)
+    let aligned_offset = current_offset
+    if ffi_struct_packed(s) == 0 {
+        let rem = current_offset % field_align
+        if rem != 0 {
+            aligned_offset = current_offset + field_align - rem
+        }
+    }
+    
+    vec_push(fields, ffi_field_new(name, typ, aligned_offset))
+    ffi_struct_set_size(s, aligned_offset + field_size)
+}
+
+// Calculate total struct size with tail padding
+func ffi_struct_finalize(s: Int) {
+    if ffi_struct_packed(s) == 1 { return }
+    
+    // Find max alignment
+    let fields = ffi_struct_fields(s)
+    let max_align = 1
+    let i = 0
+    while i < vec_len(fields) {
+        let f = vec_get(fields, i)
+        let a = ffi_type_align(ffi_field_type(f))
+        if a > max_align { max_align = a }
+        i = i + 1
+    }
+    
+    // Add tail padding
+    let size = ffi_struct_size(s)
+    let rem = size % max_align
+    if rem != 0 {
+        ffi_struct_set_size(s, size + max_align - rem)
+    }
+}
+
+// ============================================================================
+// EXTERN FUNCTION DECLARATION
+// ============================================================================
+
+// ExternFunc: [name, params, return_type, calling_conv]
+func extern_func_new(name: Int) -> Int {
+    let f = ae_malloc(32)
+    ae_store64(f, name)
+    ae_store64(f + 8, vec_new())
+    ae_store64(f + 16, 0)
+    ae_store64(f + 24, 0)  // Default calling convention
+    f
+}
+
+func extern_func_name(f: Int) -> Int { ae_load64(f) }
+func extern_func_params(f: Int) -> Int { ae_load64(f + 8) }
+func extern_func_return(f: Int) -> Int { ae_load64(f + 16) }
+func extern_func_set_return(f: Int, t: Int) { ae_store64(f + 16, t) }
+
+func extern_func_add_param(f: Int, name: Int, typ: Int) {
+    let p = ae_malloc(16)
+    ae_store64(p, name)
+    ae_store64(p + 8, typ)
+    vec_push(extern_func_params(f), p)
+}
+
+// ============================================================================
+// AST NODES FOR FFI
+// ============================================================================
+
+const AST_FFI_CALL: Int = 222
+
+func ast_extern_func(name: Int, params: Int, ret: Int, line: Int, col: Int) -> Int {
+    let node = ast_new(AST_EXTERN_FUNC, line, col)
+    ast_set_data1(node, name)
+    ast_set_data2(node, params)
+    ast_set_data3(node, ret)
+    node
+}
+
+// ============================================================================
+// CODEGEN FOR FFI
+// ============================================================================
+
+// Emit C type name for FFI type
+func ffi_emit_type(g: Int, t: Int) {
+    let kind = ffi_type_kind(t)
+    if kind == FFI_I8 { cg_emit_char(g, 105) cg_emit_char(g, 110) cg_emit_char(g, 116) cg_emit_char(g, 56) cg_emit_char(g, 95) cg_emit_char(g, 116) return } // int8_t
+    if kind == FFI_I16 { cg_emit_char(g, 105) cg_emit_char(g, 110) cg_emit_char(g, 116) cg_emit_char(g, 49) cg_emit_char(g, 54) cg_emit_char(g, 95) cg_emit_char(g, 116) return } // int16_t
+    if kind == FFI_I32 { cg_emit_char(g, 105) cg_emit_char(g, 110) cg_emit_char(g, 116) cg_emit_char(g, 51) cg_emit_char(g, 50) cg_emit_char(g, 95) cg_emit_char(g, 116) return } // int32_t
+    if kind == FFI_I64 { cg_emit_char(g, 105) cg_emit_char(g, 110) cg_emit_char(g, 116) cg_emit_char(g, 54) cg_emit_char(g, 52) cg_emit_char(g, 95) cg_emit_char(g, 116) return } // int64_t
+    if kind == FFI_U8 { cg_emit_char(g, 117) cg_emit_char(g, 105) cg_emit_char(g, 110) cg_emit_char(g, 116) cg_emit_char(g, 56) cg_emit_char(g, 95) cg_emit_char(g, 116) return } // uint8_t
+    if kind == FFI_PTR { cg_emit_char(g, 118) cg_emit_char(g, 111) cg_emit_char(g, 105) cg_emit_char(g, 100) cg_emit_char(g, 42) return } // void*
+    // Default: long long
+    cg_emit_char(g, 108) cg_emit_char(g, 111) cg_emit_char(g, 110) cg_emit_char(g, 103) cg_emit_space(g)
+    cg_emit_char(g, 108) cg_emit_char(g, 111) cg_emit_char(g, 110) cg_emit_char(g, 103)
+}
+
+// Emit pragma pack for struct
+func ffi_emit_pack_begin(g: Int) {
+    // #pragma pack(push, 1)
+    cg_emit_char(g, 35) // #
+    cg_emit_char(g, 112) cg_emit_char(g, 114) cg_emit_char(g, 97) // pra
+    cg_emit_char(g, 103) cg_emit_char(g, 109) cg_emit_char(g, 97) // gma
+    cg_emit_space(g)
+    cg_emit_char(g, 112) cg_emit_char(g, 97) cg_emit_char(g, 99) cg_emit_char(g, 107) // pack
+    cg_emit_char(g, 40)
+    cg_emit_char(g, 112) cg_emit_char(g, 117) cg_emit_char(g, 115) cg_emit_char(g, 104) // push
+    cg_emit_char(g, 44) cg_emit_space(g)
+    cg_emit_char(g, 49) // 1
+    cg_emit_char(g, 41)
+    cg_emit_nl(g)
+}
+
+func ffi_emit_pack_end(g: Int) {
+    // #pragma pack(pop)
+    cg_emit_char(g, 35)
+    cg_emit_char(g, 112) cg_emit_char(g, 114) cg_emit_char(g, 97)
+    cg_emit_char(g, 103) cg_emit_char(g, 109) cg_emit_char(g, 97)
+    cg_emit_space(g)
+    cg_emit_char(g, 112) cg_emit_char(g, 97) cg_emit_char(g, 99) cg_emit_char(g, 107)
+    cg_emit_char(g, 40)
+    cg_emit_char(g, 112) cg_emit_char(g, 111) cg_emit_char(g, 112) // pop
+    cg_emit_char(g, 41)
+    cg_emit_nl(g)
+}
+
+// Emit FFI struct
+func ffi_emit_struct(g: Int, s: Int) {
+    if ffi_struct_packed(s) == 1 {
+        ffi_emit_pack_begin(g)
+    }
+    
+    cg_emit_char(g, 116) cg_emit_char(g, 121) cg_emit_char(g, 112) // typ
+    cg_emit_char(g, 101) cg_emit_char(g, 100) cg_emit_char(g, 101) // ede
+    cg_emit_char(g, 102) cg_emit_space(g) // f 
+    cg_emit_char(g, 115) cg_emit_char(g, 116) cg_emit_char(g, 114) // str
+    cg_emit_char(g, 117) cg_emit_char(g, 99) cg_emit_char(g, 116) // uct
+    cg_emit_space(g) cg_emit_char(g, 123)
+    cg_emit_nl(g)
+    
+    let fields = ffi_struct_fields(s)
+    let i = 0
+    while i < vec_len(fields) {
+        let f = vec_get(fields, i)
+        cg_emit_space(g) cg_emit_space(g) cg_emit_space(g) cg_emit_space(g)
+        ffi_emit_type(g, ffi_field_type(f))
+        cg_emit_space(g)
+        cg_emit_cstr(g, ffi_field_name(f))
+        cg_emit_char(g, 59)
+        cg_emit_nl(g)
+        i = i + 1
+    }
+    
+    cg_emit_char(g, 125) cg_emit_space(g)
+    cg_emit_cstr(g, ffi_struct_name(s))
+    cg_emit_char(g, 59)
+    cg_emit_nl(g)
+    
+    if ffi_struct_packed(s) == 1 {
+        ffi_emit_pack_end(g)
+    }
+    cg_emit_nl(g)
+}
+
+// Emit extern function declaration
+func ffi_emit_extern(g: Int, f: Int) {
+    // extern RetType name(params);
+    cg_emit_char(g, 101) cg_emit_char(g, 120) cg_emit_char(g, 116) // ext
+    cg_emit_char(g, 101) cg_emit_char(g, 114) cg_emit_char(g, 110) // ern
+    cg_emit_space(g)
+    
+    let ret = extern_func_return(f)
+    if ret == 0 {
+        cg_emit_char(g, 118) cg_emit_char(g, 111) cg_emit_char(g, 105) cg_emit_char(g, 100) // void
+    } else {
+        ffi_emit_type(g, ret)
+    }
+    cg_emit_space(g)
+    cg_emit_cstr(g, extern_func_name(f))
+    cg_emit_char(g, 40)
+    
+    let params = extern_func_params(f)
+    if vec_len(params) == 0 {
+        cg_emit_char(g, 118) cg_emit_char(g, 111) cg_emit_char(g, 105) cg_emit_char(g, 100) // void
+    } else {
+        let i = 0
+        while i < vec_len(params) {
+            if i > 0 { cg_emit_char(g, 44) cg_emit_space(g) }
+            let p = vec_get(params, i)
+            ffi_emit_type(g, ae_load64(p + 8))
+            cg_emit_space(g)
+            cg_emit_cstr(g, ae_load64(p))
+            i = i + 1
+        }
+    }
+    
+    cg_emit_char(g, 41) cg_emit_char(g, 59)
+    cg_emit_nl(g)
+}

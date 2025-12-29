@@ -40,11 +40,35 @@ const AST_CONST: Int = 44
 const AST_IMPORT: Int = 45
 const AST_MODULE: Int = 46
 
+// Veritas: Actors
+const AST_ACTOR_DEF: Int = 50
+const AST_SEND_EXPR: Int = 51
+const AST_RECEIVE_EXPR: Int = 52
+const AST_SPAWN_EXPR: Int = 53
+
+// Veritas: Effects
+const AST_EFFECT_DECL: Int = 60
+const AST_EFFECT_HANDLER: Int = 61
+const AST_PERFORM: Int = 62
+const AST_RESUME: Int = 63
+const AST_TRY_HANDLE: Int = 64
+
+// Veritas: FFI
+const AST_EXTERN_FUNC: Int = 70
+const AST_FFI_STRUCT: Int = 71
+
+// Veritas: Hot-Reload
+const AST_HOT_FUNC: Int = 75
+
+// Veritas: Memory
+const AST_REF: Int = 80
+const AST_DEREF: Int = 81
+
 // Types
-const AST_TYPE_NAME: Int = 60
-const AST_TYPE_GENERIC: Int = 61
-const AST_TYPE_FUNC: Int = 62
-const AST_TYPE_ARRAY: Int = 63
+const AST_TYPE_NAME: Int = 90
+const AST_TYPE_GENERIC: Int = 91
+const AST_TYPE_FUNC: Int = 92
+const AST_TYPE_ARRAY: Int = 93
 
 // ============================================================================
 // AST NODE STRUCTURE

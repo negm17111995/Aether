@@ -1,0 +1,566 @@
+// AETHER NATIVE BACKEND - ARM64 INSTRUCTION ENCODER
+// Generates raw ARM64 (AArch64) machine code
+
+import std
+
+// ============================================================================
+// ARM64 REGISTERS
+// ============================================================================
+
+// General purpose registers (64-bit: Xn, 32-bit: Wn)
+const ARM_X0: Int = 0
+const ARM_X1: Int = 1
+const ARM_X2: Int = 2
+const ARM_X3: Int = 3
+const ARM_X4: Int = 4
+const ARM_X5: Int = 5
+const ARM_X6: Int = 6
+const ARM_X7: Int = 7
+const ARM_X8: Int = 8
+const ARM_X9: Int = 9
+const ARM_X10: Int = 10
+const ARM_X11: Int = 11
+const ARM_X12: Int = 12
+const ARM_X13: Int = 13
+const ARM_X14: Int = 14
+const ARM_X15: Int = 15
+const ARM_X16: Int = 16
+const ARM_X17: Int = 17
+const ARM_X18: Int = 18
+const ARM_X19: Int = 19
+const ARM_X20: Int = 20
+const ARM_X21: Int = 21
+const ARM_X22: Int = 22
+const ARM_X23: Int = 23
+const ARM_X24: Int = 24
+const ARM_X25: Int = 25
+const ARM_X26: Int = 26
+const ARM_X27: Int = 27
+const ARM_X28: Int = 28
+const ARM_X29: Int = 29  // Frame pointer (FP)
+const ARM_X30: Int = 30  // Link register (LR)
+const ARM_XZR: Int = 31  // Zero register / SP depending on context
+
+const ARM_FP: Int = 29
+const ARM_LR: Int = 30
+const ARM_SP: Int = 31
+
+// Calling convention: AAPCS64
+// Arguments: X0-X7
+// Return: X0 (X1 for 128-bit)
+// Callee-saved: X19-X28, X29 (FP), X30 (LR)
+// Caller-saved: X0-X18, X30
+
+// ============================================================================
+// CODE BUFFER
+// ============================================================================
+
+func arm_buffer_new() -> Int {
+    let buf = ae_malloc(32)
+    ae_store64(buf, ae_malloc(65536))
+    ae_store64(buf + 8, 0)
+    ae_store64(buf + 16, 65536)
+    ae_store64(buf + 24, vec_new())
+    buf
+}
+
+func arm_code(buf: Int) -> Int { ae_load64(buf) }
+func arm_pos(buf: Int) -> Int { ae_load64(buf + 8) }
+func arm_cap(buf: Int) -> Int { ae_load64(buf + 16) }
+func arm_labels(buf: Int) -> Int { ae_load64(buf + 24) }
+func arm_set_pos(buf: Int, p: Int) { ae_store64(buf + 8, p) }
+
+// ARM64 instructions are always 32 bits (4 bytes)
+func arm_emit32(buf: Int, inst: Int) {
+    let code = arm_code(buf)
+    let pos = arm_pos(buf)
+    ae_store8(code + pos, inst % 256)
+    ae_store8(code + pos + 1, inst / 256 % 256)
+    ae_store8(code + pos + 2, inst / 65536 % 256)
+    ae_store8(code + pos + 3, inst / 16777216 % 256)
+    arm_set_pos(buf, pos + 4)
+}
+
+// ============================================================================
+// INSTRUCTION FIELD HELPERS
+// ============================================================================
+
+func arm_pow2(n: Int) -> Int {
+    let result = 1
+    let i = 0
+    while i < n { result = result * 2 i = i + 1 }
+    result
+}
+
+// Extract bits [hi:lo] from value
+func arm_bits(val: Int, hi: Int, lo: Int) -> Int {
+    let mask = 0
+    let i = lo
+    while i <= hi {
+        mask = mask + (1 * arm_pow2(i - lo))
+        i = i + 1
+    }
+    (val / arm_pow2(lo)) % (mask + 1)
+}
+
+// Build instruction from fields
+func arm_encode(fields: Int, count: Int) -> Int {
+    let result = 0
+    let i = 0
+    while i < count {
+        let f = vec_get(fields, i)
+        let value = ae_load64(f)
+        let shift = ae_load64(f + 8)
+        result = result + value * arm_pow2(shift)
+        i = i + 1
+    }
+    result
+}
+
+// ============================================================================
+// DATA PROCESSING - IMMEDIATE
+// ============================================================================
+
+// ADD Xd, Xn, #imm12 (64-bit)
+func arm_add_imm(buf: Int, rd: Int, rn: Int, imm: Int) {
+    // ADD (immediate): sf=1, op=0, S=0, 100010, sh=0, imm12, Rn, Rd
+    let inst = 2449473536 + imm * 1024 + rn * 32 + rd  // 0x91000000
+    arm_emit32(buf, inst)
+}
+
+// ADD Xd, Xn, #imm12, LSL #12
+func arm_add_imm_sh(buf: Int, rd: Int, rn: Int, imm: Int) {
+    let inst = 2453667840 + imm * 1024 + rn * 32 + rd  // 0x91400000
+    arm_emit32(buf, inst)
+}
+
+// SUB Xd, Xn, #imm12
+
+func arm_sub_imm(buf: Int, rd: Int, rn: Int, imm: Int) {
+    // SUB (immediate): sf=1, op=1, S=0, 100010, sh=0, imm12, Rn, Rd
+    let inst = 3523215360 + imm * 1024 + rn * 32 + rd  // 0xD1000000
+    arm_emit32(buf, inst)
+}
+
+// ADDS Xd, Xn, #imm12 (with flags)
+func arm_adds_imm(buf: Int, rd: Int, rn: Int, imm: Int) {
+    let inst = 2986344448 + imm * 1024 + rn * 32 + rd  // 0xB1000000
+    arm_emit32(buf, inst)
+}
+
+// SUBS Xd, Xn, #imm12 (with flags)
+func arm_subs_imm(buf: Int, rd: Int, rn: Int, imm: Int) {
+    let inst = 4060086272 + imm * 1024 + rn * 32 + rd  // 0xF1000000
+    arm_emit32(buf, inst)
+}
+
+// MOV Xd, #imm16 (MOVZ)
+func arm_movz(buf: Int, rd: Int, imm: Int, shift: Int) {
+    // MOVZ: sf=1, opc=10, 100101, hw, imm16, Rd
+    let hw = shift / 16
+    let inst = 3523215360 + hw * 2097152 + imm * 32 + rd  // 0xD2800000
+    arm_emit32(buf, inst)
+}
+
+// MOVK Xd, #imm16, LSL #shift (keep other bits)
+func arm_movk(buf: Int, rd: Int, imm: Int, shift: Int) {
+    // MOVK: sf=1, opc=11, 100101, hw, imm16, Rd
+    let hw = shift / 16
+    let inst = 4060086272 + hw * 2097152 + imm * 32 + rd  // 0xF2800000
+    arm_emit32(buf, inst)
+}
+
+// MOVN Xd, #imm16 (move NOT)
+func arm_movn(buf: Int, rd: Int, imm: Int, shift: Int) {
+    let hw = shift / 16
+    let inst = 2449473536 + hw * 2097152 + imm * 32 + rd  // 0x92800000
+    arm_emit32(buf, inst)
+}
+
+// ============================================================================
+// DATA PROCESSING - REGISTER
+// ============================================================================
+
+// ADD Xd, Xn, Xm
+func arm_add_reg(buf: Int, rd: Int, rn: Int, rm: Int) {
+    // ADD (shifted register): sf=1, op=0, S=0, 01011, shift=00, 0, Rm, imm6=0, Rn, Rd
+    let inst = 2315255808 + rm * 65536 + rn * 32 + rd  // 0x8B000000
+    arm_emit32(buf, inst)
+}
+
+// SUB Xd, Xn, Xm
+func arm_sub_reg(buf: Int, rd: Int, rn: Int, rm: Int) {
+    let inst = 3388997632 + rm * 65536 + rn * 32 + rd  // 0xCB000000
+    arm_emit32(buf, inst)
+}
+
+// MUL Xd, Xn, Xm (alias for MADD Xd, Xn, Xm, XZR)
+func arm_mul_reg(buf: Int, rd: Int, rn: Int, rm: Int) {
+    // MADD: sf=1, 00, 11011, 000, Rm, 0, Ra=11111, Rn, Rd
+    let inst = 2583691264 + rm * 65536 + 31 * 1024 + rn * 32 + rd  // 0x9B007C00
+    arm_emit32(buf, inst)
+}
+
+// SDIV Xd, Xn, Xm (signed divide)
+func arm_sdiv_reg(buf: Int, rd: Int, rn: Int, rm: Int) {
+    // SDIV: sf=1, 0, 0, 11010110, Rm, 00001, 1, Rn, Rd
+    let inst = 2586787840 + rm * 65536 + rn * 32 + rd  // 0x9AC00C00
+    arm_emit32(buf, inst)
+}
+
+// UDIV Xd, Xn, Xm (unsigned divide)
+func arm_udiv_reg(buf: Int, rd: Int, rn: Int, rm: Int) {
+    let inst = 2586787840 + rm * 65536 + 2048 + rn * 32 + rd  // 0x9AC00800
+    arm_emit32(buf, inst)
+}
+
+// NEG Xd, Xm (alias for SUB Xd, XZR, Xm)
+func arm_neg_reg(buf: Int, rd: Int, rm: Int) {
+    arm_sub_reg(buf, rd, ARM_XZR, rm)
+}
+
+// AND Xd, Xn, Xm
+func arm_and_reg(buf: Int, rd: Int, rn: Int, rm: Int) {
+    let inst = 2315255808 + rm * 65536 + rn * 32 + rd  // 0x8A000000
+    arm_emit32(buf, inst)
+}
+
+// ORR Xd, Xn, Xm
+func arm_orr_reg(buf: Int, rd: Int, rn: Int, rm: Int) {
+    let inst = 2852126720 + rm * 65536 + rn * 32 + rd  // 0xAA000000
+    arm_emit32(buf, inst)
+}
+
+// EOR Xd, Xn, Xm (XOR)
+func arm_eor_reg(buf: Int, rd: Int, rn: Int, rm: Int) {
+    let inst = 3388997632 + rm * 65536 + rn * 32 + rd  // 0xCA000000
+    arm_emit32(buf, inst)
+}
+
+// MVN Xd, Xm (move NOT, alias for ORN Xd, XZR, Xm)
+func arm_mvn_reg(buf: Int, rd: Int, rm: Int) {
+    let inst = 2852192256 + rm * 65536 + 31 * 32 + rd  // 0xAA200000 with Rn=XZR
+    arm_emit32(buf, inst)
+}
+
+// LSL Xd, Xn, Xm
+func arm_lsl_reg(buf: Int, rd: Int, rn: Int, rm: Int) {
+    let inst = 2586787840 + rm * 65536 + 8192 + rn * 32 + rd  // 0x9AC02000
+    arm_emit32(buf, inst)
+}
+
+// LSR Xd, Xn, Xm
+func arm_lsr_reg(buf: Int, rd: Int, rn: Int, rm: Int) {
+    let inst = 2586787840 + rm * 65536 + 9216 + rn * 32 + rd  // 0x9AC02400
+    arm_emit32(buf, inst)
+}
+
+// ASR Xd, Xn, Xm (arithmetic shift right)
+func arm_asr_reg(buf: Int, rd: Int, rn: Int, rm: Int) {
+    let inst = 2586787840 + rm * 65536 + 10240 + rn * 32 + rd  // 0x9AC02800
+    arm_emit32(buf, inst)
+}
+
+// ============================================================================
+// COMPARISON INSTRUCTIONS
+// ============================================================================
+
+// CMP Xn, Xm (alias for SUBS XZR, Xn, Xm)
+func arm_cmp_reg(buf: Int, rn: Int, rm: Int) {
+    let inst = 3925868544 + rm * 65536 + rn * 32 + ARM_XZR  // 0xEB000000
+    arm_emit32(buf, inst)
+}
+
+// CMP Xn, #imm12
+func arm_cmp_imm(buf: Int, rn: Int, imm: Int) {
+    arm_subs_imm(buf, ARM_XZR, rn, imm)
+}
+
+// TST Xn, Xm (alias for ANDS XZR, Xn, Xm)
+func arm_tst_reg(buf: Int, rn: Int, rm: Int) {
+    let inst = 3925868544 + rm * 65536 + rn * 32 + ARM_XZR  // 0xEA000000
+    arm_emit32(buf, inst)
+}
+
+// ============================================================================
+// CONDITIONAL SET
+// ============================================================================
+
+// CSET Xd, cond (set if condition)
+// Condition codes:
+const COND_EQ: Int = 0   // Equal
+const COND_NE: Int = 1   // Not equal
+const COND_CS: Int = 2   // Carry set / unsigned >=
+const COND_CC: Int = 3   // Carry clear / unsigned <
+const COND_MI: Int = 4   // Minus / negative
+const COND_PL: Int = 5   // Plus / positive or zero
+const COND_VS: Int = 6   // Overflow
+const COND_VC: Int = 7   // No overflow
+const COND_HI: Int = 8   // Unsigned >
+const COND_LS: Int = 9   // Unsigned <=
+const COND_GE: Int = 10  // Signed >=
+const COND_LT: Int = 11  // Signed <
+const COND_GT: Int = 12  // Signed >
+const COND_LE: Int = 13  // Signed <=
+const COND_AL: Int = 14  // Always
+
+func arm_cset(buf: Int, rd: Int, cond: Int) {
+    // CSET is alias for CSINC Xd, XZR, XZR, invert(cond)
+    let inv_cond = cond ^ 1
+    let inst = 2583691264 + inv_cond * 4096 + 31 * 65536 + 1024 + 31 * 32 + rd
+    arm_emit32(buf, inst)
+}
+
+// ============================================================================
+// BRANCH INSTRUCTIONS
+// ============================================================================
+
+// B offset (unconditional branch, PC-relative)
+func arm_b(buf: Int, offset: Int) {
+    let imm26 = offset / 4
+    let inst = 335544320 + (imm26 % 67108864)  // 0x14000000
+    arm_emit32(buf, inst)
+}
+
+// BL offset (branch and link, PC-relative)
+func arm_bl(buf: Int, offset: Int) {
+    let imm26 = offset / 4
+    let inst = 2483027968 + (imm26 % 67108864)  // 0x94000000
+    arm_emit32(buf, inst)
+}
+
+// BR Xn (branch to register)
+func arm_br(buf: Int, rn: Int) {
+    let inst = 3592716288 + rn * 32  // 0xD61F0000
+    arm_emit32(buf, inst)
+}
+
+// BLR Xn (branch and link to register)
+func arm_blr(buf: Int, rn: Int) {
+    let inst = 3594813440 + rn * 32  // 0xD63F0000
+    arm_emit32(buf, inst)
+}
+
+// RET Xn (return, default LR)
+func arm_ret(buf: Int) {
+    let inst = 3596910592 + ARM_LR * 32  // 0xD65F0000 + X30
+    arm_emit32(buf, inst)
+}
+
+// RET Xn (return to register)
+func arm_ret_reg(buf: Int, rn: Int) {
+    let inst = 3596910592 + rn * 32
+    arm_emit32(buf, inst)
+}
+
+// B.cond offset (conditional branch)
+func arm_b_cond(buf: Int, cond: Int, offset: Int) {
+    let imm19 = offset / 4
+    let inst = 1409286144 + (imm19 % 524288) * 32 + cond  // 0x54000000
+    arm_emit32(buf, inst)
+}
+
+// CBZ Xn, offset (compare and branch if zero)
+func arm_cbz(buf: Int, rn: Int, offset: Int) {
+    let imm19 = offset / 4
+    let inst = 3087007744 + (imm19 % 524288) * 32 + rn  // 0xB4000000
+    arm_emit32(buf, inst)
+}
+
+// CBNZ Xn, offset (compare and branch if not zero)
+func arm_cbnz(buf: Int, rn: Int, offset: Int) {
+    let imm19 = offset / 4
+    let inst = 3095396352 + (imm19 % 524288) * 32 + rn  // 0xB5000000
+    arm_emit32(buf, inst)
+}
+
+// ============================================================================
+// LOAD/STORE INSTRUCTIONS
+// ============================================================================
+
+// LDR Xt, [Xn] (load 64-bit)
+func arm_ldr(buf: Int, rt: Int, rn: Int) {
+    let inst = 4171235328 + rn * 32 + rt  // 0xF8400000 unsigned offset=0
+    arm_emit32(buf, inst)
+}
+
+// LDR Xt, [Xn, #imm12] (load with unsigned offset)
+func arm_ldr_imm(buf: Int, rt: Int, rn: Int, imm: Int) {
+    // Offset must be multiple of 8, scaled by 8
+    let scaled = imm / 8
+    let inst = 4186963968 + scaled * 1024 + rn * 32 + rt  // 0xF9400000
+    arm_emit32(buf, inst)
+}
+
+// LDR Xt, [Xn, Xm] (load with register offset)
+func arm_ldr_reg(buf: Int, rt: Int, rn: Int, rm: Int) {
+    let inst = 4172349440 + rm * 65536 + rn * 32 + rt  // 0xF8600000
+    arm_emit32(buf, inst)
+}
+
+// STR Xt, [Xn] (store 64-bit)
+func arm_str(buf: Int, rt: Int, rn: Int) {
+    let inst = 4169138176 + rn * 32 + rt  // 0xF8000000
+    arm_emit32(buf, inst)
+}
+
+// STR Xt, [Xn, #imm12]
+func arm_str_imm(buf: Int, rt: Int, rn: Int, imm: Int) {
+    let scaled = imm / 8
+    let inst = 4184866816 + scaled * 1024 + rn * 32 + rt  // 0xF9000000
+    arm_emit32(buf, inst)
+}
+
+// STR Xt, [Xn, Xm]
+func arm_str_reg(buf: Int, rt: Int, rn: Int, rm: Int) {
+    let inst = 4170252288 + rm * 65536 + rn * 32 + rt  // 0xF8200000
+    arm_emit32(buf, inst)
+}
+
+// LDP Xt1, Xt2, [Xn, #imm] (load pair)
+func arm_ldp(buf: Int, rt1: Int, rt2: Int, rn: Int, imm: Int) {
+    let scaled = imm / 8
+    let inst = 2819424256 + rt2 * 1024 + rn * 32 + rt1 + (scaled % 128) * 32768  // 0xA9400000
+    arm_emit32(buf, inst)
+}
+
+// STP Xt1, Xt2, [Xn, #imm] (store pair)
+func arm_stp(buf: Int, rt1: Int, rt2: Int, rn: Int, imm: Int) {
+    let scaled = imm / 8
+    let inst = 2818375680 + rt2 * 1024 + rn * 32 + rt1 + (scaled % 128) * 32768  // 0xA9000000
+    arm_emit32(buf, inst)
+}
+
+// STP Xt1, Xt2, [Xn, #imm]! (store pair with pre-index)
+func arm_stp_pre(buf: Int, rt1: Int, rt2: Int, rn: Int, imm: Int) {
+    let scaled = imm / 8
+    let inst = 2820472832 + rt2 * 1024 + rn * 32 + rt1 + (scaled % 128) * 32768  // 0xA9800000
+    arm_emit32(buf, inst)
+}
+
+// LDP Xt1, Xt2, [Xn], #imm (load pair with post-index)
+func arm_ldp_post(buf: Int, rt1: Int, rt2: Int, rn: Int, imm: Int) {
+    let scaled = imm / 8
+    let inst = 2818506752 + rt2 * 1024 + rn * 32 + rt1 + (scaled % 128) * 32768  // 0xA8C00000
+    arm_emit32(buf, inst)
+}
+
+// ============================================================================
+// SYSTEM INSTRUCTIONS
+// ============================================================================
+
+// SVC #imm16 (supervisor call / syscall)
+func arm_svc(buf: Int, imm: Int) {
+    let inst = 3556769793 + imm * 32  // 0xD4000001
+    arm_emit32(buf, inst)
+}
+
+// NOP
+func arm_nop(buf: Int) {
+    arm_emit32(buf, 3573751839)  // 0xD503201F
+}
+
+// ============================================================================
+// ADDRESS GENERATION
+// ============================================================================
+
+// ADR Xd, label (PC-relative address)
+func arm_adr(buf: Int, rd: Int, offset: Int) {
+    let immhi = offset / 4
+    let immlo = offset % 4
+    let inst = 268435456 + immlo * 536870912 + (immhi % 524288) * 32 + rd  // 0x10000000
+    arm_emit32(buf, inst)
+}
+
+// ADRP Xd, label (PC-relative page address)
+func arm_adrp(buf: Int, rd: Int, offset: Int) {
+    let page_offset = offset / 4096
+    let immhi = page_offset / 4
+    let immlo = page_offset % 4
+    let inst = 2415919104 + immlo * 536870912 + (immhi % 524288) * 32 + rd  // 0x90000000
+    arm_emit32(buf, inst)
+}
+
+// ============================================================================
+// MOV ALIASES
+// ============================================================================
+
+// MOV Xd, Xm (alias for ORR Xd, XZR, Xm)
+func arm_mov_reg(buf: Int, rd: Int, rm: Int) {
+    arm_orr_reg(buf, rd, ARM_XZR, rm)
+}
+
+// MOV Xd, #imm (small immediate, uses MOVZ or MOVN)
+func arm_mov_imm(buf: Int, rd: Int, imm: Int) {
+    if imm >= 0 && imm < 65536 {
+        arm_movz(buf, rd, imm, 0)
+    } else {
+        if imm < 0 && imm >= 0 - 65536 {
+            arm_movn(buf, rd, (0 - imm) - 1, 0)
+        } else {
+            // Need multiple instructions for larger immediates
+            arm_movz(buf, rd, imm % 65536, 0)
+            if imm >= 65536 {
+                arm_movk(buf, rd, imm / 65536 % 65536, 16)
+            }
+            if imm >= 4294967296 {
+                arm_movk(buf, rd, imm / 4294967296 % 65536, 32)
+            }
+        }
+    }
+}
+
+// ============================================================================
+// LABEL MANAGEMENT
+// ============================================================================
+
+func arm_label(buf: Int, name: Int) {
+    let labels = arm_labels(buf)
+    let label = ae_malloc(16)
+    ae_store64(label, name)
+    ae_store64(label + 8, arm_pos(buf))
+    vec_push(labels, label)
+}
+
+func arm_find_label(buf: Int, name: Int) -> Int {
+    let labels = arm_labels(buf)
+    let i = 0
+    while i < vec_len(labels) {
+        let l = vec_get(labels, i)
+        if ae_load64(l) == name { return ae_load64(l + 8) }
+        i = i + 1
+    }
+    0 - 1
+}
+
+// ============================================================================
+// FUNCTION PROLOGUE/EPILOGUE
+// ============================================================================
+
+func arm_prologue(buf: Int, stack_size: Int) {
+    // STP X29, X30, [SP, #-stack_size]!
+    arm_stp_pre(buf, ARM_FP, ARM_LR, ARM_SP, 0 - stack_size)
+    // MOV X29, SP
+    arm_mov_reg(buf, ARM_FP, ARM_SP)
+}
+
+func arm_epilogue(buf: Int, stack_size: Int) {
+    // MOV SP, X29
+    arm_mov_reg(buf, ARM_SP, ARM_FP)
+    // LDP X29, X30, [SP], #stack_size
+    arm_ldp_post(buf, ARM_FP, ARM_LR, ARM_SP, stack_size)
+    // RET
+    arm_ret(buf)
+}
+
+// ============================================================================
+// HELPER: GET CODE BYTES
+// ============================================================================
+
+func arm_get_code(buf: Int) -> Int {
+    arm_code(buf)
+}
+
+func arm_get_size(buf: Int) -> Int {
+    arm_pos(buf)
+}

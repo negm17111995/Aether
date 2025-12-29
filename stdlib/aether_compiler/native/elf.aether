@@ -1,0 +1,407 @@
+// AETHER NATIVE BACKEND - ELF BINARY FORMAT GENERATOR
+// Generates ELF64 executables for Linux
+
+import std
+
+// ============================================================================
+// ELF CONSTANTS
+// ============================================================================
+
+// ELF Magic
+const ELF_MAGIC0: Int = 127  // 0x7F
+const ELF_MAGIC1: Int = 69   // 'E'
+const ELF_MAGIC2: Int = 76   // 'L'
+const ELF_MAGIC3: Int = 70   // 'F'
+
+// ELF Class
+const ELFCLASS64: Int = 2
+
+// ELF Data encoding
+const ELFDATA2LSB: Int = 1  // Little endian
+
+// ELF Version
+const EV_CURRENT: Int = 1
+
+// ELF OS/ABI
+const ELFOSABI_NONE: Int = 0
+const ELFOSABI_LINUX: Int = 3
+
+// ELF Type
+const ET_EXEC: Int = 2  // Executable
+const ET_DYN: Int = 3   // Shared object
+
+// ELF Machine
+const EM_X86_64: Int = 62
+const EM_AARCH64: Int = 183
+
+// Program header types
+const PT_NULL: Int = 0
+const PT_LOAD: Int = 1
+const PT_DYNAMIC: Int = 2
+const PT_INTERP: Int = 3
+const PT_NOTE: Int = 4
+const PT_PHDR: Int = 6
+
+// Program header flags
+const PF_X: Int = 1  // Execute
+const PF_W: Int = 2  // Write
+const PF_R: Int = 4  // Read
+
+// Section header types
+const SHT_NULL: Int = 0
+const SHT_PROGBITS: Int = 1
+const SHT_SYMTAB: Int = 2
+const SHT_STRTAB: Int = 3
+const SHT_RELA: Int = 4
+const SHT_NOBITS: Int = 8
+const SHT_REL: Int = 9
+
+// Section header flags
+const SHF_WRITE: Int = 1
+const SHF_ALLOC: Int = 2
+const SHF_EXECINSTR: Int = 4
+
+// ELF64 header size
+const EHDR_SIZE: Int = 64
+
+// Program header size
+const PHDR_SIZE: Int = 56
+
+// Section header size
+const SHDR_SIZE: Int = 64
+
+// Default virtual address
+const BASE_ADDR: Int = 4194304  // 0x400000
+
+// ============================================================================
+// ELF BUFFER
+// ============================================================================
+
+func elf_new() -> Int {
+    let elf = ae_malloc(64)
+    ae_store64(elf, ae_malloc(1048576))  // 1MB buffer
+    ae_store64(elf + 8, 0)   // current position
+    ae_store64(elf + 16, 0)  // entry point
+    ae_store64(elf + 24, vec_new())  // program headers
+    ae_store64(elf + 32, vec_new())  // section headers
+    ae_store64(elf + 40, vec_new())  // symbol table
+    ae_store64(elf + 48, 0)  // string table pos
+    ae_store64(elf + 56, 0)  // machine (0=x64, 1=arm64)
+    elf
+}
+
+func elf_buf(e: Int) -> Int { ae_load64(e) }
+func elf_pos(e: Int) -> Int { ae_load64(e + 8) }
+func elf_entry(e: Int) -> Int { ae_load64(e + 16) }
+func elf_phdrs(e: Int) -> Int { ae_load64(e + 24) }
+func elf_shdrs(e: Int) -> Int { ae_load64(e + 32) }
+func elf_syms(e: Int) -> Int { ae_load64(e + 40) }
+func elf_strtab(e: Int) -> Int { ae_load64(e + 48) }
+func elf_machine(e: Int) -> Int { ae_load64(e + 56) }
+
+func elf_set_pos(e: Int, p: Int) { ae_store64(e + 8, p) }
+func elf_set_entry(e: Int, v: Int) { ae_store64(e + 16, v) }
+func elf_set_machine(e: Int, m: Int) { ae_store64(e + 56, m) }
+
+// Write bytes
+func elf_write8(e: Int, val: Int) {
+    let buf = elf_buf(e)
+    let pos = elf_pos(e)
+    ae_store8(buf + pos, val)
+    elf_set_pos(e, pos + 1)
+}
+
+func elf_write16(e: Int, val: Int) {
+    elf_write8(e, val % 256)
+    elf_write8(e, val / 256 % 256)
+}
+
+func elf_write32(e: Int, val: Int) {
+    elf_write8(e, val % 256)
+    elf_write8(e, val / 256 % 256)
+    elf_write8(e, val / 65536 % 256)
+    elf_write8(e, val / 16777216 % 256)
+}
+
+func elf_write64(e: Int, val: Int) {
+    elf_write32(e, val)
+    elf_write32(e, val / 4294967296)
+}
+
+// Write bytes at specific position
+func elf_write_at(e: Int, pos: Int, val: Int, size: Int) {
+    let buf = elf_buf(e)
+    if size >= 1 { ae_store8(buf + pos, val % 256) }
+    if size >= 2 { ae_store8(buf + pos + 1, val / 256 % 256) }
+    if size >= 4 {
+        ae_store8(buf + pos + 2, val / 65536 % 256)
+        ae_store8(buf + pos + 3, val / 16777216 % 256)
+    }
+    if size >= 8 {
+        let high = val / 4294967296
+        ae_store8(buf + pos + 4, high % 256)
+        ae_store8(buf + pos + 5, high / 256 % 256)
+        ae_store8(buf + pos + 6, high / 65536 % 256)
+        ae_store8(buf + pos + 7, high / 16777216 % 256)
+    }
+}
+
+// Copy bytes
+func elf_write_bytes(e: Int, data: Int, len: Int) {
+    let i = 0
+    while i < len {
+        elf_write8(e, ae_load8(data + i))
+        i = i + 1
+    }
+}
+
+// Align position
+func elf_align(e: Int, align: Int) {
+    let pos = elf_pos(e)
+    let rem = pos % align
+    if rem != 0 {
+        let pad = align - rem
+        let i = 0
+        while i < pad {
+            elf_write8(e, 0)
+            i = i + 1
+        }
+    }
+}
+
+// ============================================================================
+// ELF HEADER
+// ============================================================================
+
+func elf_write_ehdr(e: Int) {
+    // ELF identification (16 bytes)
+    elf_write8(e, ELF_MAGIC0)
+    elf_write8(e, ELF_MAGIC1)
+    elf_write8(e, ELF_MAGIC2)
+    elf_write8(e, ELF_MAGIC3)
+    elf_write8(e, ELFCLASS64)
+    elf_write8(e, ELFDATA2LSB)
+    elf_write8(e, EV_CURRENT)
+    elf_write8(e, ELFOSABI_LINUX)
+    elf_write8(e, 0)  // ABI version
+    elf_write8(e, 0)  // Padding
+    elf_write8(e, 0)
+    elf_write8(e, 0)
+    elf_write8(e, 0)
+    elf_write8(e, 0)
+    elf_write8(e, 0)
+    elf_write8(e, 0)
+    
+    // Type
+    elf_write16(e, ET_EXEC)
+    
+    // Machine
+    if elf_machine(e) == 0 {
+        elf_write16(e, EM_X86_64)
+    } else {
+        elf_write16(e, EM_AARCH64)
+    }
+    
+    // Version
+    elf_write32(e, EV_CURRENT)
+    
+    // Entry point (placeholder, will update)
+    elf_write64(e, BASE_ADDR + EHDR_SIZE + PHDR_SIZE)
+    
+    // Program header offset
+    elf_write64(e, EHDR_SIZE)
+    
+    // Section header offset (0 for now, simple executable)
+    elf_write64(e, 0)
+    
+    // Flags
+    elf_write32(e, 0)
+    
+    // ELF header size
+    elf_write16(e, EHDR_SIZE)
+    
+    // Program header entry size
+    elf_write16(e, PHDR_SIZE)
+    
+    // Number of program headers
+    elf_write16(e, 1)
+    
+    // Section header entry size
+    elf_write16(e, SHDR_SIZE)
+    
+    // Number of section headers
+    elf_write16(e, 0)
+    
+    // Section name string table index
+    elf_write16(e, 0)
+}
+
+// ============================================================================
+// PROGRAM HEADER
+// ============================================================================
+
+func elf_write_phdr(e: Int, offset: Int, vaddr: Int, filesz: Int, memsz: Int, flags: Int) {
+    // Type: PT_LOAD
+    elf_write32(e, PT_LOAD)
+    
+    // Flags
+    elf_write32(e, flags)
+    
+    // Offset in file
+    elf_write64(e, offset)
+    
+    // Virtual address
+    elf_write64(e, vaddr)
+    
+    // Physical address (same as vaddr)
+    elf_write64(e, vaddr)
+    
+    // File size
+    elf_write64(e, filesz)
+    
+    // Memory size
+    elf_write64(e, memsz)
+    
+    // Alignment
+    elf_write64(e, 4096)
+}
+
+// ============================================================================
+// SIMPLE EXECUTABLE GENERATION
+// ============================================================================
+
+// Generate minimal executable with just code
+func elf_generate(e: Int, code: Int, code_size: Int) -> Int {
+    // Calculate sizes
+    let header_size = EHDR_SIZE + PHDR_SIZE
+    let code_offset = header_size
+    let code_vaddr = BASE_ADDR + code_offset
+    let total_size = header_size + code_size
+    
+    // Set entry point
+    elf_set_entry(e, code_vaddr)
+    
+    // Write ELF header
+    elf_write_ehdr(e)
+    
+    // Update entry point in header
+    elf_write_at(e, 24, code_vaddr, 8)
+    
+    // Write program header
+    elf_write_phdr(e, 0, BASE_ADDR, total_size, total_size, PF_R + PF_X)
+    
+    // Write code
+    elf_write_bytes(e, code, code_size)
+    
+    elf_pos(e)
+}
+
+// ============================================================================
+// EXIT SYSCALL WRAPPER
+// ============================================================================
+
+// Generate x86_64 exit(0) code
+func elf_x64_exit_code(buf: Int) -> Int {
+    // mov rax, 60 (syscall number for exit)
+    x64_mov_ri64(buf, REG_RAX, 60)
+    // mov rdi, 0 (exit code)
+    x64_mov_ri64(buf, REG_RDI, 0)
+    // syscall
+    x64_syscall(buf)
+    x64_get_size(buf)
+}
+
+// Generate ARM64 exit(0) code
+func elf_arm_exit_code(buf: Int) -> Int {
+    // mov x8, 93 (syscall number for exit on ARM64)
+    arm_mov_imm(buf, ARM_X8, 93)
+    // mov x0, 0 (exit code)
+    arm_mov_imm(buf, ARM_X0, 0)
+    // svc 0
+    arm_svc(buf, 0)
+    arm_get_size(buf)
+}
+
+// ============================================================================
+// HELLO WORLD EXAMPLE
+// ============================================================================
+
+// Generate "Hello, World!\n" + exit
+func elf_hello_x64() -> Int {
+    let code = x64_buffer_new()
+    
+    // mov rax, 1 (syscall: write)
+    x64_mov_ri64(code, REG_RAX, 1)
+    // mov rdi, 1 (stdout)
+    x64_mov_ri64(code, REG_RDI, 1)
+    // lea rsi, [rip+msg_offset] - will be patched
+    x64_lea_rip(code, REG_RSI, 22)  // offset to string data
+    // mov rdx, 14 (length)
+    x64_mov_ri64(code, REG_RDX, 14)
+    // syscall
+    x64_syscall(code)
+    
+    // mov rax, 60 (exit)
+    x64_mov_ri64(code, REG_RAX, 60)
+    // mov rdi, 0
+    x64_mov_ri64(code, REG_RDI, 0)
+    // syscall
+    x64_syscall(code)
+    
+    // String data: "Hello, World!\n"
+    let msg_start = x64_pos(code)
+    x64_emit(code, 72)   // H
+    x64_emit(code, 101)  // e
+    x64_emit(code, 108)  // l
+    x64_emit(code, 108)  // l
+    x64_emit(code, 111)  // o
+    x64_emit(code, 44)   // ,
+    x64_emit(code, 32)   // space
+    x64_emit(code, 87)   // W
+    x64_emit(code, 111)  // o
+    x64_emit(code, 114)  // r
+    x64_emit(code, 108)  // l
+    x64_emit(code, 100)  // d
+    x64_emit(code, 33)   // !
+    x64_emit(code, 10)   // \n
+    
+    let code_size = x64_get_size(code)
+    let code_bytes = x64_get_code(code)
+    
+    let elf = elf_new()
+    elf_set_machine(elf, 0)  // x86_64
+    elf_generate(elf, code_bytes, code_size)
+    
+    elf
+}
+
+// ============================================================================
+// COMPLETE EXECUTABLE BUILDER
+// ============================================================================
+
+// Build executable from compiled code
+func elf_build_exe(machine: Int, code: Int, code_size: Int) -> Int {
+    let elf = elf_new()
+    elf_set_machine(elf, machine)
+    elf_generate(elf, code, code_size)
+    elf
+}
+
+// Get final binary
+func elf_get_binary(e: Int) -> Int {
+    elf_buf(e)
+}
+
+func elf_get_size(e: Int) -> Int {
+    elf_pos(e)
+}
+
+// ============================================================================
+// WRITE TO FILE
+// ============================================================================
+
+func elf_write_file(e: Int, filename: Int) -> Int {
+    // File I/O not available in bootstrap std - just return size
+    elf_pos(e)
+}
+

@@ -1,0 +1,438 @@
+// AETHER NATIVE BACKEND - REGISTER ALLOCATOR
+// Linear scan register allocation for native code generation
+
+import std
+
+// ============================================================================
+// VIRTUAL REGISTER REPRESENTATION
+// ============================================================================
+
+// VReg: [id, type, first_use, last_use, physical_reg, spill_slot]
+func vreg_new(id: Int) -> Int {
+    let v = ae_malloc(48)
+    ae_store64(v, id)
+    ae_store64(v + 8, 0)        // type (0=int, 1=float)
+    ae_store64(v + 16, 999999)  // first_use (instruction index)
+    ae_store64(v + 24, 0)       // last_use
+    ae_store64(v + 32, 0 - 1)   // physical_reg (-1 = not assigned)
+    ae_store64(v + 40, 0 - 1)   // spill_slot (-1 = not spilled)
+    v
+}
+
+func vreg_id(v: Int) -> Int { ae_load64(v) }
+func vreg_type(v: Int) -> Int { ae_load64(v + 8) }
+func vreg_first(v: Int) -> Int { ae_load64(v + 16) }
+func vreg_last(v: Int) -> Int { ae_load64(v + 24) }
+func vreg_phys(v: Int) -> Int { ae_load64(v + 32) }
+func vreg_spill(v: Int) -> Int { ae_load64(v + 40) }
+
+func vreg_set_type(v: Int, t: Int) { ae_store64(v + 8, t) }
+func vreg_set_first(v: Int, f: Int) { ae_store64(v + 16, f) }
+func vreg_set_last(v: Int, l: Int) { ae_store64(v + 24, l) }
+func vreg_set_phys(v: Int, p: Int) { ae_store64(v + 32, p) }
+func vreg_set_spill(v: Int, s: Int) { ae_store64(v + 40, s) }
+
+// Update live range
+func vreg_use(v: Int, pos: Int) {
+    if pos < vreg_first(v) { vreg_set_first(v, pos) }
+    if pos > vreg_last(v) { vreg_set_last(v, pos) }
+}
+
+// ============================================================================
+// INTERVAL REPRESENTATION (for linear scan)
+// ============================================================================
+
+// Interval: [vreg, start, end, reg, next_use_pos]
+func interval_new(vreg: Int, start: Int, end: Int) -> Int {
+    let i = ae_malloc(40)
+    ae_store64(i, vreg)
+    ae_store64(i + 8, start)
+    ae_store64(i + 16, end)
+    ae_store64(i + 24, 0 - 1)  // assigned register
+    ae_store64(i + 32, vec_new())  // use positions
+    i
+}
+
+func interval_vreg(i: Int) -> Int { ae_load64(i) }
+func interval_start(i: Int) -> Int { ae_load64(i + 8) }
+func interval_end(i: Int) -> Int { ae_load64(i + 16) }
+func interval_reg(i: Int) -> Int { ae_load64(i + 24) }
+func interval_uses(i: Int) -> Int { ae_load64(i + 32) }
+
+func interval_set_reg(i: Int, r: Int) { ae_store64(i + 24, r) }
+
+func interval_add_use(i: Int, pos: Int) {
+    vec_push(interval_uses(i), pos)
+}
+
+// ============================================================================
+// REGISTER POOL
+// ============================================================================
+
+// x86_64 available registers (caller-saved, can use freely)
+const POOL_X64_COUNT: Int = 9
+// RAX, RCX, RDX, RSI, RDI, R8, R9, R10, R11
+
+// ARM64 available registers (caller-saved)
+const POOL_ARM_COUNT: Int = 18
+// X0-X17
+
+func regpool_new_x64() -> Int {
+    let pool = ae_malloc(24)
+    ae_store64(pool, vec_new())  // free registers
+    ae_store64(pool + 8, vec_new())  // used registers
+    ae_store64(pool + 16, 0)  // next spill slot
+    
+    // Add available registers (in order of preference)
+    let free = ae_load64(pool)
+    vec_push(free, REG_RAX)
+    vec_push(free, REG_RCX)
+    vec_push(free, REG_RDX)
+    vec_push(free, REG_RSI)
+    vec_push(free, REG_RDI)
+    vec_push(free, REG_R8)
+    vec_push(free, REG_R9)
+    vec_push(free, REG_R10)
+    vec_push(free, REG_R11)
+    pool
+}
+
+func regpool_new_arm() -> Int {
+    let pool = ae_malloc(24)
+    ae_store64(pool, vec_new())
+    ae_store64(pool + 8, vec_new())
+    ae_store64(pool + 16, 0)
+    
+    let free = ae_load64(pool)
+    let i = 0
+    while i <= 17 {
+        vec_push(free, i)  // X0-X17
+        i = i + 1
+    }
+    pool
+}
+
+func regpool_free(pool: Int) -> Int { ae_load64(pool) }
+func regpool_used(pool: Int) -> Int { ae_load64(pool + 8) }
+func regpool_spill_slot(pool: Int) -> Int { ae_load64(pool + 16) }
+func regpool_next_spill(pool: Int) -> Int {
+    let slot = ae_load64(pool + 16)
+    ae_store64(pool + 16, slot + 8)  // Each spill slot is 8 bytes
+    slot
+}
+
+// Allocate a register from the pool
+func regpool_alloc(pool: Int) -> Int {
+    let free = regpool_free(pool)
+    if vec_len(free) == 0 { return 0 - 1 }  // No free registers
+    
+    let reg = vec_get(free, 0)
+    // Remove from free list (shift all elements)
+    let new_free = vec_new()
+    let i = 1
+    while i < vec_len(free) {
+        vec_push(new_free, vec_get(free, i))
+        i = i + 1
+    }
+    ae_store64(pool, new_free)
+    
+    vec_push(regpool_used(pool), reg)
+    reg
+}
+
+// Free a register back to the pool
+func regpool_release(pool: Int, reg: Int) {
+    let used = regpool_used(pool)
+    let new_used = vec_new()
+    let i = 0
+    while i < vec_len(used) {
+        let r = vec_get(used, i)
+        if r != reg { vec_push(new_used, r) }
+        i = i + 1
+    }
+    ae_store64(pool + 8, new_used)
+    vec_push(regpool_free(pool), reg)
+}
+
+// ============================================================================
+// LINEAR SCAN ALLOCATOR
+// ============================================================================
+
+// Allocator state: [intervals, active, pool, spill_count]
+func allocator_new(arch: Int) -> Int {
+    let alloc = ae_malloc(32)
+    ae_store64(alloc, vec_new())  // intervals (sorted by start)
+    ae_store64(alloc + 8, vec_new())  // active intervals
+    if arch == 0 {
+        ae_store64(alloc + 16, regpool_new_x64())
+    } else {
+        ae_store64(alloc + 16, regpool_new_arm())
+    }
+    ae_store64(alloc + 24, 0)  // spill count
+    alloc
+}
+
+func alloc_intervals(a: Int) -> Int { ae_load64(a) }
+func alloc_active(a: Int) -> Int { ae_load64(a + 8) }
+func alloc_pool(a: Int) -> Int { ae_load64(a + 16) }
+func alloc_spills(a: Int) -> Int { ae_load64(a + 24) }
+func alloc_add_spill(a: Int) { ae_store64(a + 24, ae_load64(a + 24) + 1) }
+
+// Add interval (maintains sorted order by start position)
+func alloc_add_interval(a: Int, interval: Int) {
+    let intervals = alloc_intervals(a)
+    let start = interval_start(interval)
+    
+    // Find insertion position
+    let pos = 0
+    while pos < vec_len(intervals) {
+        let existing = vec_get(intervals, pos)
+        if interval_start(existing) > start { 
+            // Insert here
+            // Shift elements
+            vec_push(intervals, 0)  // Make room
+            let j = vec_len(intervals) - 1
+            while j > pos {
+                let prev = vec_get(intervals, j - 1)
+                // Move to j
+                ae_store64(ae_load64(intervals) + j * 8, prev)
+                j = j - 1
+            }
+            ae_store64(ae_load64(intervals) + pos * 8, interval)
+            return
+        }
+        pos = pos + 1
+    }
+    
+    // Add at end
+    vec_push(intervals, interval)
+}
+
+// Expire old intervals at position
+func alloc_expire_old(a: Int, pos: Int) {
+    let active = alloc_active(a)
+    let pool = alloc_pool(a)
+    
+    let new_active = vec_new()
+    let i = 0
+    while i < vec_len(active) {
+        let interval = vec_get(active, i)
+        if interval_end(interval) > pos {
+            vec_push(new_active, interval)
+        } else {
+            // Interval expired, free the register
+            let reg = interval_reg(interval)
+            if reg >= 0 { regpool_release(pool, reg) }
+        }
+        i = i + 1
+    }
+    ae_store64(a + 8, new_active)
+}
+
+// Spill interval with longest endpoint
+func alloc_spill_at(a: Int, interval: Int) {
+    let active = alloc_active(a)
+    let pool = alloc_pool(a)
+    
+    if vec_len(active) == 0 {
+        // No active intervals, spill current
+        let slot = regpool_next_spill(pool)
+        let vreg = interval_vreg(interval)
+        vreg_set_spill(vreg, slot)
+        alloc_add_spill(a)
+        return
+    }
+    
+    // Find interval with farthest endpoint
+    let worst = 0
+    let worst_end = 0
+    let i = 0
+    while i < vec_len(active) {
+        let act = vec_get(active, i)
+        if interval_end(act) > worst_end {
+            worst = act
+            worst_end = interval_end(act)
+        }
+        i = i + 1
+    }
+    
+    if worst_end > interval_end(interval) {
+        // Spill the worst active interval
+        let reg = interval_reg(worst)
+        let slot = regpool_next_spill(pool)
+        let vreg = interval_vreg(worst)
+        vreg_set_spill(vreg, slot)
+        vreg_set_phys(vreg, 0 - 1)
+        interval_set_reg(worst, 0 - 1)
+        
+        // Give its register to current interval
+        interval_set_reg(interval, reg)
+        vreg_set_phys(interval_vreg(interval), reg)
+        
+        // Remove worst from active, add current
+        let new_active = vec_new()
+        i = 0
+        while i < vec_len(active) {
+            let act = vec_get(active, i)
+            if act != worst { vec_push(new_active, act) }
+            i = i + 1
+        }
+        vec_push(new_active, interval)
+        ae_store64(a + 8, new_active)
+        alloc_add_spill(a)
+    } else {
+        // Spill current interval
+        let slot = regpool_next_spill(pool)
+        let vreg = interval_vreg(interval)
+        vreg_set_spill(vreg, slot)
+        alloc_add_spill(a)
+    }
+}
+
+// Main allocation function
+func alloc_run(a: Int) {
+    let intervals = alloc_intervals(a)
+    let pool = alloc_pool(a)
+    
+    let i = 0
+    while i < vec_len(intervals) {
+        let interval = vec_get(intervals, i)
+        let start = interval_start(interval)
+        
+        // Expire old intervals
+        alloc_expire_old(a, start)
+        
+        // Try to allocate register
+        let reg = regpool_alloc(pool)
+        if reg >= 0 {
+            // Got a register
+            interval_set_reg(interval, reg)
+            vreg_set_phys(interval_vreg(interval), reg)
+            vec_push(alloc_active(a), interval)
+        } else {
+            // Need to spill
+            alloc_spill_at(a, interval)
+        }
+        
+        i = i + 1
+    }
+}
+
+// ============================================================================
+// SPILL CODE GENERATION
+// ============================================================================
+
+// Generate spill store for x86_64
+func spill_store_x64(buf: Int, reg: Int, slot: Int) {
+    // MOV [RBP - slot], reg
+    x64_mov_mr_disp(buf, REG_RBP, 0 - slot, reg)
+}
+
+// Generate spill load for x86_64
+func spill_load_x64(buf: Int, reg: Int, slot: Int) {
+    // MOV reg, [RBP - slot]
+    x64_mov_rm_disp(buf, reg, REG_RBP, 0 - slot)
+}
+
+// Generate spill store for ARM64
+func spill_store_arm(buf: Int, reg: Int, slot: Int) {
+    // STR Xreg, [X29, #-slot]
+    arm_str_imm(buf, reg, ARM_FP, 0 - slot)
+}
+
+// Generate spill load for ARM64
+func spill_load_arm(buf: Int, reg: Int, slot: Int) {
+    // LDR Xreg, [X29, #-slot]
+    arm_ldr_imm(buf, reg, ARM_FP, 0 - slot)
+}
+
+// ============================================================================
+// CALLING CONVENTION HELPERS
+// ============================================================================
+
+// Get argument register for x86_64 System V ABI
+func x64_arg_reg(n: Int) -> Int {
+    if n == 0 { return REG_RDI }
+    if n == 1 { return REG_RSI }
+    if n == 2 { return REG_RDX }
+    if n == 3 { return REG_RCX }
+    if n == 4 { return REG_R8 }
+    if n == 5 { return REG_R9 }
+    0 - 1  // On stack
+}
+
+// Get argument register for ARM64 AAPCS
+func arm_arg_reg(n: Int) -> Int {
+    if n <= 7 { return n }  // X0-X7
+    0 - 1  // On stack
+}
+
+// ============================================================================
+// STACK FRAME LAYOUT
+// ============================================================================
+
+// Frame: [return_addr, saved_fp, locals..., spills...]
+// For x86_64:
+//   RBP points to saved RBP
+//   RBP - 8 = first local
+//   RBP - 16 = second local, etc.
+
+// Calculate stack frame size
+func calc_frame_size(locals: Int, spills: Int) -> Int {
+    let size = locals * 8 + spills * 8
+    // Align to 16 bytes
+    if size % 16 != 0 { size = size + 16 - size % 16 }
+    size
+}
+
+// ============================================================================
+// SIMPLE REGISTER ALLOCATION (greedy)
+// ============================================================================
+
+// SimpleAlloc: Quick greedy allocation for simple functions
+func simple_alloc_new(arch: Int) -> Int {
+    let alloc = ae_malloc(24)
+    ae_store64(alloc, arch)
+    ae_store64(alloc + 8, vec_new())  // vreg -> phys mapping
+    ae_store64(alloc + 16, 0)  // next available reg
+    alloc
+}
+
+func simple_alloc_arch(a: Int) -> Int { ae_load64(a) }
+func simple_alloc_map(a: Int) -> Int { ae_load64(a + 8) }
+func simple_alloc_next(a: Int) -> Int { ae_load64(a + 16) }
+func simple_alloc_set_next(a: Int, n: Int) { ae_store64(a + 16, n) }
+
+func simple_alloc_get(a: Int, vreg: Int) -> Int {
+    let mapping = simple_alloc_map(a)
+    let i = 0
+    while i < vec_len(mapping) {
+        let m = vec_get(mapping, i)
+        if ae_load64(m) == vreg { return ae_load64(m + 8) }
+        i = i + 1
+    }
+    
+    // Not allocated yet, allocate now
+    let arch = simple_alloc_arch(a)
+    let next = simple_alloc_next(a)
+    let phys = 0
+    
+    if arch == 0 {
+        // x86_64
+        phys = x64_arg_reg(next)
+        if phys < 0 { phys = REG_RAX + next }
+    } else {
+        // ARM64
+        phys = next
+    }
+    
+    simple_alloc_set_next(a, next + 1)
+    
+    // Store mapping
+    let m = ae_malloc(16)
+    ae_store64(m, vreg)
+    ae_store64(m + 8, phys)
+    vec_push(mapping, m)
+    
+    phys
+}

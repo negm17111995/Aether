@@ -1,0 +1,218 @@
+// AETHER SELF-HOSTED COMPILER - DEPENDENT TYPES
+// Value-indexed types and compile-time bounds checking
+
+import std
+
+// ============================================================================
+// DEPENDENT TYPE REPRESENTATION
+// ============================================================================
+
+// DepType: [base_type, index_value, refinement_pred, is_comptime]
+const DEPTYPE_SIZE: Int = 32
+
+func deptype_new(base: Int, index: Int) -> Int {
+    let dt = ae_malloc(DEPTYPE_SIZE)
+    ae_store64(dt, base)       // base type
+    ae_store64(dt + 8, index)  // index value (for Vec<T, N>)
+    ae_store64(dt + 16, 0)     // refinement predicate
+    ae_store64(dt + 24, 1)     // is comptime known
+    dt
+}
+
+func deptype_base(dt: Int) -> Int { ae_load64(dt) }
+func deptype_index(dt: Int) -> Int { ae_load64(dt + 8) }
+func deptype_pred(dt: Int) -> Int { ae_load64(dt + 16) }
+func deptype_comptime(dt: Int) -> Int { ae_load64(dt + 24) }
+func deptype_set_pred(dt: Int, p: Int) { ae_store64(dt + 16, p) }
+
+// ============================================================================
+// SIZED ARRAY TYPES: [T; N]
+// ============================================================================
+
+// Array with compile-time known size
+func sized_array_type(elem_type: Int, size: Int) -> Int {
+    let dt = deptype_new(elem_type, size)
+    dt
+}
+
+func sized_array_elem(dt: Int) -> Int { deptype_base(dt) }
+func sized_array_len(dt: Int) -> Int { deptype_index(dt) }
+
+// Check array bounds at compile time
+func check_array_bounds_ct(arr_type: Int, index: Int) -> Int {
+    if deptype_comptime(arr_type) == 0 { return 1 }  // Runtime check needed
+    
+    let size = sized_array_len(arr_type)
+    if index < 0 { return 0 }  // Error: negative index
+    if index >= size { return 0 }  // Error: out of bounds
+    1  // OK
+}
+
+// ============================================================================
+// REFINEMENT TYPES: Int where x > 0
+// ============================================================================
+
+// Refinement predicates
+const PRED_GT: Int = 1
+const PRED_GE: Int = 2
+const PRED_LT: Int = 3
+const PRED_LE: Int = 4
+const PRED_EQ: Int = 5
+const PRED_NE: Int = 6
+
+// Refinement: [pred_op, compare_value]
+func refinement_new(op: Int, value: Int) -> Int {
+    let r = ae_malloc(16)
+    ae_store64(r, op)
+    ae_store64(r + 8, value)
+    r
+}
+
+func refinement_op(r: Int) -> Int { ae_load64(r) }
+func refinement_value(r: Int) -> Int { ae_load64(r + 8) }
+
+// Create refined integer type: Int where x > 0
+func refined_int(op: Int, value: Int) -> Int {
+    let dt = deptype_new(TYPE_INT, 0)
+    let pred = refinement_new(op, value)
+    deptype_set_pred(dt, pred)
+    dt
+}
+
+// Check if value satisfies refinement
+func check_refinement(pred: Int, value: Int) -> Int {
+    if pred == 0 { return 1 }  // No refinement
+    
+    let op = refinement_op(pred)
+    let cmp = refinement_value(pred)
+    
+    if op == PRED_GT { if value > cmp { return 1 } return 0 }
+    if op == PRED_GE { if value >= cmp { return 1 } return 0 }
+    if op == PRED_LT { if value < cmp { return 1 } return 0 }
+    if op == PRED_LE { if value <= cmp { return 1 } return 0 }
+    if op == PRED_EQ { if value == cmp { return 1 } return 0 }
+    if op == PRED_NE { if value != cmp { return 1 } return 0 }
+    
+    0
+}
+
+// ============================================================================
+// VEC<T, N> - VECTOR WITH DEPENDENT LENGTH
+// ============================================================================
+
+// DepVec: capacity and length are type-level
+func depvec_type(elem: Int, capacity: Int) -> Int {
+    deptype_new(elem, capacity)
+}
+
+// Check if push is valid given current len and capacity
+func check_depvec_push(vec_type: Int, current_len: Int) -> Int {
+    let capacity = deptype_index(vec_type)
+    if current_len < capacity { return 1 }  // OK
+    0  // Error: capacity exceeded
+}
+
+// Check if index access is valid
+func check_depvec_index(vec_type: Int, current_len: Int, index: Int) -> Int {
+    if index < 0 { return 0 }  // Error
+    if index >= current_len { return 0 }  // Error
+    1  // OK
+}
+
+// ============================================================================
+// TYPE UNIFICATION WITH DEPENDENT TYPES
+// ============================================================================
+
+// Check if two dependent types are compatible
+func deptype_unify(a: Int, b: Int) -> Int {
+    if a == 0 || b == 0 { return 1 }  // Unknown types unify
+    
+    // Check base types
+    if deptype_base(a) != deptype_base(b) { return 0 }
+    
+    // Check indices if both comptime
+    if deptype_comptime(a) == 1 && deptype_comptime(b) == 1 {
+        if deptype_index(a) != deptype_index(b) { return 0 }
+    }
+    
+    // Check refinements
+    let pred_a = deptype_pred(a)
+    let pred_b = deptype_pred(b)
+    if pred_a != 0 && pred_b != 0 {
+        // Both have refinements - check compatibility
+        if refinement_op(pred_a) != refinement_op(pred_b) { return 0 }
+        if refinement_value(pred_a) != refinement_value(pred_b) { return 0 }
+    }
+    
+    1  // Compatible
+}
+
+// ============================================================================
+// DEPENDENT TYPE INFERENCE
+// ============================================================================
+
+// Infer dependent type from array literal
+func infer_array_deptype(elements: Int) -> Int {
+    let len = vec_len(elements)
+    // Infer element type from first element, use len as size
+    sized_array_type(TYPE_INT, len)
+}
+
+// Infer dependent type from range expression
+func infer_range_deptype(start: Int, end: Int) -> Int {
+    let len = end - start
+    sized_array_type(TYPE_INT, len)
+}
+
+// ============================================================================
+// CODEGEN FOR DEPENDENT TYPES
+// ============================================================================
+
+// Generate bounds check
+func deptype_emit_bounds_check(g: Int, arr_name: Int, index_name: Int, length: Int) {
+    // if (index < 0 || index >= length) { abort(); }
+    cg_emit_indent(g)
+    cg_emit_char(g, 105) cg_emit_char(g, 102) cg_emit_space(g) // if 
+    cg_emit_char(g, 40) // (
+    cg_emit_cstr(g, index_name)
+    cg_emit_char(g, 32) cg_emit_char(g, 60) cg_emit_char(g, 32) // <
+    cg_emit_char(g, 48) // 0
+    cg_emit_char(g, 32) cg_emit_char(g, 124) cg_emit_char(g, 124) cg_emit_char(g, 32) // ||
+    cg_emit_cstr(g, index_name)
+    cg_emit_char(g, 32) cg_emit_char(g, 62) cg_emit_char(g, 61) cg_emit_char(g, 32) // >=
+    cg_emit_int(g, length)
+    cg_emit_char(g, 41) cg_emit_space(g) // ) 
+    cg_emit_char(g, 123) // {
+    cg_emit_nl(g)
+    cg_emit_indent(g)
+    cg_emit_space(g) cg_emit_space(g) cg_emit_space(g) cg_emit_space(g)
+    // abort();
+    cg_emit_char(g, 97) cg_emit_char(g, 98) cg_emit_char(g, 111) // abo
+    cg_emit_char(g, 114) cg_emit_char(g, 116) // rt
+    cg_emit_char(g, 40) cg_emit_char(g, 41) cg_emit_char(g, 59) // ();
+    cg_emit_nl(g)
+    cg_emit_indent(g)
+    cg_emit_char(g, 125) // }
+    cg_emit_nl(g)
+}
+
+// Generate capacity check for vec push
+func deptype_emit_capacity_check(g: Int, len_name: Int, capacity: Int) {
+    // if (len >= capacity) { return 0; }
+    cg_emit_indent(g)
+    cg_emit_char(g, 105) cg_emit_char(g, 102) cg_emit_space(g) // if 
+    cg_emit_char(g, 40) // (
+    cg_emit_cstr(g, len_name)
+    cg_emit_char(g, 32) cg_emit_char(g, 62) cg_emit_char(g, 61) cg_emit_char(g, 32) // >=
+    cg_emit_int(g, capacity)
+    cg_emit_char(g, 41) cg_emit_space(g) // ) 
+    cg_emit_char(g, 123) // {
+    cg_emit_space(g)
+    cg_emit_char(g, 114) cg_emit_char(g, 101) cg_emit_char(g, 116) // ret
+    cg_emit_char(g, 117) cg_emit_char(g, 114) cg_emit_char(g, 110) // urn
+    cg_emit_space(g)
+    cg_emit_char(g, 48) cg_emit_char(g, 59) // 0;
+    cg_emit_space(g)
+    cg_emit_char(g, 125) // }
+    cg_emit_nl(g)
+}

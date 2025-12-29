@@ -1,0 +1,232 @@
+// AETHER SELF-HOSTED COMPILER - HOT-RELOADING
+// Runtime code replacement without restart
+
+import std
+
+// ============================================================================
+// HOT-RELOADABLE FUNCTION TABLE
+// ============================================================================
+
+// HotFunc: [name, version, fn_ptr, prev_version]
+func hot_func_new(name: Int, version: Int, ptr: Int) -> Int {
+    let h = ae_malloc(32)
+    ae_store64(h, name)
+    ae_store64(h + 8, version)
+    ae_store64(h + 16, ptr)
+    ae_store64(h + 24, 0)
+    h
+}
+
+func hot_func_name(h: Int) -> Int { ae_load64(h) }
+func hot_func_version(h: Int) -> Int { ae_load64(h + 8) }
+func hot_func_ptr(h: Int) -> Int { ae_load64(h + 16) }
+func hot_func_prev(h: Int) -> Int { ae_load64(h + 24) }
+func hot_func_set_ptr(h: Int, p: Int) { ae_store64(h + 16, p) }
+func hot_func_set_prev(h: Int, v: Int) { ae_store64(h + 24, v) }
+
+// ============================================================================
+// HOT-RELOAD TABLE
+// ============================================================================
+
+// HotTable: [functions, current_version]
+func hot_table_new() -> Int {
+    let t = ae_malloc(16)
+    ae_store64(t, vec_new())
+    ae_store64(t + 8, 1)
+    t
+}
+
+func hot_table_funcs(t: Int) -> Int { ae_load64(t) }
+func hot_table_version(t: Int) -> Int { ae_load64(t + 8) }
+func hot_table_set_version(t: Int, v: Int) { ae_store64(t + 8, v) }
+
+// Register hot function
+func hot_table_register(t: Int, name: Int, ptr: Int) {
+    let version = hot_table_version(t)
+    let h = hot_func_new(name, version, ptr)
+    vec_push(hot_table_funcs(t), h)
+}
+
+// String comparison for hot table
+func str_eq_ht(a: Int, b: Int) -> Int {
+    if a == 0 || b == 0 { if a == b { return 1 } return 0 }
+    let i = 0
+    while 1 == 1 {
+        let ca = ae_load8(a + i)
+        let cb = ae_load8(b + i)
+        if ca != cb { return 0 }
+        if ca == 0 { return 1 }
+        i = i + 1
+    }
+    0
+}
+
+// Find function by name
+func hot_table_find(t: Int, name: Int) -> Int {
+    let funcs = hot_table_funcs(t)
+    let i = 0
+    while i < vec_len(funcs) {
+        let h = vec_get(funcs, i)
+        if str_eq_ht(hot_func_name(h), name) == 1 {
+            return h
+        }
+        i = i + 1
+    }
+    0
+}
+
+// ============================================================================
+// HOT RELOAD EXECUTION
+// ============================================================================
+
+// Update function to new version
+func hot_reload_update(t: Int, name: Int, new_ptr: Int) {
+    let h = hot_table_find(t, name)
+    if h == 0 {
+        // New function
+        hot_table_register(t, name, new_ptr)
+        return
+    }
+    
+    // Save old pointer as previous version
+    let old_ptr = hot_func_ptr(h)
+    let old_version = hot_func_version(h)
+    
+    // Create version chain
+    let prev = hot_func_new(name, old_version, old_ptr)
+    hot_func_set_prev(h, prev)
+    
+    // Update to new version
+    let new_version = hot_table_version(t) + 1
+    hot_table_set_version(t, new_version)
+    hot_func_set_ptr(h, new_ptr)
+}
+
+// Get current function pointer (for indirect calls)
+func hot_get_ptr(t: Int, name: Int) -> Int {
+    let h = hot_table_find(t, name)
+    if h == 0 { return 0 }
+    hot_func_ptr(h)
+}
+
+// Rollback to previous version
+func hot_rollback(t: Int, name: Int) -> Int {
+    let h = hot_table_find(t, name)
+    if h == 0 { return 0 }
+    
+    let prev = hot_func_prev(h)
+    if prev == 0 { return 0 }  // No previous version
+    
+    // Restore previous
+    hot_func_set_ptr(h, hot_func_ptr(prev))
+    hot_func_set_prev(h, hot_func_prev(prev))
+    1
+}
+
+// ============================================================================
+// AST NODES FOR HOT RELOAD
+// ============================================================================
+
+
+func ast_hot_func(func_node: Int, line: Int, col: Int) -> Int {
+    let node = ast_new(AST_HOT_FUNC, line, col)
+    ast_set_data1(node, func_node)
+    node
+}
+
+// ============================================================================
+// CODEGEN FOR HOT RELOAD
+// ============================================================================
+
+// Emit hot-reload function table
+func hot_emit_table(g: Int, funcs: Int) {
+    // typedef struct { void* ptr; int version; } HotEntry;
+    // HotEntry _hot_table[N];
+    cg_emit_char(g, 116) cg_emit_char(g, 121) cg_emit_char(g, 112) // typ
+    cg_emit_char(g, 101) cg_emit_char(g, 100) cg_emit_char(g, 101) // ede
+    cg_emit_char(g, 102) cg_emit_space(g)
+    cg_emit_char(g, 115) cg_emit_char(g, 116) cg_emit_char(g, 114) // str
+    cg_emit_char(g, 117) cg_emit_char(g, 99) cg_emit_char(g, 116) // uct
+    cg_emit_space(g) cg_emit_char(g, 123)
+    cg_emit_nl(g)
+    
+    // void* ptr;
+    cg_emit_space(g) cg_emit_space(g) cg_emit_space(g) cg_emit_space(g)
+    cg_emit_char(g, 118) cg_emit_char(g, 111) cg_emit_char(g, 105) cg_emit_char(g, 100) // void
+    cg_emit_char(g, 42) cg_emit_space(g)
+    cg_emit_char(g, 112) cg_emit_char(g, 116) cg_emit_char(g, 114) // ptr
+    cg_emit_char(g, 59)
+    cg_emit_nl(g)
+    
+    // int version;
+    cg_emit_space(g) cg_emit_space(g) cg_emit_space(g) cg_emit_space(g)
+    cg_emit_char(g, 105) cg_emit_char(g, 110) cg_emit_char(g, 116) // int
+    cg_emit_space(g)
+    cg_emit_char(g, 118) cg_emit_char(g, 101) cg_emit_char(g, 114) // ver
+    cg_emit_char(g, 115) cg_emit_char(g, 105) cg_emit_char(g, 111) cg_emit_char(g, 110) // sion
+    cg_emit_char(g, 59)
+    cg_emit_nl(g)
+    
+    cg_emit_char(g, 125) cg_emit_space(g)
+    cg_emit_char(g, 72) cg_emit_char(g, 111) cg_emit_char(g, 116) // Hot
+    cg_emit_char(g, 69) cg_emit_char(g, 110) cg_emit_char(g, 116) // Ent
+    cg_emit_char(g, 114) cg_emit_char(g, 121) // ry
+    cg_emit_char(g, 59)
+    cg_emit_nl(g) cg_emit_nl(g)
+    
+    // HotEntry _hot_table[count];
+    cg_emit_char(g, 72) cg_emit_char(g, 111) cg_emit_char(g, 116)
+    cg_emit_char(g, 69) cg_emit_char(g, 110) cg_emit_char(g, 116)
+    cg_emit_char(g, 114) cg_emit_char(g, 121)
+    cg_emit_space(g)
+    cg_emit_char(g, 95) cg_emit_char(g, 104) cg_emit_char(g, 111) cg_emit_char(g, 116) // _hot
+    cg_emit_char(g, 95) cg_emit_char(g, 116) cg_emit_char(g, 97) cg_emit_char(g, 98) // _tab
+    cg_emit_char(g, 108) cg_emit_char(g, 101) // le
+    cg_emit_char(g, 91)
+    cg_emit_int(g, vec_len(funcs))
+    cg_emit_char(g, 93)
+    cg_emit_char(g, 59)
+    cg_emit_nl(g) cg_emit_nl(g)
+}
+
+// Emit indirect call through hot table
+func hot_emit_call(g: Int, index: Int, args: Int) {
+    // ((RetType(*)(Args))_hot_table[index].ptr)(args)
+    cg_emit_char(g, 40)
+    cg_emit_char(g, 40)
+    cg_emit_char(g, 108) cg_emit_char(g, 111) cg_emit_char(g, 110) cg_emit_char(g, 103)
+    cg_emit_space(g)
+    cg_emit_char(g, 108) cg_emit_char(g, 111) cg_emit_char(g, 110) cg_emit_char(g, 103)
+    cg_emit_char(g, 40) cg_emit_char(g, 42) cg_emit_char(g, 41)
+    cg_emit_char(g, 40) cg_emit_char(g, 41) cg_emit_char(g, 41)
+    cg_emit_char(g, 95) cg_emit_char(g, 104) cg_emit_char(g, 111) cg_emit_char(g, 116)
+    cg_emit_char(g, 95) cg_emit_char(g, 116) cg_emit_char(g, 97) cg_emit_char(g, 98)
+    cg_emit_char(g, 108) cg_emit_char(g, 101)
+    cg_emit_char(g, 91)
+    cg_emit_int(g, index)
+    cg_emit_char(g, 93)
+    cg_emit_char(g, 46)
+    cg_emit_char(g, 112) cg_emit_char(g, 116) cg_emit_char(g, 114)
+    cg_emit_char(g, 41)
+    cg_emit_char(g, 40)
+    // args
+    cg_emit_char(g, 41)
+}
+
+// Emit update function
+func hot_emit_update(g: Int, index: Int, new_fn: Int) {
+    // _hot_table[index].ptr = (void*)new_fn;
+    cg_emit_char(g, 95) cg_emit_char(g, 104) cg_emit_char(g, 111) cg_emit_char(g, 116)
+    cg_emit_char(g, 95) cg_emit_char(g, 116) cg_emit_char(g, 97) cg_emit_char(g, 98)
+    cg_emit_char(g, 108) cg_emit_char(g, 101)
+    cg_emit_char(g, 91)
+    cg_emit_int(g, index)
+    cg_emit_char(g, 93)
+    cg_emit_char(g, 46)
+    cg_emit_char(g, 112) cg_emit_char(g, 116) cg_emit_char(g, 114)
+    cg_emit_space(g) cg_emit_char(g, 61) cg_emit_space(g)
+    cg_emit_char(g, 40) cg_emit_char(g, 118) cg_emit_char(g, 111) cg_emit_char(g, 105) cg_emit_char(g, 100) cg_emit_char(g, 42) cg_emit_char(g, 41)
+    cg_emit_cstr(g, new_fn)
+    cg_emit_char(g, 59)
+    cg_emit_nl(g)
+}

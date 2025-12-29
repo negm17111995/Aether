@@ -1,5 +1,5 @@
 // AETHER SELF-HOSTED COMPILER - TYPE CHECKER
-// Type inference, generics, and type validation
+// Simplified version with correct function ordering
 
 import std
 
@@ -8,390 +8,36 @@ import std
 // ============================================================================
 
 const TYPE_INT: Int = 1
-const TYPE_FLOAT: Int = 2
-const TYPE_BOOL: Int = 3
-const TYPE_STRING: Int = 4
+const TYPE_BOOL: Int = 3  
 const TYPE_VOID: Int = 5
 const TYPE_STRUCT: Int = 6
-const TYPE_TRAIT: Int = 7
-const TYPE_ARRAY: Int = 8
 const TYPE_FUNC: Int = 9
-const TYPE_GENERIC: Int = 10
-const TYPE_REF: Int = 11
-const TYPE_MUT_REF: Int = 12
-const TYPE_UNKNOWN: Int = 99
 
 // ============================================================================
 // TYPE REPRESENTATION
 // ============================================================================
 
-// Type: [kind, name, inner, generics_vec]
-const TYPE_SIZE: Int = 32
-
 func type_new(kind: Int, name: Int) -> Int {
-    let t = ae_malloc(TYPE_SIZE)
+    let t = ae_malloc(24)
     ae_store64(t, kind)
     ae_store64(t + 8, name)
-    ae_store64(t + 16, 0)  // inner type
-    ae_store64(t + 24, 0)  // generics
+    ae_store64(t + 16, 0)
     t
 }
 
 func type_kind(t: Int) -> Int { ae_load64(t) }
 func type_name(t: Int) -> Int { ae_load64(t + 8) }
-func type_inner(t: Int) -> Int { ae_load64(t + 16) }
-func type_generics(t: Int) -> Int { ae_load64(t + 24) }
-func type_set_inner(t: Int, i: Int) { ae_store64(t + 16, i) }
-func type_set_generics(t: Int, g: Int) { ae_store64(t + 24, g) }
 
-// Built-in types
 func type_int() -> Int { type_new(TYPE_INT, 0) }
-func type_float() -> Int { type_new(TYPE_FLOAT, 0) }
 func type_bool() -> Int { type_new(TYPE_BOOL, 0) }
-func type_string() -> Int { type_new(TYPE_STRING, 0) }
 func type_void() -> Int { type_new(TYPE_VOID, 0) }
 
-func type_array(inner: Int) -> Int {
-    let t = type_new(TYPE_ARRAY, 0)
-    type_set_inner(t, inner)
-    t
-}
-
-func type_ref(inner: Int) -> Int {
-    let t = type_new(TYPE_REF, 0)
-    type_set_inner(t, inner)
-    t
-}
-
-func type_mut_ref(inner: Int) -> Int {
-    let t = type_new(TYPE_MUT_REF, 0)
-    type_set_inner(t, inner)
-    t
-}
-
 // ============================================================================
-// TYPE ENVIRONMENT
+// STRING COMPARISON (moved before type_env_lookup)
 // ============================================================================
 
-// TypeEnv: [vars, types, parent]
-func type_env_new(parent: Int) -> Int {
-    let env = ae_malloc(24)
-    ae_store64(env, vec_new())   // variable -> type map
-    ae_store64(env + 8, vec_new()) // type definitions
-    ae_store64(env + 16, parent)
-    env
-}
-
-func type_env_vars(env: Int) -> Int { ae_load64(env) }
-func type_env_types(env: Int) -> Int { ae_load64(env + 8) }
-func type_env_parent(env: Int) -> Int { ae_load64(env + 16) }
-
-// Binding: [name, type]
-func type_env_add(env: Int, name: Int, typ: Int) {
-    let binding = ae_malloc(16)
-    ae_store64(binding, name)
-    ae_store64(binding + 8, typ)
-    vec_push(type_env_vars(env), binding)
-}
-
-func type_env_lookup(env: Int, name: Int) -> Int {
-    if env == 0 { return 0 }
-    
-    let vars = type_env_vars(env)
-    let count = vec_len(vars)
-    let i = 0
-    while i < count {
-        let binding = vec_get(vars, i)
-        if str_eq(ae_load64(binding), name) == 1 {
-            return ae_load64(binding + 8)
-        }
-        i = i + 1
-    }
-    
-    // Check parent
-    type_env_lookup(type_env_parent(env), name)
-}
-
-// ============================================================================
-// GENERIC SUBSTITUTION
-// ============================================================================
-
-// GenericCtx: substitutions for generic type parameters
-func generic_ctx_new() -> Int {
-    vec_new()  // list of [name, concrete_type] pairs
-}
-
-func generic_ctx_add(ctx: Int, name: Int, typ: Int) {
-    let pair = ae_malloc(16)
-    ae_store64(pair, name)
-    ae_store64(pair + 8, typ)
-    vec_push(ctx, pair)
-}
-
-func generic_ctx_resolve(ctx: Int, name: Int) -> Int {
-    let count = vec_len(ctx)
-    let i = 0
-    while i < count {
-        let pair = vec_get(ctx, i)
-        if str_eq(ae_load64(pair), name) == 1 {
-            return ae_load64(pair + 8)
-        }
-        i = i + 1
-    }
-    0  // not found
-}
-
-// Substitute generic types with concrete types
-func type_substitute(typ: Int, ctx: Int) -> Int {
-    if typ == 0 { return 0 }
-    
-    let kind = type_kind(typ)
-    
-    if kind == TYPE_GENERIC {
-        let resolved = generic_ctx_resolve(ctx, type_name(typ))
-        if resolved != 0 { return resolved }
-        return typ
-    }
-    
-    if kind == TYPE_ARRAY {
-        let inner = type_substitute(type_inner(typ), ctx)
-        return type_array(inner)
-    }
-    
-    if kind == TYPE_REF {
-        let inner = type_substitute(type_inner(typ), ctx)
-        return type_ref(inner)
-    }
-    
-    typ
-}
-
-// ============================================================================
-// TYPE CHECKING
-// ============================================================================
-
-// Check if two types are compatible
-func types_compatible(a: Int, b: Int) -> Int {
-    if a == 0 || b == 0 { return 1 }  // unknown types are compatible
-    
-    let ka = type_kind(a)
-    let kb = type_kind(b)
-    
-    if ka != kb { return 0 }
-    
-    // For arrays, check inner type
-    if ka == TYPE_ARRAY {
-        return types_compatible(type_inner(a), type_inner(b))
-    }
-    
-    // For structs, check name equality
-    if ka == TYPE_STRUCT {
-        return str_eq(type_name(a), type_name(b))
-    }
-    
-    1
-}
-
-// Infer type of expression
-func infer_type(env: Int, node: Int) -> Int {
-    if node == 0 { return type_void() }
-    
-    let kind = ast_kind(node)
-    
-    // Integer literal
-    if kind == AST_INT_LIT {
-        return type_int()
-    }
-    
-    // Identifier - look up in environment
-    if kind == AST_IDENT {
-        let typ = type_env_lookup(env, ast_data1(node))
-        if typ != 0 { return typ }
-        return type_int()  // default
-    }
-    
-    // Binary expression
-    if kind == AST_BINARY {
-        let left_t = infer_type(env, ast_data2(node))
-        let right_t = infer_type(env, ast_data3(node))
-        
-        let op = ast_data1(node)
-        // Comparison operators return Bool
-        if op == TOK_EQEQ { return type_bool() }
-        if op == TOK_NE { return type_bool() }
-        if op == TOK_LT { return type_bool() }
-        if op == TOK_LE { return type_bool() }
-        if op == TOK_GT { return type_bool() }
-        if op == TOK_GE { return type_bool() }
-        if op == TOK_AMP { return type_bool() }
-        if op == TOK_PIPE { return type_bool() }
-        
-        // Arithmetic returns same type as operands
-        return left_t
-    }
-    
-    // Call expression
-    if kind == AST_CALL {
-        let func_t = infer_type(env, ast_data1(node))
-        if type_kind(func_t) == TYPE_FUNC {
-            return type_inner(func_t)  // return type
-        }
-        return type_int()
-    }
-    
-    // Array literal
-    if kind == AST_ARRAY_LIT {
-        let elems = ast_data1(node)
-        if vec_len(elems) > 0 {
-            let elem_t = infer_type(env, vec_get(elems, 0))
-            return type_array(elem_t)
-        }
-        return type_array(type_int())
-    }
-    
-    // Struct literal
-    if kind == AST_STRUCT_LIT {
-        let struct_t = type_new(TYPE_STRUCT, ast_data1(node))
-        return struct_t
-    }
-    
-    type_int()  // default
-}
-
-// ============================================================================
-// TYPE CHECKING STATEMENTS
-// ============================================================================
-
-func check_stmt(env: Int, node: Int) -> Int {
-    if node == 0 { return 1 }
-    
-    let kind = ast_kind(node)
-    
-    // Let statement - add variable to environment
-    if kind == AST_LET {
-        let name = ast_data1(node)
-        let init = ast_data3(node)
-        let var_type = ast_data2(node)
-        
-        // Infer type from initializer if not specified
-        let inferred = infer_type(env, init)
-        type_env_add(env, name, inferred)
-        return 1
-    }
-    
-    // If statement
-    if kind == AST_IF {
-        let cond_t = infer_type(env, ast_data1(node))
-        // Condition should be bool-like
-        check_block(env, ast_data2(node))
-        let else_blk = ast_data3(node)
-        if else_blk != 0 {
-            check_block(env, else_blk)
-        }
-        return 1
-    }
-    
-    // While statement
-    if kind == AST_WHILE {
-        check_block(env, ast_data2(node))
-        return 1
-    }
-    
-    // For statement
-    if kind == AST_FOR {
-        let loop_env = type_env_new(env)
-        type_env_add(loop_env, ast_data1(node), type_int())
-        check_block(loop_env, ast_data4(node))
-        return 1
-    }
-    
-    1
-}
-
-func check_block(env: Int, block: Int) -> Int {
-    if block == 0 { return 1 }
-    
-    let block_env = type_env_new(env)
-    let stmts = ast_data1(block)
-    if stmts == 0 { return 1 }
-    
-    let count = vec_len(stmts)
-    let i = 0
-    while i < count {
-        check_stmt(block_env, vec_get(stmts, i))
-        i = i + 1
-    }
-    1
-}
-
-// ============================================================================
-// CHECK DECLARATIONS
-// ============================================================================
-
-func check_func(env: Int, node: Int) -> Int {
-    let name = ast_data1(node)
-    let params = ast_data2(node)
-    let body = ast_data4(node)
-    
-    // Create function environment
-    let func_env = type_env_new(env)
-    
-    // Add parameters to environment
-    let count = vec_len(params)
-    let i = 0
-    while i < count {
-        let param = vec_get(params, i)
-        let param_name = ae_load64(param)
-        type_env_add(func_env, param_name, type_int())  // simplified
-        i = i + 1
-    }
-    
-    // Check body
-    check_block(func_env, body)
-    1
-}
-
-func check_module(node: Int) -> Int {
-    let env = type_env_new(0)
-    let decls = ast_data1(node)
-    
-    // First pass: collect all function signatures
-    let count = vec_len(decls)
-    let i = 0
-    while i < count {
-        let decl = vec_get(decls, i)
-        let kind = ast_kind(decl)
-        if kind == AST_FUNC {
-            let func_type = type_new(TYPE_FUNC, ast_data1(decl))
-            type_set_inner(func_type, type_int())  // return type
-            type_env_add(env, ast_data1(decl), func_type)
-        }
-        i = i + 1
-    }
-    
-    // Second pass: check function bodies
-    i = 0
-    while i < count {
-        let decl = vec_get(decls, i)
-        if ast_kind(decl) == AST_FUNC {
-            check_func(env, decl)
-        }
-        i = i + 1
-    }
-    
-    1
-}
-
-// ============================================================================
-// STRING COMPARISON HELPER
-// ============================================================================
-
-func str_eq(a: Int, b: Int) -> Int {
-    if a == 0 || b == 0 {
-        if a == b { return 1 }
-        return 0
-    }
-    
+func str_eq_tc(a: Int, b: Int) -> Int {
+    if a == 0 || b == 0 { if a == b { return 1 } return 0 }
     let i = 0
     while 1 == 1 {
         let ca = ae_load8(a + i)
@@ -401,4 +47,123 @@ func str_eq(a: Int, b: Int) -> Int {
         i = i + 1
     }
     0
+}
+
+// ============================================================================
+// TYPE ENVIRONMENT
+// ============================================================================
+
+func type_env_new(parent: Int) -> Int {
+    let env = ae_malloc(16)
+    ae_store64(env, vec_new())
+    ae_store64(env + 8, parent)
+    env
+}
+
+func type_env_vars(env: Int) -> Int { ae_load64(env) }
+func type_env_parent(env: Int) -> Int { ae_load64(env + 8) }
+
+func type_env_add(env: Int, name: Int, typ: Int) {
+    let binding = ae_malloc(16)
+    ae_store64(binding, name)
+    ae_store64(binding + 8, typ)
+    vec_push(type_env_vars(env), binding)
+}
+
+func type_env_lookup(env: Int, name: Int) -> Int {
+    if env == 0 { return 0 }
+    let vars = type_env_vars(env)
+    let i = 0
+    while i < vec_len(vars) {
+        let b = vec_get(vars, i)
+        if str_eq_tc(ae_load64(b), name) == 1 { return ae_load64(b + 8) }
+        i = i + 1
+    }
+    type_env_lookup(type_env_parent(env), name)
+}
+
+// ============================================================================
+// TYPE INFERENCE
+// ============================================================================
+
+func infer_type(env: Int, node: Int) -> Int {
+    if node == 0 { return type_void() }
+    let kind = ast_kind(node)
+    if kind == AST_INT_LIT { return type_int() }
+    if kind == AST_IDENT { 
+        let t = type_env_lookup(env, ast_data1(node))
+        if t != 0 { return t }
+        return type_int()
+    }
+    if kind == AST_BINARY {
+        let op = ast_data1(node)
+        if op == TOK_EQEQ { return type_bool() }
+        if op == TOK_NE { return type_bool() }
+        if op == TOK_LT { return type_bool() }
+        if op == TOK_GT { return type_bool() }
+        if op == TOK_AMP { return type_bool() }
+        if op == TOK_PIPE { return type_bool() }
+        return type_int()
+    }
+    type_int()
+}
+
+// ============================================================================
+// CHECK STATEMENTS
+// ============================================================================
+
+func check_stmt_tc(env: Int, node: Int) -> Int {
+    if node == 0 { return 1 }
+    let kind = ast_kind(node)
+    if kind == AST_LET {
+        let inferred = infer_type(env, ast_data3(node))
+        type_env_add(env, ast_data1(node), inferred)
+    }
+    1
+}
+
+func check_block_tc(env: Int, block: Int) -> Int {
+    if block == 0 { return 1 }
+    let block_env = type_env_new(env)
+    let stmts = ast_data1(block)
+    if stmts == 0 { return 1 }
+    let i = 0
+    while i < vec_len(stmts) {
+        check_stmt_tc(block_env, vec_get(stmts, i))
+        i = i + 1
+    }
+    1
+}
+
+func check_func_tc(env: Int, node: Int) -> Int {
+    let func_env = type_env_new(env)
+    let params = ast_data2(node)
+    let i = 0
+    while i < vec_len(params) {
+        let p = vec_get(params, i)
+        type_env_add(func_env, ae_load64(p), type_int())
+        i = i + 1
+    }
+    check_block_tc(func_env, ast_data4(node))
+}
+
+func check_module(node: Int) -> Int {
+    let env = type_env_new(0)
+    let decls = ast_data1(node)
+    let i = 0
+    while i < vec_len(decls) {
+        let d = vec_get(decls, i)
+        if ast_kind(d) == AST_FUNC {
+            let ft = type_new(TYPE_FUNC, ast_data1(d))
+            type_env_add(env, ast_data1(d), ft)
+        }
+        i = i + 1
+    }
+    i = 0
+    while i < vec_len(decls) {
+        let d = vec_get(decls, i)
+        if ast_kind(d) == AST_FUNC { check_func_tc(env, d) }
+        i = i + 1
+    }
+    1
 }

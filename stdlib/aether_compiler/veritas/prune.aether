@@ -1,0 +1,308 @@
+// AETHER SELF-HOSTED COMPILER - LINK-TIME PRUNING
+// Dead code elimination and symbol tracking
+
+import std
+
+// ============================================================================
+// SYMBOL TABLE
+// ============================================================================
+
+// Symbol: [name, kind, used, size, address]
+const SYM_FUNC: Int = 1
+const SYM_GLOBAL: Int = 2
+const SYM_TYPE: Int = 3
+
+func symbol_new(name: Int, kind: Int, size: Int) -> Int {
+    let s = ae_malloc(40)
+    ae_store64(s, name)
+    ae_store64(s + 8, kind)
+    ae_store64(s + 16, 0)   // used flag
+    ae_store64(s + 24, size)
+    ae_store64(s + 32, 0)   // address
+    s
+}
+
+func symbol_name(s: Int) -> Int { ae_load64(s) }
+func symbol_kind(s: Int) -> Int { ae_load64(s + 8) }
+func symbol_used(s: Int) -> Int { ae_load64(s + 16) }
+func symbol_size(s: Int) -> Int { ae_load64(s + 24) }
+func symbol_addr(s: Int) -> Int { ae_load64(s + 32) }
+func symbol_mark_used(s: Int) { ae_store64(s + 16, 1) }
+func symbol_set_addr(s: Int, a: Int) { ae_store64(s + 32, a) }
+
+// SymbolTable: [symbols, total_size]
+func symtab_new() -> Int {
+    let t = ae_malloc(16)
+    ae_store64(t, vec_new())
+    ae_store64(t + 8, 0)
+    t
+}
+
+func symtab_symbols(t: Int) -> Int { ae_load64(t) }
+func symtab_size(t: Int) -> Int { ae_load64(t + 8) }
+func symtab_add_size(t: Int, s: Int) { ae_store64(t + 8, symtab_size(t) + s) }
+
+// String comparison (must be before symtab_find)
+func str_eq_pr(a: Int, b: Int) -> Int {
+    if a == 0 || b == 0 { if a == b { return 1 } return 0 }
+    let i = 0
+    while 1 == 1 {
+        let ca = ae_load8(a + i)
+        let cb = ae_load8(b + i)
+        if ca != cb { return 0 }
+        if ca == 0 { return 1 }
+        i = i + 1
+    }
+    0
+}
+
+func symtab_add(t: Int, name: Int, kind: Int, size: Int) -> Int {
+    let s = symbol_new(name, kind, size)
+    vec_push(symtab_symbols(t), s)
+    symtab_add_size(t, size)
+    s
+}
+
+func symtab_find(t: Int, name: Int) -> Int {
+    let syms = symtab_symbols(t)
+    let i = 0
+    while i < vec_len(syms) {
+        let s = vec_get(syms, i)
+        if str_eq_pr(symbol_name(s), name) == 1 {
+            return s
+        }
+        i = i + 1
+    }
+    0
+}
+
+// ============================================================================
+// REFERENCE GRAPH
+// ============================================================================
+
+// RefEdge: [from_symbol, to_symbol]
+func ref_edge_new(from: Int, to: Int) -> Int {
+    let e = ae_malloc(16)
+    ae_store64(e, from)
+    ae_store64(e + 8, to)
+    e
+}
+
+// RefGraph: [edges]
+func ref_graph_new() -> Int {
+    let g = ae_malloc(8)
+    ae_store64(g, vec_new())
+    g
+}
+
+func ref_graph_edges(g: Int) -> Int { ae_load64(g) }
+
+func ref_graph_add(g: Int, from: Int, to: Int) {
+    vec_push(ref_graph_edges(g), ref_edge_new(from, to))
+}
+
+// ============================================================================
+// REACHABILITY ANALYSIS
+// ============================================================================
+
+// Mark all symbols reachable from roots
+func mark_reachable(symtab: Int, refgraph: Int, roots: Int) {
+    // Worklist algorithm
+    let worklist = vec_new()
+    
+    // Add roots to worklist
+    let i = 0
+    while i < vec_len(roots) {
+        let root_name = vec_get(roots, i)
+        let sym = symtab_find(symtab, root_name)
+        if sym != 0 {
+            symbol_mark_used(sym)
+            vec_push(worklist, sym)
+        }
+        i = i + 1
+    }
+    
+    // Process worklist
+    let pos = 0
+    while pos < vec_len(worklist) {
+        let current = vec_get(worklist, pos)
+        let current_name = symbol_name(current)
+        
+        // Find all edges from current
+        let edges = ref_graph_edges(refgraph)
+        let j = 0
+        while j < vec_len(edges) {
+            let edge = vec_get(edges, j)
+            let from = ae_load64(edge)
+            let to = ae_load64(edge + 8)
+            
+            if str_eq_pr(from, current_name) == 1 {
+                let target = symtab_find(symtab, to)
+                if target != 0 {
+                    if symbol_used(target) == 0 {
+                        symbol_mark_used(target)
+                        vec_push(worklist, target)
+                    }
+                }
+            }
+            j = j + 1
+        }
+        
+        pos = pos + 1
+    }
+}
+
+// ============================================================================
+// DEAD CODE ELIMINATION
+// ============================================================================
+
+// Get list of unused symbols
+func get_dead_symbols(symtab: Int) -> Int {
+    let dead = vec_new()
+    let syms = symtab_symbols(symtab)
+    let i = 0
+    while i < vec_len(syms) {
+        let s = vec_get(syms, i)
+        if symbol_used(s) == 0 {
+            vec_push(dead, s)
+        }
+        i = i + 1
+    }
+    dead
+}
+
+// Calculate total dead code size
+func dead_code_size(symtab: Int) -> Int {
+    let total = 0
+    let syms = symtab_symbols(symtab)
+    let i = 0
+    while i < vec_len(syms) {
+        let s = vec_get(syms, i)
+        if symbol_used(s) == 0 {
+            total = total + symbol_size(s)
+        }
+        i = i + 1
+    }
+    total
+}
+
+// Remove dead symbols from output
+func prune_dead(symtab: Int) -> Int {
+    let live = vec_new()
+    let live_size = 0
+    let syms = symtab_symbols(symtab)
+    let i = 0
+    while i < vec_len(syms) {
+        let s = vec_get(syms, i)
+        if symbol_used(s) == 1 {
+            vec_push(live, s)
+            live_size = live_size + symbol_size(s)
+        }
+        i = i + 1
+    }
+    
+    // Replace symbol list with live symbols only
+    ae_store64(symtab, live)
+    ae_store64(symtab + 8, live_size)
+    
+    live_size
+}
+
+// ============================================================================
+// TREE SHAKING INTEGRATION
+// ============================================================================
+
+// Collect references from AST
+func collect_refs(refgraph: Int, node: Int, current_func: Int) {
+    if node == 0 { return }
+    
+    let kind = ast_kind(node)
+    
+    // Function call - add reference
+    if kind == AST_CALL {
+        let func_node = ast_data1(node)
+        if ast_kind(func_node) == AST_IDENT {
+            let called_name = ast_data1(func_node)
+            ref_graph_add(refgraph, current_func, called_name)
+        }
+        
+        // Process args
+        let args = ast_data2(node)
+        let i = 0
+        while i < vec_len(args) {
+            collect_refs(refgraph, vec_get(args, i), current_func)
+            i = i + 1
+        }
+        return
+    }
+    
+    // Identifier reference
+    if kind == AST_IDENT {
+        let name = ast_data1(node)
+        ref_graph_add(refgraph, current_func, name)
+        return
+    }
+    
+    // Binary - recurse
+    if kind == AST_BINARY {
+        collect_refs(refgraph, ast_data2(node), current_func)
+        collect_refs(refgraph, ast_data3(node), current_func)
+        return
+    }
+}
+
+// Collect all references from module
+func collect_module_refs(refgraph: Int, module: Int) {
+    let decls = ast_data1(module)
+    let i = 0
+    while i < vec_len(decls) {
+        let d = vec_get(decls, i)
+        if ast_kind(d) == AST_FUNC {
+            let func_name = ast_data1(d)
+            let body = ast_data4(d)
+            collect_refs(refgraph, body, func_name)
+        }
+        i = i + 1
+    }
+}
+
+// ============================================================================
+// CODEGEN FOR PRUNED OUTPUT
+// ============================================================================
+
+// Only emit functions that are marked as used
+func emit_pruned_module(g: Int, module: Int, symtab: Int) {
+    let decls = ast_data1(module)
+    let i = 0
+    while i < vec_len(decls) {
+        let d = vec_get(decls, i)
+        if ast_kind(d) == AST_FUNC {
+            let name = ast_data1(d)
+            let sym = symtab_find(symtab, name)
+            if sym != 0 && symbol_used(sym) == 1 {
+                cg_emit_func(g, d)
+            }
+        }
+        i = i + 1
+    }
+}
+
+// Generate size report
+func emit_size_report(g: Int, symtab: Int) {
+    // /* Size Report */
+    cg_emit_char(g, 47) cg_emit_char(g, 42)
+    cg_emit_space(g)
+    cg_emit_char(g, 83) cg_emit_char(g, 105) cg_emit_char(g, 122) cg_emit_char(g, 101) // Size
+    cg_emit_space(g)
+    cg_emit_char(g, 82) cg_emit_char(g, 101) cg_emit_char(g, 112) // Rep
+    cg_emit_char(g, 111) cg_emit_char(g, 114) cg_emit_char(g, 116) // ort
+    cg_emit_char(g, 58) // :
+    cg_emit_space(g)
+    cg_emit_int(g, symtab_size(symtab))
+    cg_emit_space(g)
+    cg_emit_char(g, 98) cg_emit_char(g, 121) cg_emit_char(g, 116) // byt
+    cg_emit_char(g, 101) cg_emit_char(g, 115) // es
+    cg_emit_space(g)
+    cg_emit_char(g, 42) cg_emit_char(g, 47)
+    cg_emit_nl(g)
+}
