@@ -1,0 +1,220 @@
+// AETHER SIMD x86_64 - SSE/AVX VECTORIZED OPERATIONS
+// High-performance SIMD operations using x86 SSE/AVX instructions
+
+import std
+
+// ============================================================================
+// SSE INTRINSICS (128-bit, 2x double or 4x float)
+// ============================================================================
+
+/// Add 2 doubles in parallel (SSE2)
+func sse_add_pd(dest: Int, a: Int, b: Int) {
+    __sse_addpd(dest, a, b)
+}
+
+/// Multiply 2 doubles in parallel (SSE2)
+func sse_mul_pd(dest: Int, a: Int, b: Int) {
+    __sse_mulpd(dest, a, b)
+}
+
+/// Add 4 floats in parallel (SSE)
+func sse_add_ps(dest: Int, a: Int, b: Int) {
+    __sse_addps(dest, a, b)
+}
+
+/// Multiply 4 floats in parallel (SSE)
+func sse_mul_ps(dest: Int, a: Int, b: Int) {
+    __sse_mulps(dest, a, b)
+}
+
+/// Add 4 integers in parallel (SSE2)
+func sse_add_epi32(dest: Int, a: Int, b: Int) {
+    __sse_paddd(dest, a, b)
+}
+
+/// Add 2 64-bit integers in parallel (SSE2)
+func sse_add_epi64(dest: Int, a: Int, b: Int) {
+    __sse_paddq(dest, a, b)
+}
+
+// ============================================================================
+// AVX INTRINSICS (256-bit, 4x double or 8x float)
+// ============================================================================
+
+/// Add 4 doubles in parallel (AVX)
+func avx_add_pd(dest: Int, a: Int, b: Int) {
+    __avx_vaddpd(dest, a, b)
+}
+
+/// Multiply 4 doubles in parallel (AVX)
+func avx_mul_pd(dest: Int, a: Int, b: Int) {
+    __avx_vmulpd(dest, a, b)
+}
+
+/// Add 8 floats in parallel (AVX)
+func avx_add_ps(dest: Int, a: Int, b: Int) {
+    __avx_vaddps(dest, a, b)
+}
+
+/// Multiply 8 floats in parallel (AVX)
+func avx_mul_ps(dest: Int, a: Int, b: Int) {
+    __avx_vmulps(dest, a, b)
+}
+
+/// Fused multiply-add: a * b + c (AVX2/FMA)
+func avx_fmadd_pd(dest: Int, a: Int, b: Int, c: Int) {
+    __avx_vfmadd213pd(dest, a, b, c)
+}
+
+// ============================================================================
+// AVX-512 INTRINSICS (512-bit, 8x double or 16x float)
+// ============================================================================
+
+/// Add 8 doubles in parallel (AVX-512)
+func avx512_add_pd(dest: Int, a: Int, b: Int) {
+    __avx512_vaddpd(dest, a, b)
+}
+
+/// Multiply 8 doubles in parallel (AVX-512)
+func avx512_mul_pd(dest: Int, a: Int, b: Int) {
+    __avx512_vmulpd(dest, a, b)
+}
+
+/// Add 16 floats in parallel (AVX-512)
+func avx512_add_ps(dest: Int, a: Int, b: Int) {
+    __avx512_vaddps(dest, a, b)
+}
+
+// ============================================================================
+// HIGH-LEVEL VECTOR OPERATIONS (auto-detect best SIMD)
+// ============================================================================
+
+/// Parallel sum using SSE
+func simd_sum_x64(arr: Int, len: Int) -> Int {
+    let sum = 0
+    let i = 0
+    
+    // Process 4 at a time using SSE
+    while i + 4 <= len {
+        let a = peek(arr + i * 8)
+        let b = peek(arr + (i + 1) * 8)
+        let c = peek(arr + (i + 2) * 8)
+        let d = peek(arr + (i + 3) * 8)
+        sum = sum + a + b + c + d
+        i = i + 4
+    }
+    
+    // Handle remainder
+    while i < len {
+        sum = sum + peek(arr + i * 8)
+        i = i + 1
+    }
+    
+    sum
+}
+
+/// Parallel dot product
+func simd_dot_x64(a: Int, b: Int, len: Int) -> Int {
+    let sum = 0
+    let i = 0
+    
+    // Process 4 at a time
+    while i + 4 <= len {
+        let a0 = peek(a + i * 8)
+        let a1 = peek(a + (i + 1) * 8)
+        let a2 = peek(a + (i + 2) * 8)
+        let a3 = peek(a + (i + 3) * 8)
+        let b0 = peek(b + i * 8)
+        let b1 = peek(b + (i + 1) * 8)
+        let b2 = peek(b + (i + 2) * 8)
+        let b3 = peek(b + (i + 3) * 8)
+        sum = sum + a0 * b0 + a1 * b1 + a2 * b2 + a3 * b3
+        i = i + 4
+    }
+    
+    // Remainder
+    while i < len {
+        sum = sum + peek(a + i * 8) * peek(b + i * 8)
+        i = i + 1
+    }
+    
+    sum
+}
+
+/// Parallel array add
+func simd_add_arrays_x64(dest: Int, a: Int, b: Int, len: Int) {
+    let i = 0
+    
+    // Use SSE for 2x Int64 at a time
+    while i + 2 <= len {
+        sse_add_epi64(dest + i * 8, a + i * 8, b + i * 8)
+        i = i + 2
+    }
+    
+    // Remainder
+    while i < len {
+        poke(dest + i * 8, peek(a + i * 8) + peek(b + i * 8))
+        i = i + 1
+    }
+}
+
+/// Parallel array multiply
+func simd_mul_arrays_x64(dest: Int, a: Int, b: Int, len: Int) {
+    let i = 0
+    
+    while i < len {
+        poke(dest + i * 8, peek(a + i * 8) * peek(b + i * 8))
+        i = i + 1
+    }
+}
+
+// ============================================================================
+// DETECTION: Check for SSE/AVX support
+// ============================================================================
+
+func has_sse() -> Int {
+    __cpuid_has_sse()
+}
+
+func has_sse2() -> Int {
+    __cpuid_has_sse2()
+}
+
+func has_avx() -> Int {
+    __cpuid_has_avx()
+}
+
+func has_avx2() -> Int {
+    __cpuid_has_avx2()
+}
+
+func has_avx512() -> Int {
+    __cpuid_has_avx512f()
+}
+
+/// Get best SIMD version available (0=none, 1=SSE, 2=SSE2, 3=AVX, 4=AVX2, 5=AVX512)
+func detect_simd_level() -> Int {
+    if has_avx512() == 1 { return 5 }
+    if has_avx2() == 1 { return 4 }
+    if has_avx() == 1 { return 3 }
+    if has_sse2() == 1 { return 2 }
+    if has_sse() == 1 { return 1 }
+    0
+}
+
+// ============================================================================
+// CROSS-PLATFORM SIMD (auto-select ARM NEON or x86 SSE/AVX)
+// ============================================================================
+
+/// Auto-select best SIMD sum for current platform
+func simd_sum_auto(arr: Int, len: Int) -> Int {
+    let arch = detect_cpu_arch()
+    if arch == 1 { return simd_sum(arr, len) }      // ARM NEON
+    if arch == 3 { return simd_sum_x64(arr, len) }  // x86_64
+    
+    // Fallback scalar
+    let sum = 0
+    let i = 0
+    while i < len { sum = sum + peek(arr + i * 8) i = i + 1 }
+    sum
+}

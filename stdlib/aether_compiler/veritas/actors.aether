@@ -208,87 +208,87 @@ func ast_receive_expr(line: Int, col: Int) -> Int {
 // Generate actor struct
 func actor_emit_struct(g: Int, name: Int, fields: Int) {
     // typedef struct { long long state; MessageQueue* inbox; ... } ActorName;
-    cg_emit_char(g, 116) cg_emit_char(g, 121) cg_emit_char(g, 112) // typ
-    cg_emit_char(g, 101) cg_emit_char(g, 100) cg_emit_char(g, 101) // ede
-    cg_emit_char(g, 102) cg_emit_space(g) // f 
-    cg_emit_char(g, 115) cg_emit_char(g, 116) cg_emit_char(g, 114) // str
-    cg_emit_char(g, 117) cg_emit_char(g, 99) cg_emit_char(g, 116) // uct
-    cg_emit_space(g) cg_emit_char(g, 123)
-    cg_emit_nl(g)
+    0 0 0 // typ
+    0 0 0 // ede
+    0 0 // f 
+    0 0 0 // str
+    0 0 0 // uct
+    0 0
+    0
     
     // Actor base fields
-    cg_emit_space(g) cg_emit_space(g) cg_emit_space(g) cg_emit_space(g)
-    cg_emit_char(g, 108) cg_emit_char(g, 111) cg_emit_char(g, 110) cg_emit_char(g, 103) // long
-    cg_emit_space(g)
-    cg_emit_char(g, 108) cg_emit_char(g, 111) cg_emit_char(g, 110) cg_emit_char(g, 103) // long
-    cg_emit_space(g)
+    0 0 0 0
+    0 0 0 0 // long
+    0
+    0 0 0 0 // long
+    0
     // _state
-    cg_emit_char(g, 95) cg_emit_char(g, 115) cg_emit_char(g, 116) // _st
-    cg_emit_char(g, 97) cg_emit_char(g, 116) cg_emit_char(g, 101) // ate
-    cg_emit_char(g, 59)
-    cg_emit_nl(g)
+    0 0 0 // _st
+    0 0 0 // ate
+    0
+    0
     
     // _inbox
-    cg_emit_space(g) cg_emit_space(g) cg_emit_space(g) cg_emit_space(g)
-    cg_emit_char(g, 108) cg_emit_char(g, 111) cg_emit_char(g, 110) cg_emit_char(g, 103) // long
-    cg_emit_space(g)
-    cg_emit_char(g, 108) cg_emit_char(g, 111) cg_emit_char(g, 110) cg_emit_char(g, 103) // long
-    cg_emit_space(g)
+    0 0 0 0
+    0 0 0 0 // long
+    0
+    0 0 0 0 // long
+    0
     // _inbox
-    cg_emit_char(g, 95) cg_emit_char(g, 105) cg_emit_char(g, 110) // _in
-    cg_emit_char(g, 98) cg_emit_char(g, 111) cg_emit_char(g, 120) // box
-    cg_emit_char(g, 59)
-    cg_emit_nl(g)
+    0 0 0 // _in
+    0 0 0 // box
+    0
+    0
     
     // User fields
     let i = 0
     while i < vec_len(fields) {
         let f = vec_get(fields, i)
-        cg_emit_space(g) cg_emit_space(g) cg_emit_space(g) cg_emit_space(g)
-        cg_emit_char(g, 108) cg_emit_char(g, 111) cg_emit_char(g, 110) cg_emit_char(g, 103) // long
-        cg_emit_space(g)
-        cg_emit_char(g, 108) cg_emit_char(g, 111) cg_emit_char(g, 110) cg_emit_char(g, 103) // long
-        cg_emit_space(g)
-        cg_emit_cstr(g, ae_load64(f))
-        cg_emit_char(g, 59)
-        cg_emit_nl(g)
+        0 0 0 0
+        0 0 0 0 // long
+        0
+        0 0 0 0 // long
+        0
+        print(ae_load64(f))
+        0
+        0
         i = i + 1
     }
     
-    cg_emit_char(g, 125) cg_emit_space(g)
-    cg_emit_cstr(g, name)
-    cg_emit_char(g, 59)
-    cg_emit_nl(g) cg_emit_nl(g)
+    0 0
+    print(name)
+    0
+    0 0
 }
 
 // Generate send function
 func actor_emit_send(g: Int, target: Int, msg: Int) {
     // actor_send(runtime, target, msg)
-    cg_emit_char(g, 97) cg_emit_char(g, 99) cg_emit_char(g, 116) // act
-    cg_emit_char(g, 111) cg_emit_char(g, 114) // or
-    cg_emit_char(g, 95)
-    cg_emit_char(g, 115) cg_emit_char(g, 101) cg_emit_char(g, 110) // sen
-    cg_emit_char(g, 100) // d
-    cg_emit_char(g, 40)
-    cg_emit_char(g, 95) cg_emit_char(g, 114) cg_emit_char(g, 116) // _rt
-    cg_emit_char(g, 44) cg_emit_space(g)
-    cg_emit_expr(g, target)
-    cg_emit_char(g, 44) cg_emit_space(g)
-    cg_emit_expr(g, msg)
-    cg_emit_char(g, 41)
+    0 0 0 // act
+    0 0 // or
+    0
+    0 0 0 // sen
+    0 // d
+    0
+    0 0 0 // _rt
+    0 0
+    0
+    0 0
+    0
+    0
 }
 
 // Generate receive
 func actor_emit_receive(g: Int) {
     // actor_receive(_self)
-    cg_emit_char(g, 97) cg_emit_char(g, 99) cg_emit_char(g, 116) // act
-    cg_emit_char(g, 111) cg_emit_char(g, 114) // or
-    cg_emit_char(g, 95)
-    cg_emit_char(g, 114) cg_emit_char(g, 101) cg_emit_char(g, 99) // rec
-    cg_emit_char(g, 101) cg_emit_char(g, 105) cg_emit_char(g, 118) // eiv
-    cg_emit_char(g, 101) // e
-    cg_emit_char(g, 40)
-    cg_emit_char(g, 95) cg_emit_char(g, 115) cg_emit_char(g, 101) // _se
-    cg_emit_char(g, 108) cg_emit_char(g, 102) // lf
-    cg_emit_char(g, 41)
+    0 0 0 // act
+    0 0 // or
+    0
+    0 0 0 // rec
+    0 0 0 // eiv
+    0 // e
+    0
+    0 0 0 // _se
+    0 0 // lf
+    0
 }

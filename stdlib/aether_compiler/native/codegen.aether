@@ -7,30 +7,30 @@ import std
 // SYMBOL TABLE FOR VARIABLES
 // ============================================================================
 
-func symtab_new_ng() -> Int {
+func ng_symtab_new() -> Int {
     let t = ae_malloc(16)
     ae_store64(t, vec_new())  // symbols: (name, offset, is_global)
     ae_store64(t + 8, 0)      // current stack offset
     t
 }
 
-func symtab_syms(t: Int) -> Int { ae_load64(t) }
-func symtab_offset(t: Int) -> Int { ae_load64(t + 8) }
-func symtab_add_offset(t: Int, n: Int) { ae_store64(t + 8, ae_load64(t + 8) + n) }
+func ng_symtab_syms(t: Int) -> Int { ae_load64(t) }
+func ng_symtab_offset(t: Int) -> Int { ae_load64(t + 8) }
+func ng_symtab_add_offset(t: Int, n: Int) { ae_store64(t + 8, ae_load64(t + 8) + n) }
 
-func symtab_add(t: Int, name: Int, is_global: Int) -> Int {
-    let offset = symtab_offset(t)
-    symtab_add_offset(t, 8)
+func ng_symtab_add(t: Int, name: Int, is_global: Int) -> Int {
+    let offset = ng_symtab_offset(t)
+    ng_symtab_add_offset(t, 8)
     let sym = ae_malloc(24)
     ae_store64(sym, name)
     ae_store64(sym + 8, offset)
     ae_store64(sym + 16, is_global)
-    vec_push(symtab_syms(t), sym)
+    vec_push(ng_symtab_syms(t), sym)
     offset
 }
 
-func symtab_lookup(t: Int, name: Int) -> Int {
-    let syms = symtab_syms(t)
+func ng_symtab_lookup(t: Int, name: Int) -> Int {
+    let syms = ng_symtab_syms(t)
     let i = vec_len(syms) - 1
     while i >= 0 {
         let s = vec_get(syms, i)
@@ -54,7 +54,7 @@ func nativegen_new(arch: Int) -> Int {
     ae_store64(ng + 32, vec_new())    // labels
     ae_store64(ng + 40, vec_new())    // funcs
     ae_store64(ng + 48, 0)            // vreg id
-    ae_store64(ng + 56, symtab_new_ng())  // symbol table
+    ae_store64(ng + 56, ng_symtab_new())  // symbol table
     ae_store64(ng + 64, vec_new())    // string literals
     ng
 }
@@ -134,7 +134,7 @@ func ng_emit_expr(ng: Int, node: Int) -> Int {
     // Identifier
     if kind == AST_IDENT {
         let name = ast_data1(node)
-        let offset = symtab_lookup(ng_symtab(ng), name)
+        let offset = ng_symtab_lookup(ng_symtab(ng), name)
         let reg = ng_next_vreg(ng)
         let phys = simple_alloc_get(ng_alloc(ng), reg)
         if offset >= 0 {
@@ -416,7 +416,7 @@ func ng_emit_block(ng: Int, block: Int) {
             if kind == AST_LET {
                 let name = ast_data1(node)
                 let init = ast_data3(node)
-                let offset = symtab_add(ng_symtab(ng), name, 0)
+                let offset = ng_symtab_add(ng_symtab(ng), name, 0)
                 if init != 0 {
                     let val = ng_emit_expr(ng, init)
                     if arch == 0 { x64_mov_mr_disp(buf, REG_RBP, 0 - offset - 8, val) }
@@ -429,7 +429,7 @@ func ng_emit_block(ng: Int, block: Int) {
                     let target_kind = ast_kind(target)
                     if target_kind == AST_IDENT {
                         let name = ast_data1(target)
-                        let offset = symtab_lookup(ng_symtab(ng), name)
+                        let offset = ng_symtab_lookup(ng_symtab(ng), name)
                         if offset >= 0 {
                             if arch == 0 { x64_mov_mr_disp(buf, REG_RBP, 0 - offset - 8, val) }
                             else { arm_str_imm(buf, val, ARM_FP, 0 - offset - 8) }
@@ -573,7 +573,7 @@ func ng_emit_func(ng: Int, node: Int) {
     while i < param_count {
         let param = vec_get(params, i)
         let name = ae_load64(param)
-        let offset = symtab_add(ng_symtab(ng), name, 0)
+        let offset = ng_symtab_add(ng_symtab(ng), name, 0)
         if arch == 0 {
             let arg_reg = x64_arg_reg(i)
             if arg_reg >= 0 { x64_mov_mr_disp(buf, REG_RBP, 0 - offset - 8, arg_reg) }

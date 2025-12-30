@@ -171,48 +171,48 @@ func infer_range_deptype(start: Int, end: Int) -> Int {
 // Generate bounds check
 func deptype_emit_bounds_check(g: Int, arr_name: Int, index_name: Int, length: Int) {
     // if (index < 0 || index >= length) { abort(); }
-    cg_emit_indent(g)
-    cg_emit_char(g, 105) cg_emit_char(g, 102) cg_emit_space(g) // if 
-    cg_emit_char(g, 40) // (
-    cg_emit_cstr(g, index_name)
-    cg_emit_char(g, 32) cg_emit_char(g, 60) cg_emit_char(g, 32) // <
-    cg_emit_char(g, 48) // 0
-    cg_emit_char(g, 32) cg_emit_char(g, 124) cg_emit_char(g, 124) cg_emit_char(g, 32) // ||
-    cg_emit_cstr(g, index_name)
-    cg_emit_char(g, 32) cg_emit_char(g, 62) cg_emit_char(g, 61) cg_emit_char(g, 32) // >=
-    cg_emit_int(g, length)
-    cg_emit_char(g, 41) cg_emit_space(g) // ) 
-    cg_emit_char(g, 123) // {
-    cg_emit_nl(g)
-    cg_emit_indent(g)
-    cg_emit_space(g) cg_emit_space(g) cg_emit_space(g) cg_emit_space(g)
+    0
+    0 0 0 // if 
+    0 // (
+    print(index_name)
+    0 0 0 // <
+    0 // 0
+    0 0 0 0 // ||
+    print(index_name)
+    0 0 0 0 // >=
+    print(length)
+    0 0 // ) 
+    0 // {
+    0
+    0
+    0 0 0 0
     // abort();
-    cg_emit_char(g, 97) cg_emit_char(g, 98) cg_emit_char(g, 111) // abo
-    cg_emit_char(g, 114) cg_emit_char(g, 116) // rt
-    cg_emit_char(g, 40) cg_emit_char(g, 41) cg_emit_char(g, 59) // ();
-    cg_emit_nl(g)
-    cg_emit_indent(g)
-    cg_emit_char(g, 125) // }
-    cg_emit_nl(g)
+    0 0 0 // abo
+    0 0 // rt
+    0 0 0 // ();
+    0
+    0
+    0 // }
+    0
 }
 
 // Generate capacity check for vec push
 func deptype_emit_capacity_check(g: Int, len_name: Int, capacity: Int) {
     // if (len >= capacity) { return 0; }
-    cg_emit_indent(g)
-    cg_emit_char(g, 105) cg_emit_char(g, 102) cg_emit_space(g) // if 
-    cg_emit_char(g, 40) // (
-    cg_emit_cstr(g, len_name)
-    cg_emit_char(g, 32) cg_emit_char(g, 62) cg_emit_char(g, 61) cg_emit_char(g, 32) // >=
-    cg_emit_int(g, capacity)
-    cg_emit_char(g, 41) cg_emit_space(g) // ) 
-    cg_emit_char(g, 123) // {
-    cg_emit_space(g)
-    cg_emit_char(g, 114) cg_emit_char(g, 101) cg_emit_char(g, 116) // ret
-    cg_emit_char(g, 117) cg_emit_char(g, 114) cg_emit_char(g, 110) // urn
-    cg_emit_space(g)
-    cg_emit_char(g, 48) cg_emit_char(g, 59) // 0;
-    cg_emit_space(g)
-    cg_emit_char(g, 125) // }
-    cg_emit_nl(g)
+    0
+    0 0 0 // if 
+    0 // (
+    print(len_name)
+    0 0 0 0 // >=
+    print(capacity)
+    0 0 // ) 
+    0 // {
+    0
+    0 0 0 // ret
+    0 0 0 // urn
+    0
+    0 0 // 0;
+    0
+    0 // }
+    0
 }

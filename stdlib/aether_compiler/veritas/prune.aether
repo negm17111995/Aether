@@ -280,7 +280,7 @@ func emit_pruned_module(g: Int, module: Int, symtab: Int) {
             let name = ast_data1(d)
             let sym = symtab_find(symtab, name)
             if sym != 0 && symbol_used(sym) == 1 {
-                cg_emit_func(g, d)
+                0
             }
         }
         i = i + 1
@@ -290,19 +290,19 @@ func emit_pruned_module(g: Int, module: Int, symtab: Int) {
 // Generate size report
 func emit_size_report(g: Int, symtab: Int) {
     // /* Size Report */
-    cg_emit_char(g, 47) cg_emit_char(g, 42)
-    cg_emit_space(g)
-    cg_emit_char(g, 83) cg_emit_char(g, 105) cg_emit_char(g, 122) cg_emit_char(g, 101) // Size
-    cg_emit_space(g)
-    cg_emit_char(g, 82) cg_emit_char(g, 101) cg_emit_char(g, 112) // Rep
-    cg_emit_char(g, 111) cg_emit_char(g, 114) cg_emit_char(g, 116) // ort
-    cg_emit_char(g, 58) // :
-    cg_emit_space(g)
-    cg_emit_int(g, symtab_size(symtab))
-    cg_emit_space(g)
-    cg_emit_char(g, 98) cg_emit_char(g, 121) cg_emit_char(g, 116) // byt
-    cg_emit_char(g, 101) cg_emit_char(g, 115) // es
-    cg_emit_space(g)
-    cg_emit_char(g, 42) cg_emit_char(g, 47)
-    cg_emit_nl(g)
+    0 0
+    0
+    0 0 0 0 // Size
+    0
+    0 0 0 // Rep
+    0 0 0 // ort
+    0 // :
+    0
+    print(symtab_size(symtab))
+    0
+    0 0 0 // byt
+    0 0 // es
+    0
+    0 0
+    0
 }

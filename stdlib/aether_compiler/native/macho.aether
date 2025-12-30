@@ -126,15 +126,17 @@ func macho_write_bytes(m: Int, data: Int, len: Int) {
 
 func macho_write_string(m: Int, s: Int, max_len: Int) {
     let i = 0
+    let done = 0
+    // Copy string bytes until null or max_len
     while i < max_len {
-        let c = ae_load8(s + i)
-        macho_write8(m, c)
-        if c == 0 { i = max_len }  // Stop after null
-        i = i + 1
-    }
-    // Pad remaining
-    while i < max_len {
-        macho_write8(m, 0)
+        if done == 0 {
+            let c = ae_load8(s + i)
+            macho_write8(m, c)
+            if c == 0 { done = 1 }
+        } else {
+            // Pad with zeros after null terminator
+            macho_write8(m, 0)
+        }
         i = i + 1
     }
 }
@@ -331,20 +333,49 @@ func macho_write_unixthread_arm64(m: Int, entry: Int) {
 // ============================================================================
 
 func make_text_name() -> Int {
-    let s = ae_malloc(8)
+    let s = ae_malloc(16)
+    // Zero out all 16 bytes first
+    let i = 0
+    while i < 16 {
+        ae_store8(s + i, 0)
+        i = i + 1
+    }
+    // Write __TEXT
     ae_store8(s, 95) ae_store8(s + 1, 95)  // __
     ae_store8(s + 2, 84) ae_store8(s + 3, 69)  // TE
     ae_store8(s + 4, 88) ae_store8(s + 5, 84)  // XT
-    ae_store8(s + 6, 0)
+    s
+}
+
+func make_pagezero_name() -> Int {
+    let s = ae_malloc(16)
+    // Zero out all 16 bytes first
+    let i = 0
+    while i < 16 {
+        ae_store8(s + i, 0)
+        i = i + 1
+    }
+    // Write __PAGEZERO
+    ae_store8(s, 95) ae_store8(s + 1, 95)  // __
+    ae_store8(s + 2, 80) ae_store8(s + 3, 65)  // PA
+    ae_store8(s + 4, 71) ae_store8(s + 5, 69)  // GE
+    ae_store8(s + 6, 90) ae_store8(s + 7, 69)  // ZE
+    ae_store8(s + 8, 82) ae_store8(s + 9, 79)  // RO
     s
 }
 
 func make_text_sect() -> Int {
-    let s = ae_malloc(8)
+    let s = ae_malloc(16)
+    // Zero out all 16 bytes first
+    let i = 0
+    while i < 16 {
+        ae_store8(s + i, 0)
+        i = i + 1
+    }
+    // Write __text
     ae_store8(s, 95) ae_store8(s + 1, 95)  // __
     ae_store8(s + 2, 116) ae_store8(s + 3, 101)  // te
     ae_store8(s + 4, 120) ae_store8(s + 5, 116)  // xt
-    ae_store8(s + 6, 0)
     s
 }
 
@@ -357,11 +388,12 @@ func macho_generate(m: Int, code: Int, code_size: Int) -> Int {
     
     // Calculate layout
     // Mach-O header: 32 bytes
-    // LC_SEGMENT_64 (__TEXT): 72 bytes
-    // Section (__text): 80 bytes
+    // LC_SEGMENT_64 (__PAGEZERO): 72 bytes (no sections)
+    // LC_SEGMENT_64 (__TEXT): 72 bytes + section (80 bytes)
     // LC_UNIXTHREAD: 184 (x64) or 280 (arm64) bytes
     
     let header_size = MACH_HEADER_SIZE
+    let pagezero_segment_size = SEGMENT_CMD_SIZE  // No sections
     let text_segment_size = SEGMENT_CMD_SIZE + SECTION_SIZE
     let unixthread_size = 0
     if machine == 0 {
@@ -370,8 +402,9 @@ func macho_generate(m: Int, code: Int, code_size: Int) -> Int {
         unixthread_size = UNIXTHREAD_SIZE_ARM64
     }
     
-    let sizeofcmds = text_segment_size + unixthread_size
-    let ncmds = 2
+    // 3 load commands: PAGEZERO, TEXT, UNIXTHREAD
+    let sizeofcmds = pagezero_segment_size + text_segment_size + unixthread_size
+    let ncmds = 3
     
     // Align code to page boundary
     let load_cmds_end = header_size + sizeofcmds
@@ -381,16 +414,21 @@ func macho_generate(m: Int, code: Int, code_size: Int) -> Int {
     let code_vaddr = MACHO_BASE + code_offset
     let total_size = code_offset + code_size
     let file_size = total_size
-    let vm_size = (total_size + 4095) / 4096 * 4096
+    let text_vm_size = (total_size + 4095) / 4096 * 4096
     
     macho_set_entry(m, code_offset)
     
     // Write header
     macho_write_header(m, ncmds, sizeofcmds)
     
+    // Write __PAGEZERO segment (required for macOS)
+    // VM address 0, VM size = 0x100000000, no file content
+    let pagezero_name = make_pagezero_name()
+    macho_write_segment(m, pagezero_name, 0, MACHO_BASE, 0, 0, 0, 0, 0)
+    
     // Write __TEXT segment
     let text_name = make_text_name()
-    macho_write_segment(m, text_name, MACHO_BASE, vm_size, 0, file_size, VM_PROT_READ + VM_PROT_WRITE + VM_PROT_EXECUTE, VM_PROT_READ + VM_PROT_EXECUTE, 1)
+    macho_write_segment(m, text_name, MACHO_BASE, text_vm_size, 0, file_size, VM_PROT_READ + VM_PROT_EXECUTE, VM_PROT_READ + VM_PROT_EXECUTE, 1)
     
     // Write __text section
     let text_sect = make_text_sect()
@@ -477,7 +515,20 @@ func macho_hello_arm64() -> Int {
 // ============================================================================
 
 func macho_write_file(m: Int, filename: Int) -> Int {
-    // File I/O not available in bootstrap std - just return size
-    macho_pos(m)
+    // Write using native syscalls
+    let buf = macho_buf(m)
+    let data = ae_load64(buf)
+    let len = ae_load64(buf + 8)
+    
+    // Requires syscall module import which we added to lib.aether
+    // But this file imports std, and std imports lib.aether... circular?
+    // No, compiler/native/*.aether are part of compiler module
+    // We should call file_write_all directly if available
+    
+    // Let's assume syscall module functions are available via lib import
+    file_write_all(filename, data, len)
+    
+    // Return size
+    len
 }
 

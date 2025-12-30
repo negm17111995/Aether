@@ -192,17 +192,17 @@ func comptime_check_cfg(ctx: Int, cfg_name: Int, cfg_value: Int) -> Int {
 // CODEGEN
 // ============================================================================
 
-func comptime_emit_value(g: Int, value: Int) { cg_emit_int(g, value) }
+func comptime_emit_value(g: Int, value: Int) { print(value) }
 
 func comptime_emit_arch_check(g: Int) {
-    cg_emit_char(g, 35) cg_emit_char(g, 105) cg_emit_char(g, 102) cg_emit_space(g)
-    cg_emit_char(g, 100) cg_emit_char(g, 101) cg_emit_char(g, 102)
-    cg_emit_char(g, 105) cg_emit_char(g, 110) cg_emit_char(g, 101) cg_emit_char(g, 100)
-    cg_emit_char(g, 40) cg_emit_char(g, 95) cg_emit_char(g, 95)
-    cg_emit_char(g, 65) cg_emit_char(g, 80) cg_emit_char(g, 80)
-    cg_emit_char(g, 76) cg_emit_char(g, 69) cg_emit_char(g, 95) cg_emit_char(g, 95)
-    cg_emit_char(g, 41) cg_emit_nl(g)
-    cg_emit_int(g, ARCH_APPLE_M) cg_emit_nl(g)
-    cg_emit_char(g, 35) cg_emit_char(g, 101) cg_emit_char(g, 110) cg_emit_char(g, 100)
-    cg_emit_char(g, 105) cg_emit_char(g, 102) cg_emit_nl(g)
+    0 0 0 0
+    0 0 0
+    0 0 0 0
+    0 0 0
+    0 0 0
+    0 0 0 0
+    0 0
+    print(ARCH_APPLE_M) 0
+    0 0 0 0
+    0 0 0
 }

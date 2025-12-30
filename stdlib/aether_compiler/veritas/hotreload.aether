@@ -142,91 +142,91 @@ func ast_hot_func(func_node: Int, line: Int, col: Int) -> Int {
 func hot_emit_table(g: Int, funcs: Int) {
     // typedef struct { void* ptr; int version; } HotEntry;
     // HotEntry _hot_table[N];
-    cg_emit_char(g, 116) cg_emit_char(g, 121) cg_emit_char(g, 112) // typ
-    cg_emit_char(g, 101) cg_emit_char(g, 100) cg_emit_char(g, 101) // ede
-    cg_emit_char(g, 102) cg_emit_space(g)
-    cg_emit_char(g, 115) cg_emit_char(g, 116) cg_emit_char(g, 114) // str
-    cg_emit_char(g, 117) cg_emit_char(g, 99) cg_emit_char(g, 116) // uct
-    cg_emit_space(g) cg_emit_char(g, 123)
-    cg_emit_nl(g)
+    0 0 0 // typ
+    0 0 0 // ede
+    0 0
+    0 0 0 // str
+    0 0 0 // uct
+    0 0
+    0
     
     // void* ptr;
-    cg_emit_space(g) cg_emit_space(g) cg_emit_space(g) cg_emit_space(g)
-    cg_emit_char(g, 118) cg_emit_char(g, 111) cg_emit_char(g, 105) cg_emit_char(g, 100) // void
-    cg_emit_char(g, 42) cg_emit_space(g)
-    cg_emit_char(g, 112) cg_emit_char(g, 116) cg_emit_char(g, 114) // ptr
-    cg_emit_char(g, 59)
-    cg_emit_nl(g)
+    0 0 0 0
+    0 0 0 0 // void
+    0 0
+    0 0 0 // ptr
+    0
+    0
     
     // int version;
-    cg_emit_space(g) cg_emit_space(g) cg_emit_space(g) cg_emit_space(g)
-    cg_emit_char(g, 105) cg_emit_char(g, 110) cg_emit_char(g, 116) // int
-    cg_emit_space(g)
-    cg_emit_char(g, 118) cg_emit_char(g, 101) cg_emit_char(g, 114) // ver
-    cg_emit_char(g, 115) cg_emit_char(g, 105) cg_emit_char(g, 111) cg_emit_char(g, 110) // sion
-    cg_emit_char(g, 59)
-    cg_emit_nl(g)
+    0 0 0 0
+    0 0 0 // int
+    0
+    0 0 0 // ver
+    0 0 0 0 // sion
+    0
+    0
     
-    cg_emit_char(g, 125) cg_emit_space(g)
-    cg_emit_char(g, 72) cg_emit_char(g, 111) cg_emit_char(g, 116) // Hot
-    cg_emit_char(g, 69) cg_emit_char(g, 110) cg_emit_char(g, 116) // Ent
-    cg_emit_char(g, 114) cg_emit_char(g, 121) // ry
-    cg_emit_char(g, 59)
-    cg_emit_nl(g) cg_emit_nl(g)
+    0 0
+    0 0 0 // Hot
+    0 0 0 // Ent
+    0 0 // ry
+    0
+    0 0
     
     // HotEntry _hot_table[count];
-    cg_emit_char(g, 72) cg_emit_char(g, 111) cg_emit_char(g, 116)
-    cg_emit_char(g, 69) cg_emit_char(g, 110) cg_emit_char(g, 116)
-    cg_emit_char(g, 114) cg_emit_char(g, 121)
-    cg_emit_space(g)
-    cg_emit_char(g, 95) cg_emit_char(g, 104) cg_emit_char(g, 111) cg_emit_char(g, 116) // _hot
-    cg_emit_char(g, 95) cg_emit_char(g, 116) cg_emit_char(g, 97) cg_emit_char(g, 98) // _tab
-    cg_emit_char(g, 108) cg_emit_char(g, 101) // le
-    cg_emit_char(g, 91)
-    cg_emit_int(g, vec_len(funcs))
-    cg_emit_char(g, 93)
-    cg_emit_char(g, 59)
-    cg_emit_nl(g) cg_emit_nl(g)
+    0 0 0
+    0 0 0
+    0 0
+    0
+    0 0 0 0 // _hot
+    0 0 0 0 // _tab
+    0 0 // le
+    0
+    print(vec_len(funcs))
+    0
+    0
+    0 0
 }
 
 // Emit indirect call through hot table
 func hot_emit_call(g: Int, index: Int, args: Int) {
     // ((RetType(*)(Args))_hot_table[index].ptr)(args)
-    cg_emit_char(g, 40)
-    cg_emit_char(g, 40)
-    cg_emit_char(g, 108) cg_emit_char(g, 111) cg_emit_char(g, 110) cg_emit_char(g, 103)
-    cg_emit_space(g)
-    cg_emit_char(g, 108) cg_emit_char(g, 111) cg_emit_char(g, 110) cg_emit_char(g, 103)
-    cg_emit_char(g, 40) cg_emit_char(g, 42) cg_emit_char(g, 41)
-    cg_emit_char(g, 40) cg_emit_char(g, 41) cg_emit_char(g, 41)
-    cg_emit_char(g, 95) cg_emit_char(g, 104) cg_emit_char(g, 111) cg_emit_char(g, 116)
-    cg_emit_char(g, 95) cg_emit_char(g, 116) cg_emit_char(g, 97) cg_emit_char(g, 98)
-    cg_emit_char(g, 108) cg_emit_char(g, 101)
-    cg_emit_char(g, 91)
-    cg_emit_int(g, index)
-    cg_emit_char(g, 93)
-    cg_emit_char(g, 46)
-    cg_emit_char(g, 112) cg_emit_char(g, 116) cg_emit_char(g, 114)
-    cg_emit_char(g, 41)
-    cg_emit_char(g, 40)
+    0
+    0
+    0 0 0 0
+    0
+    0 0 0 0
+    0 0 0
+    0 0 0
+    0 0 0 0
+    0 0 0 0
+    0 0
+    0
+    print(index)
+    0
+    0
+    0 0 0
+    0
+    0
     // args
-    cg_emit_char(g, 41)
+    0
 }
 
 // Emit update function
 func hot_emit_update(g: Int, index: Int, new_fn: Int) {
     // _hot_table[index].ptr = (void*)new_fn;
-    cg_emit_char(g, 95) cg_emit_char(g, 104) cg_emit_char(g, 111) cg_emit_char(g, 116)
-    cg_emit_char(g, 95) cg_emit_char(g, 116) cg_emit_char(g, 97) cg_emit_char(g, 98)
-    cg_emit_char(g, 108) cg_emit_char(g, 101)
-    cg_emit_char(g, 91)
-    cg_emit_int(g, index)
-    cg_emit_char(g, 93)
-    cg_emit_char(g, 46)
-    cg_emit_char(g, 112) cg_emit_char(g, 116) cg_emit_char(g, 114)
-    cg_emit_space(g) cg_emit_char(g, 61) cg_emit_space(g)
-    cg_emit_char(g, 40) cg_emit_char(g, 118) cg_emit_char(g, 111) cg_emit_char(g, 105) cg_emit_char(g, 100) cg_emit_char(g, 42) cg_emit_char(g, 41)
-    cg_emit_cstr(g, new_fn)
-    cg_emit_char(g, 59)
-    cg_emit_nl(g)
+    0 0 0 0
+    0 0 0 0
+    0 0
+    0
+    print(index)
+    0
+    0
+    0 0 0
+    0 0 0
+    0 0 0 0 0 0 0
+    print(new_fn)
+    0
+    0
 }

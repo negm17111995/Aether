@@ -1,0 +1,230 @@
+// AETHER NATIVE SYSCALLS - macOS/Darwin ARM64
+// Direct syscall interface - NO C REQUIRED!
+
+import std
+
+// ============================================================================
+// SYSCALL NUMBERS (macOS ARM64)
+// ============================================================================
+
+const SYS_EXIT: Int = 1
+const SYS_READ: Int = 3
+const SYS_WRITE: Int = 4
+const SYS_OPEN: Int = 5
+const SYS_CLOSE: Int = 6
+const SYS_MMAP: Int = 197
+const SYS_MUNMAP: Int = 73
+const SYS_FSTAT: Int = 189
+
+// Open flags
+const O_RDONLY: Int = 0
+const O_WRONLY: Int = 1
+const O_RDWR: Int = 2
+const O_CREAT: Int = 512
+const O_TRUNC: Int = 1024
+
+// ============================================================================
+// LOW-LEVEL SYSCALL WRAPPER
+// ============================================================================
+
+// ARM64 macOS syscall: x16 = syscall number, x0-x5 = args, returns x0
+func syscall0(num: Int) -> Int {
+    __asm_syscall0(num)
+}
+
+func syscall1(num: Int, a1: Int) -> Int {
+    __asm_syscall1(num, a1)
+}
+
+func syscall2(num: Int, a1: Int, a2: Int) -> Int {
+    __asm_syscall2(num, a1, a2)
+}
+
+func syscall3(num: Int, a1: Int, a2: Int, a3: Int) -> Int {
+    __asm_syscall3(num, a1, a2, a3)
+}
+
+func syscall6(num: Int, a1: Int, a2: Int, a3: Int, a4: Int, a5: Int, a6: Int) -> Int {
+    __asm_syscall6(num, a1, a2, a3, a4, a5, a6)
+}
+
+// ============================================================================
+// FILE OPERATIONS
+// ============================================================================
+
+func native_open(path: Int, flags: Int, mode: Int) -> Int {
+    syscall3(SYS_OPEN, path, flags, mode)
+}
+
+func native_close(fd: Int) -> Int {
+    syscall1(SYS_CLOSE, fd)
+}
+
+func native_read(fd: Int, buf: Int, count: Int) -> Int {
+    syscall3(SYS_READ, fd, buf, count)
+}
+
+func native_write(fd: Int, buf: Int, count: Int) -> Int {
+    syscall3(SYS_WRITE, fd, buf, count)
+}
+
+func native_exit(code: Int) {
+    syscall1(SYS_EXIT, code)
+}
+
+// ============================================================================
+// MEMORY OPERATIONS
+// ============================================================================
+
+const PROT_READ: Int = 1
+const PROT_WRITE: Int = 2
+const PROT_EXEC: Int = 4
+const MAP_PRIVATE: Int = 2
+const MAP_ANONYMOUS: Int = 4096
+
+func native_mmap(addr: Int, len: Int, prot: Int, flags: Int, fd: Int, offset: Int) -> Int {
+    syscall6(SYS_MMAP, addr, len, prot, flags, fd, offset)
+}
+
+func native_munmap(addr: Int, len: Int) -> Int {
+    syscall2(SYS_MUNMAP, addr, len)
+}
+
+// Simple heap allocator using mmap
+func native_alloc(size: Int) -> Int {
+    let prot = PROT_READ + PROT_WRITE
+    let flags = MAP_PRIVATE + MAP_ANONYMOUS
+    native_mmap(0, size, prot, flags, 0 - 1, 0)
+}
+
+// ============================================================================
+// HIGH-LEVEL FILE API
+// ============================================================================
+
+func file_read_all(path: Int) -> Int {
+    // Open file
+    let fd = native_open(path, O_RDONLY, 0)
+    if fd < 0 { return 0 }
+    
+    // Allocate buffer (1MB max)
+    let size = 1048576
+    let buf = native_alloc(size)
+    if buf == 0 { native_close(fd) return 0 }
+    
+    // Read
+    let bytes_read = native_read(fd, buf, size - 1)
+    native_close(fd)
+    
+    if bytes_read < 0 { return 0 }
+    
+    // Null-terminate
+    ae_store8(buf + bytes_read, 0)
+    buf
+}
+
+func file_write_all(path: Int, data: Int, len: Int) -> Int {
+    // Open file for writing (create/truncate)
+    let flags = O_WRONLY + O_CREAT + O_TRUNC
+    let fd = native_open(path, flags, 420)  // 0644
+    if fd < 0 { return 0 - 1 }
+    
+    // Write
+    let written = native_write(fd, data, len)
+    native_close(fd)
+    
+    written
+}
+
+// ============================================================================
+// CONSOLE I/O
+// ============================================================================
+
+func int_to_str(n: Int, buf: Int) -> Int {
+    if n == 0 {
+        ae_store8(buf, 48)  // '0'
+        return 1
+    }
+    
+    let neg = 0
+    let val = n
+    if n < 0 {
+        neg = 1
+        val = 0 - n
+    }
+    
+    // Write digits in reverse
+    let i = 0
+    while val > 0 {
+        let digit = val % 10
+        ae_store8(buf + 20 - i, 48 + digit)
+        val = val / 10
+        i = i + 1
+    }
+    
+    if neg == 1 {
+        ae_store8(buf + 20 - i, 45)  // '-'
+        i = i + 1
+    }
+    
+    // Copy to front
+    let j = 0
+    while j < i {
+        ae_store8(buf + j, ae_load8(buf + 21 - i + j))
+        j = j + 1
+    }
+    
+    i
+}
+
+func native_print_int(n: Int) {
+    // Convert int to string and write to stdout
+    let buf = ae_malloc(32)
+    let len = int_to_str(n, buf)
+    native_write(1, buf, len)
+    // Newline
+    ae_store8(buf, 10)
+    native_write(1, buf, 1)
+}
+
+// ============================================================================
+// MEMORY UTILS
+// ============================================================================
+
+func ae_strlen(s: Int) -> Int {
+    let i = 0
+    while ae_load8(s + i) != 0 {
+        i = i + 1
+    }
+    i
+}
+
+func ae_memcpy(dst: Int, src: Int, len: Int) {
+    let i = 0
+    while i < len {
+        ae_store8(dst + i, ae_load8(src + i))
+        i = i + 1
+    }
+}
+
+// ============================================================================
+// COMMAND LINE ARGS
+// ============================================================================
+
+func get_arg_str(argv: Int, index: Int) -> Int {
+    // argv is char**
+    let ptr_addr = argv + (index * 8)
+    let char_ptr = ae_load64(ptr_addr)
+    
+    // Copy to new string buffer
+    let len = ae_strlen(char_ptr)
+    let str = vec_new()
+    let i = 0
+    while i < len {
+        vec_push(str, ae_load8(char_ptr + i))
+        i = i + 1
+    }
+    vec_push(str, 0) // Null terminate
+    
+    // Return buffer address (skip vec header)
+    ae_load64(str)
+}

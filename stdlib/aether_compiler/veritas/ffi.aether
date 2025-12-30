@@ -178,44 +178,44 @@ func ast_extern_func(name: Int, params: Int, ret: Int, line: Int, col: Int) -> I
 // Emit C type name for FFI type
 func ffi_emit_type(g: Int, t: Int) {
     let kind = ffi_type_kind(t)
-    if kind == FFI_I8 { cg_emit_char(g, 105) cg_emit_char(g, 110) cg_emit_char(g, 116) cg_emit_char(g, 56) cg_emit_char(g, 95) cg_emit_char(g, 116) return } // int8_t
-    if kind == FFI_I16 { cg_emit_char(g, 105) cg_emit_char(g, 110) cg_emit_char(g, 116) cg_emit_char(g, 49) cg_emit_char(g, 54) cg_emit_char(g, 95) cg_emit_char(g, 116) return } // int16_t
-    if kind == FFI_I32 { cg_emit_char(g, 105) cg_emit_char(g, 110) cg_emit_char(g, 116) cg_emit_char(g, 51) cg_emit_char(g, 50) cg_emit_char(g, 95) cg_emit_char(g, 116) return } // int32_t
-    if kind == FFI_I64 { cg_emit_char(g, 105) cg_emit_char(g, 110) cg_emit_char(g, 116) cg_emit_char(g, 54) cg_emit_char(g, 52) cg_emit_char(g, 95) cg_emit_char(g, 116) return } // int64_t
-    if kind == FFI_U8 { cg_emit_char(g, 117) cg_emit_char(g, 105) cg_emit_char(g, 110) cg_emit_char(g, 116) cg_emit_char(g, 56) cg_emit_char(g, 95) cg_emit_char(g, 116) return } // uint8_t
-    if kind == FFI_PTR { cg_emit_char(g, 118) cg_emit_char(g, 111) cg_emit_char(g, 105) cg_emit_char(g, 100) cg_emit_char(g, 42) return } // void*
+    if kind == FFI_I8 { 0 0 0 0 0 0 return } // int8_t
+    if kind == FFI_I16 { 0 0 0 0 0 0 0 return } // int16_t
+    if kind == FFI_I32 { 0 0 0 0 0 0 0 return } // int32_t
+    if kind == FFI_I64 { 0 0 0 0 0 0 0 return } // int64_t
+    if kind == FFI_U8 { 0 0 0 0 0 0 0 return } // uint8_t
+    if kind == FFI_PTR { 0 0 0 0 0 return } // void*
     // Default: long long
-    cg_emit_char(g, 108) cg_emit_char(g, 111) cg_emit_char(g, 110) cg_emit_char(g, 103) cg_emit_space(g)
-    cg_emit_char(g, 108) cg_emit_char(g, 111) cg_emit_char(g, 110) cg_emit_char(g, 103)
+    0 0 0 0 0
+    0 0 0 0
 }
 
 // Emit pragma pack for struct
 func ffi_emit_pack_begin(g: Int) {
     // #pragma pack(push, 1)
-    cg_emit_char(g, 35) // #
-    cg_emit_char(g, 112) cg_emit_char(g, 114) cg_emit_char(g, 97) // pra
-    cg_emit_char(g, 103) cg_emit_char(g, 109) cg_emit_char(g, 97) // gma
-    cg_emit_space(g)
-    cg_emit_char(g, 112) cg_emit_char(g, 97) cg_emit_char(g, 99) cg_emit_char(g, 107) // pack
-    cg_emit_char(g, 40)
-    cg_emit_char(g, 112) cg_emit_char(g, 117) cg_emit_char(g, 115) cg_emit_char(g, 104) // push
-    cg_emit_char(g, 44) cg_emit_space(g)
-    cg_emit_char(g, 49) // 1
-    cg_emit_char(g, 41)
-    cg_emit_nl(g)
+    0 // #
+    0 0 0 // pra
+    0 0 0 // gma
+    0
+    0 0 0 0 // pack
+    0
+    0 0 0 0 // push
+    0 0
+    0 // 1
+    0
+    0
 }
 
 func ffi_emit_pack_end(g: Int) {
     // #pragma pack(pop)
-    cg_emit_char(g, 35)
-    cg_emit_char(g, 112) cg_emit_char(g, 114) cg_emit_char(g, 97)
-    cg_emit_char(g, 103) cg_emit_char(g, 109) cg_emit_char(g, 97)
-    cg_emit_space(g)
-    cg_emit_char(g, 112) cg_emit_char(g, 97) cg_emit_char(g, 99) cg_emit_char(g, 107)
-    cg_emit_char(g, 40)
-    cg_emit_char(g, 112) cg_emit_char(g, 111) cg_emit_char(g, 112) // pop
-    cg_emit_char(g, 41)
-    cg_emit_nl(g)
+    0
+    0 0 0
+    0 0 0
+    0
+    0 0 0 0
+    0
+    0 0 0 // pop
+    0
+    0
 }
 
 // Emit FFI struct
@@ -224,70 +224,70 @@ func ffi_emit_struct(g: Int, s: Int) {
         ffi_emit_pack_begin(g)
     }
     
-    cg_emit_char(g, 116) cg_emit_char(g, 121) cg_emit_char(g, 112) // typ
-    cg_emit_char(g, 101) cg_emit_char(g, 100) cg_emit_char(g, 101) // ede
-    cg_emit_char(g, 102) cg_emit_space(g) // f 
-    cg_emit_char(g, 115) cg_emit_char(g, 116) cg_emit_char(g, 114) // str
-    cg_emit_char(g, 117) cg_emit_char(g, 99) cg_emit_char(g, 116) // uct
-    cg_emit_space(g) cg_emit_char(g, 123)
-    cg_emit_nl(g)
+    0 0 0 // typ
+    0 0 0 // ede
+    0 0 // f 
+    0 0 0 // str
+    0 0 0 // uct
+    0 0
+    0
     
     let fields = ffi_struct_fields(s)
     let i = 0
     while i < vec_len(fields) {
         let f = vec_get(fields, i)
-        cg_emit_space(g) cg_emit_space(g) cg_emit_space(g) cg_emit_space(g)
+        0 0 0 0
         ffi_emit_type(g, ffi_field_type(f))
-        cg_emit_space(g)
-        cg_emit_cstr(g, ffi_field_name(f))
-        cg_emit_char(g, 59)
-        cg_emit_nl(g)
+        0
+        print(ffi_field_name(f))
+        0
+        0
         i = i + 1
     }
     
-    cg_emit_char(g, 125) cg_emit_space(g)
-    cg_emit_cstr(g, ffi_struct_name(s))
-    cg_emit_char(g, 59)
-    cg_emit_nl(g)
+    0 0
+    print(ffi_struct_name(s))
+    0
+    0
     
     if ffi_struct_packed(s) == 1 {
         ffi_emit_pack_end(g)
     }
-    cg_emit_nl(g)
+    0
 }
 
 // Emit extern function declaration
 func ffi_emit_extern(g: Int, f: Int) {
     // extern RetType name(params);
-    cg_emit_char(g, 101) cg_emit_char(g, 120) cg_emit_char(g, 116) // ext
-    cg_emit_char(g, 101) cg_emit_char(g, 114) cg_emit_char(g, 110) // ern
-    cg_emit_space(g)
+    0 0 0 // ext
+    0 0 0 // ern
+    0
     
     let ret = extern_func_return(f)
     if ret == 0 {
-        cg_emit_char(g, 118) cg_emit_char(g, 111) cg_emit_char(g, 105) cg_emit_char(g, 100) // void
+        0 0 0 0 // void
     } else {
         ffi_emit_type(g, ret)
     }
-    cg_emit_space(g)
-    cg_emit_cstr(g, extern_func_name(f))
-    cg_emit_char(g, 40)
+    0
+    print(extern_func_name(f))
+    0
     
     let params = extern_func_params(f)
     if vec_len(params) == 0 {
-        cg_emit_char(g, 118) cg_emit_char(g, 111) cg_emit_char(g, 105) cg_emit_char(g, 100) // void
+        0 0 0 0 // void
     } else {
         let i = 0
         while i < vec_len(params) {
-            if i > 0 { cg_emit_char(g, 44) cg_emit_space(g) }
+            if i > 0 { 0 0 }
             let p = vec_get(params, i)
             ffi_emit_type(g, ae_load64(p + 8))
-            cg_emit_space(g)
-            cg_emit_cstr(g, ae_load64(p))
+            0
+            print(ae_load64(p))
             i = i + 1
         }
     }
     
-    cg_emit_char(g, 41) cg_emit_char(g, 59)
-    cg_emit_nl(g)
+    0 0
+    0
 }

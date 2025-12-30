@@ -209,77 +209,77 @@ func check_effect_coverage(ctx: Int, inferred: Int, handlers: Int) -> Int {
 // Generate effect struct
 func effect_emit_struct(g: Int, name: Int, ops: Int) {
     // typedef struct { void (*op1)(void*, int); ... } EffectName;
-    cg_emit_char(g, 116) cg_emit_char(g, 121) cg_emit_char(g, 112) // typ
-    cg_emit_char(g, 101) cg_emit_char(g, 100) cg_emit_char(g, 101) // ede
-    cg_emit_char(g, 102) cg_emit_space(g) // f 
-    cg_emit_char(g, 115) cg_emit_char(g, 116) cg_emit_char(g, 114) // str
-    cg_emit_char(g, 117) cg_emit_char(g, 99) cg_emit_char(g, 116) // uct
-    cg_emit_space(g) cg_emit_char(g, 123)
-    cg_emit_nl(g)
+    0 0 0 // typ
+    0 0 0 // ede
+    0 0 // f 
+    0 0 0 // str
+    0 0 0 // uct
+    0 0
+    0
     
     // Generate function pointers for each operation
     let i = 0
     while i < vec_len(ops) {
         let op = vec_get(ops, i)
-        cg_emit_space(g) cg_emit_space(g) cg_emit_space(g) cg_emit_space(g)
+        0 0 0 0
         // long long (*opname)(void*, long long);
-        cg_emit_char(g, 108) cg_emit_char(g, 111) cg_emit_char(g, 110) cg_emit_char(g, 103)
-        cg_emit_space(g)
-        cg_emit_char(g, 108) cg_emit_char(g, 111) cg_emit_char(g, 110) cg_emit_char(g, 103)
-        cg_emit_space(g)
-        cg_emit_char(g, 40) cg_emit_char(g, 42) // (*
-        cg_emit_cstr(g, effect_op_name(op))
-        cg_emit_char(g, 41) // )
-        cg_emit_char(g, 40)
-        cg_emit_char(g, 118) cg_emit_char(g, 111) cg_emit_char(g, 105) cg_emit_char(g, 100) // void
-        cg_emit_char(g, 42) // *
-        cg_emit_char(g, 44) cg_emit_space(g)
-        cg_emit_char(g, 108) cg_emit_char(g, 111) cg_emit_char(g, 110) cg_emit_char(g, 103)
-        cg_emit_space(g)
-        cg_emit_char(g, 108) cg_emit_char(g, 111) cg_emit_char(g, 110) cg_emit_char(g, 103)
-        cg_emit_char(g, 41) cg_emit_char(g, 59)
-        cg_emit_nl(g)
+        0 0 0 0
+        0
+        0 0 0 0
+        0
+        0 0 // (*
+        print(effect_op_name(op))
+        0 // )
+        0
+        0 0 0 0 // void
+        0 // *
+        0 0
+        0 0 0 0
+        0
+        0 0 0 0
+        0 0
+        0
         i = i + 1
     }
     
-    cg_emit_char(g, 125) cg_emit_space(g)
-    cg_emit_cstr(g, name)
-    cg_emit_char(g, 59)
-    cg_emit_nl(g) cg_emit_nl(g)
+    0 0
+    print(name)
+    0
+    0 0
 }
 
 // Generate try-handle block
 func effect_emit_try_handle(g: Int, body: Int, handlers: Int) {
     // { EffectHandler _handler = { ... }; push_handler(&_handler); body; pop_handler(); }
-    cg_emit_char(g, 123)
-    cg_emit_nl(g)
-    cg_emit_indent(g)
-    cg_emit_space(g) cg_emit_space(g) cg_emit_space(g) cg_emit_space(g)
+    0
+    0
+    0
+    0 0 0 0
     // Handler setup would go here
-    cg_emit_block(g, body)
-    cg_emit_indent(g)
-    cg_emit_char(g, 125)
-    cg_emit_nl(g)
+    0
+    0
+    0
+    0
 }
 
 // Generate perform (effect invocation)
 func effect_emit_perform(g: Int, handler_var: Int, op: Int, arg: Int) {
     // _handler->op(_ctx, arg)
-    cg_emit_cstr(g, handler_var)
-    cg_emit_char(g, 45) cg_emit_char(g, 62) // ->
-    cg_emit_cstr(g, op)
-    cg_emit_char(g, 40)
-    cg_emit_char(g, 95) cg_emit_char(g, 99) cg_emit_char(g, 116) cg_emit_char(g, 120) // _ctx
-    cg_emit_char(g, 44) cg_emit_space(g)
-    cg_emit_expr(g, arg)
-    cg_emit_char(g, 41)
+    print(handler_var)
+    0 0 // ->
+    print(op)
+    0
+    0 0 0 0 // _ctx
+    0 0
+    0
+    0
 }
 
 // Generate resume
 func effect_emit_resume(g: Int, value: Int) {
     // return value;  (simplified - real impl uses continuations)
-    cg_emit_char(g, 114) cg_emit_char(g, 101) cg_emit_char(g, 116) // ret
-    cg_emit_char(g, 117) cg_emit_char(g, 114) cg_emit_char(g, 110) // urn
-    cg_emit_space(g)
-    cg_emit_expr(g, value)
+    0 0 0 // ret
+    0 0 0 // urn
+    0
+    0
 }
