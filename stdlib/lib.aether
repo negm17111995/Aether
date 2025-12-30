@@ -136,7 +136,7 @@ import tools.repl
 // ============================================================================
 
 const LIB_VERSION: Int = 100
-const LIB_MODULES: Int = 83
+const LIB_MODULES: Int = 87
 const LIB_LINES: Int = 15700
 
 func lib_info() -> Int {
