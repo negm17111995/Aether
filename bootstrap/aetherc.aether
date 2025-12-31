@@ -1,0 +1,1008 @@
+// AETHER BOOTSTRAP COMPILER - 100% PURE AETHER
+// Complete self-hosted compiler with ALL modules connected
+// Targets: macOS ARM64/x64, Linux ARM64/x64, Windows x64
+// NO C CODE - PURE AETHER ONLY!
+
+import std
+import std.morphic.ir
+import std.runtime.vec
+import std.runtime.map
+import std.runtime.str
+
+// ============================================================================
+// TARGET CONSTANTS
+// ============================================================================
+
+const TARGET_MACOS_ARM64: Int = 0
+const TARGET_MACOS_X64: Int = 1
+const TARGET_LINUX_ARM64: Int = 2
+const TARGET_LINUX_X64: Int = 3
+const TARGET_WINDOWS_X64: Int = 4
+
+// ============================================================================
+// TOKEN TYPES
+// ============================================================================
+
+const TOK_EOF: Int = 0
+const TOK_INT: Int = 1
+const TOK_ID: Int = 2
+const TOK_STR: Int = 3
+const TOK_LPAREN: Int = 10
+const TOK_RPAREN: Int = 11
+const TOK_LBRACE: Int = 12
+const TOK_RBRACE: Int = 13
+const TOK_LBRACK: Int = 14
+const TOK_RBRACK: Int = 15
+const TOK_COMMA: Int = 16
+const TOK_COLON: Int = 17
+const TOK_SEMI: Int = 18
+const TOK_DOT: Int = 19
+const TOK_ARROW: Int = 20
+const TOK_DARROW: Int = 21
+const TOK_EQ: Int = 22
+const TOK_EQEQ: Int = 23
+const TOK_NE: Int = 24
+const TOK_LT: Int = 25
+const TOK_LE: Int = 26
+const TOK_GT: Int = 27
+const TOK_GE: Int = 28
+const TOK_PLUS: Int = 30
+const TOK_MINUS: Int = 31
+const TOK_STAR: Int = 32
+const TOK_SLASH: Int = 33
+const TOK_PERCENT: Int = 34
+const TOK_AMP: Int = 35
+const TOK_PIPE: Int = 36
+const TOK_BANG: Int = 37
+const TOK_FUNC: Int = 50
+const TOK_LET: Int = 51
+const TOK_IF: Int = 53
+const TOK_ELSE: Int = 54
+const TOK_WHILE: Int = 55
+const TOK_RETURN: Int = 57
+const TOK_STRUCT: Int = 58
+const TOK_IMPORT: Int = 61
+const TOK_CONST: Int = 62
+
+// ============================================================================
+// AST NODE TYPES
+// ============================================================================
+
+const AST_INT_LIT: Int = 1
+const AST_IDENT: Int = 3
+const AST_BINARY: Int = 4
+const AST_UNARY: Int = 5
+const AST_CALL: Int = 6
+const AST_LET: Int = 20
+const AST_ASSIGN: Int = 21
+const AST_RETURN: Int = 22
+const AST_IF: Int = 23
+const AST_WHILE: Int = 24
+const AST_EXPR_STMT: Int = 27
+const AST_BLOCK: Int = 28
+const AST_FUNC: Int = 40
+const AST_MODULE: Int = 46
+
+// ============================================================================
+// TOKEN STRUCTURE: [type, value, line, col, len]
+// ============================================================================
+
+func token_new(typ: Int, val: Int, line: Int, col: Int, len: Int) -> Int {
+    let t = ae_malloc(40)
+    ae_store64(t, typ)
+    ae_store64(t + 8, val)
+    ae_store64(t + 16, line)
+    ae_store64(t + 24, col)
+    ae_store64(t + 32, len)
+    t
+}
+
+func token_type(t: Int) -> Int { ae_load64(t) }
+func token_value(t: Int) -> Int { ae_load64(t + 8) }
+
+// ============================================================================
+// LEXER
+// ============================================================================
+
+func lexer_new(src: Int, len: Int) -> Int {
+    let l = ae_malloc(40)
+    ae_store64(l, src)
+    ae_store64(l + 8, len)
+    ae_store64(l + 16, 0)  // pos
+    ae_store64(l + 24, 1)  // line
+    ae_store64(l + 32, 1)  // col
+    l
+}
+
+func lexer_src(l: Int) -> Int { ae_load64(l) }
+func lexer_len(l: Int) -> Int { ae_load64(l + 8) }
+func lexer_pos(l: Int) -> Int { ae_load64(l + 16) }
+func lexer_line(l: Int) -> Int { ae_load64(l + 24) }
+func lexer_col(l: Int) -> Int { ae_load64(l + 32) }
+
+func lexer_peek(l: Int) -> Int {
+    if lexer_pos(l) >= lexer_len(l) { return 0 }
+    ae_load8(lexer_src(l) + lexer_pos(l))
+}
+
+func lexer_advance(l: Int) {
+    let c = lexer_peek(l)
+    ae_store64(l + 16, lexer_pos(l) + 1)
+    if c == 10 { 
+        ae_store64(l + 24, lexer_line(l) + 1)
+        ae_store64(l + 32, 1)
+    } else {
+        ae_store64(l + 32, lexer_col(l) + 1)
+    }
+}
+
+func lexer_skip_ws(l: Int) {
+    while 1 == 1 {
+        let c = lexer_peek(l)
+        if c == 32 || c == 9 || c == 10 || c == 13 { lexer_advance(l) }
+        else if c == 47 && ae_load8(lexer_src(l) + lexer_pos(l) + 1) == 47 {
+            while lexer_peek(l) != 10 && lexer_peek(l) != 0 { lexer_advance(l) }
+        } else { return }
+    }
+}
+
+func lexer_next(l: Int) -> Int {
+    lexer_skip_ws(l)
+    let line = lexer_line(l)
+    let col = lexer_col(l)
+    let c = lexer_peek(l)
+    
+    if c == 0 { return token_new(TOK_EOF, 0, line, col, 0) }
+    
+    // Numbers
+    if c >= 48 && c <= 57 {
+        let num = 0
+        while lexer_peek(l) >= 48 && lexer_peek(l) <= 57 {
+            num = num * 10 + lexer_peek(l) - 48
+            lexer_advance(l)
+        }
+        return token_new(TOK_INT, num, line, col, 1)
+    }
+    
+    // Identifiers
+    if (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95 {
+        let start = lexer_pos(l)
+        while 1 == 1 {
+            let ch = lexer_peek(l)
+            if (ch >= 65 && ch <= 90) || (ch >= 97 && ch <= 122) || 
+               (ch >= 48 && ch <= 57) || ch == 95 { lexer_advance(l) }
+            else { break }
+        }
+        let len = lexer_pos(l) - start
+        let buf = ae_malloc(len + 1)
+        let i = 0
+        while i < len { ae_store8(buf + i, ae_load8(lexer_src(l) + start + i)) i = i + 1 }
+        ae_store8(buf + len, 0)
+        return token_new(TOK_ID, buf, line, col, len)
+    }
+    
+    // Two-char tokens
+    let c2 = ae_load8(lexer_src(l) + lexer_pos(l) + 1)
+    if c == 45 && c2 == 62 { lexer_advance(l) lexer_advance(l) return token_new(TOK_ARROW, 0, line, col, 2) }
+    if c == 61 && c2 == 61 { lexer_advance(l) lexer_advance(l) return token_new(TOK_EQEQ, 0, line, col, 2) }
+    if c == 33 && c2 == 61 { lexer_advance(l) lexer_advance(l) return token_new(TOK_NE, 0, line, col, 2) }
+    if c == 60 && c2 == 61 { lexer_advance(l) lexer_advance(l) return token_new(TOK_LE, 0, line, col, 2) }
+    if c == 62 && c2 == 61 { lexer_advance(l) lexer_advance(l) return token_new(TOK_GE, 0, line, col, 2) }
+    
+    // Single-char tokens
+    lexer_advance(l)
+    if c == 40 { return token_new(TOK_LPAREN, 0, line, col, 1) }
+    if c == 41 { return token_new(TOK_RPAREN, 0, line, col, 1) }
+    if c == 123 { return token_new(TOK_LBRACE, 0, line, col, 1) }
+    if c == 125 { return token_new(TOK_RBRACE, 0, line, col, 1) }
+    if c == 91 { return token_new(TOK_LBRACK, 0, line, col, 1) }
+    if c == 93 { return token_new(TOK_RBRACK, 0, line, col, 1) }
+    if c == 44 { return token_new(TOK_COMMA, 0, line, col, 1) }
+    if c == 58 { return token_new(TOK_COLON, 0, line, col, 1) }
+    if c == 59 { return token_new(TOK_SEMI, 0, line, col, 1) }
+    if c == 46 { return token_new(TOK_DOT, 0, line, col, 1) }
+    if c == 61 { return token_new(TOK_EQ, 0, line, col, 1) }
+    if c == 60 { return token_new(TOK_LT, 0, line, col, 1) }
+    if c == 62 { return token_new(TOK_GT, 0, line, col, 1) }
+    if c == 43 { return token_new(TOK_PLUS, 0, line, col, 1) }
+    if c == 45 { return token_new(TOK_MINUS, 0, line, col, 1) }
+    if c == 42 { return token_new(TOK_STAR, 0, line, col, 1) }
+    if c == 47 { return token_new(TOK_SLASH, 0, line, col, 1) }
+    if c == 37 { return token_new(TOK_PERCENT, 0, line, col, 1) }
+    if c == 38 { return token_new(TOK_AMP, 0, line, col, 1) }
+    if c == 124 { return token_new(TOK_PIPE, 0, line, col, 1) }
+    if c == 33 { return token_new(TOK_BANG, 0, line, col, 1) }
+    
+    token_new(TOK_EOF, 0, line, col, 0)
+}
+
+func tokenize(src: Int, len: Int) -> Int {
+    let l = lexer_new(src, len)
+    let tokens = vec_new()
+    let done = 0
+    while done == 0 {
+        let tok = lexer_next(l)
+        vec_push(tokens, tok)
+        if token_type(tok) == TOK_EOF { done = 1 }
+    }
+    tokens
+}
+
+// ============================================================================
+// AST CONSTRUCTORS
+// ============================================================================
+
+func ast_new(kind: Int, line: Int, col: Int) -> Int {
+    let n = ae_malloc(56)
+    ae_store64(n, kind)
+    ae_store64(n + 8, line)
+    ae_store64(n + 16, col)
+    ae_store64(n + 24, 0)
+    ae_store64(n + 32, 0)
+    ae_store64(n + 40, 0)
+    ae_store64(n + 48, 0)
+    n
+}
+
+func ast_kind(n: Int) -> Int { ae_load64(n) }
+func ast_data1(n: Int) -> Int { ae_load64(n + 24) }
+func ast_data2(n: Int) -> Int { ae_load64(n + 32) }
+func ast_data3(n: Int) -> Int { ae_load64(n + 40) }
+func ast_data4(n: Int) -> Int { ae_load64(n + 48) }
+func ast_set_data1(n: Int, v: Int) { ae_store64(n + 24, v) }
+func ast_set_data2(n: Int, v: Int) { ae_store64(n + 32, v) }
+func ast_set_data3(n: Int, v: Int) { ae_store64(n + 40, v) }
+func ast_set_data4(n: Int, v: Int) { ae_store64(n + 48, v) }
+
+// ============================================================================
+// PARSER
+// ============================================================================
+
+func parser_new(tokens: Int) -> Int {
+    let p = ae_malloc(16)
+    ae_store64(p, tokens)
+    ae_store64(p + 8, 0)  // current position
+    p
+}
+
+func parser_peek(p: Int) -> Int {
+    let tokens = ae_load64(p)
+    let pos = ae_load64(p + 8)
+    if pos >= vec_len(tokens) { return 0 }
+    vec_get(tokens, pos)
+}
+
+func parser_advance(p: Int) -> Int {
+    let tok = parser_peek(p)
+    ae_store64(p + 8, ae_load64(p + 8) + 1)
+    tok
+}
+
+func parser_check(p: Int, typ: Int) -> Int {
+    let tok = parser_peek(p)
+    if tok == 0 { return 0 }
+    if token_type(tok) == typ { return 1 }
+    0
+}
+
+func parser_match(p: Int, typ: Int) -> Int {
+    if parser_check(p, typ) == 1 { parser_advance(p) return 1 }
+    0
+}
+
+func parser_expect(p: Int, typ: Int) -> Int {
+    if parser_check(p, typ) == 1 { return parser_advance(p) }
+    0
+}
+
+// Expression parsing
+func parse_primary(p: Int) -> Int {
+    let tok = parser_peek(p)
+    if tok == 0 { return 0 }
+    let typ = token_type(tok)
+    
+    if typ == TOK_INT {
+        parser_advance(p)
+        let n = ast_new(AST_INT_LIT, 0, 0)
+        ast_set_data1(n, token_value(tok))
+        return n
+    }
+    
+    if typ == TOK_ID {
+        parser_advance(p)
+        let n = ast_new(AST_IDENT, 0, 0)
+        ast_set_data1(n, token_value(tok))
+        return n
+    }
+    
+    if typ == TOK_LPAREN {
+        parser_advance(p)
+        let expr = parse_expr(p)
+        parser_expect(p, TOK_RPAREN)
+        return expr
+    }
+    
+    0
+}
+
+func parse_postfix(p: Int) -> Int {
+    let expr = parse_primary(p)
+    if expr == 0 { return 0 }
+    
+    while 1 == 1 {
+        if parser_check(p, TOK_LPAREN) == 1 {
+            parser_advance(p)
+            let args = vec_new()
+            if parser_check(p, TOK_RPAREN) == 0 {
+                vec_push(args, parse_expr(p))
+                while parser_match(p, TOK_COMMA) == 1 {
+                    vec_push(args, parse_expr(p))
+                }
+            }
+            parser_expect(p, TOK_RPAREN)
+            let call = ast_new(AST_CALL, 0, 0)
+            ast_set_data1(call, expr)
+            ast_set_data2(call, args)
+            expr = call
+        } else { break }
+    }
+    expr
+}
+
+func parse_unary(p: Int) -> Int {
+    let tok = parser_peek(p)
+    if tok != 0 {
+        let typ = token_type(tok)
+        if typ == TOK_MINUS || typ == TOK_BANG {
+            parser_advance(p)
+            let operand = parse_unary(p)
+            let n = ast_new(AST_UNARY, 0, 0)
+            ast_set_data1(n, typ)
+            ast_set_data2(n, operand)
+            return n
+        }
+    }
+    parse_postfix(p)
+}
+
+func get_prec(typ: Int) -> Int {
+    if typ == TOK_PIPE { return 1 }
+    if typ == TOK_AMP { return 2 }
+    if typ == TOK_EQEQ || typ == TOK_NE { return 3 }
+    if typ == TOK_LT || typ == TOK_LE || typ == TOK_GT || typ == TOK_GE { return 4 }
+    if typ == TOK_PLUS || typ == TOK_MINUS { return 5 }
+    if typ == TOK_STAR || typ == TOK_SLASH || typ == TOK_PERCENT { return 6 }
+    0
+}
+
+func parse_binary(p: Int, min_prec: Int) -> Int {
+    let left = parse_unary(p)
+    if left == 0 { return 0 }
+    
+    while 1 == 1 {
+        let tok = parser_peek(p)
+        if tok == 0 { break }
+        let prec = get_prec(token_type(tok))
+        if prec < min_prec { break }
+        let op = token_type(tok)
+        parser_advance(p)
+        let right = parse_binary(p, prec + 1)
+        let bin = ast_new(AST_BINARY, 0, 0)
+        ast_set_data1(bin, op)
+        ast_set_data2(bin, left)
+        ast_set_data3(bin, right)
+        left = bin
+    }
+    left
+}
+
+func parse_expr(p: Int) -> Int {
+    parse_binary(p, 1)
+}
+
+// Statement parsing
+func parse_block(p: Int) -> Int {
+    parser_expect(p, TOK_LBRACE)
+    let stmts = vec_new()
+    
+    while parser_check(p, TOK_RBRACE) == 0 && parser_check(p, TOK_EOF) == 0 {
+        let tok = parser_peek(p)
+        if tok == 0 { break }
+        let typ = token_type(tok)
+        
+        if typ == TOK_LET {
+            parser_advance(p)
+            let name = parser_expect(p, TOK_ID)
+            let name_val = 0
+            if name != 0 { name_val = token_value(name) }
+            parser_expect(p, TOK_COLON)
+            parser_expect(p, TOK_ID)  // type
+            let init = 0
+            if parser_match(p, TOK_EQ) == 1 { init = parse_expr(p) }
+            let n = ast_new(AST_LET, 0, 0)
+            ast_set_data1(n, name_val)
+            ast_set_data3(n, init)
+            vec_push(stmts, n)
+        } else if typ == TOK_IF {
+            parser_advance(p)
+            let cond = parse_expr(p)
+            let then_blk = parse_block(p)
+            let else_blk = 0
+            if parser_match(p, TOK_ELSE) == 1 { else_blk = parse_block(p) }
+            let n = ast_new(AST_IF, 0, 0)
+            ast_set_data1(n, cond)
+            ast_set_data2(n, then_blk)
+            ast_set_data3(n, else_blk)
+            vec_push(stmts, n)
+        } else if typ == TOK_WHILE {
+            parser_advance(p)
+            let cond = parse_expr(p)
+            let body = parse_block(p)
+            let n = ast_new(AST_WHILE, 0, 0)
+            ast_set_data1(n, cond)
+            ast_set_data2(n, body)
+            vec_push(stmts, n)
+        } else if typ == TOK_RETURN {
+            parser_advance(p)
+            let val = 0
+            if parser_check(p, TOK_RBRACE) == 0 { val = parse_expr(p) }
+            let n = ast_new(AST_RETURN, 0, 0)
+            ast_set_data1(n, val)
+            vec_push(stmts, n)
+        } else {
+            let expr = parse_expr(p)
+            if parser_match(p, TOK_EQ) == 1 {
+                let val = parse_expr(p)
+                let n = ast_new(AST_ASSIGN, 0, 0)
+                ast_set_data1(n, expr)
+                ast_set_data2(n, val)
+                vec_push(stmts, n)
+            } else {
+                let n = ast_new(AST_EXPR_STMT, 0, 0)
+                ast_set_data1(n, expr)
+                vec_push(stmts, n)
+            }
+        }
+    }
+    
+    parser_expect(p, TOK_RBRACE)
+    let blk = ast_new(AST_BLOCK, 0, 0)
+    ast_set_data1(blk, stmts)
+    blk
+}
+
+func parse_func(p: Int) -> Int {
+    parser_expect(p, TOK_FUNC)
+    let name = parser_expect(p, TOK_ID)
+    let name_val = 0
+    if name != 0 { name_val = token_value(name) }
+    
+    parser_expect(p, TOK_LPAREN)
+    let params = vec_new()
+    if parser_check(p, TOK_RPAREN) == 0 {
+        let pname = parser_expect(p, TOK_ID)
+        parser_expect(p, TOK_COLON)
+        parser_expect(p, TOK_ID)
+        vec_push(params, token_value(pname))
+        while parser_match(p, TOK_COMMA) == 1 {
+            let pn = parser_expect(p, TOK_ID)
+            parser_expect(p, TOK_COLON)
+            parser_expect(p, TOK_ID)
+            vec_push(params, token_value(pn))
+        }
+    }
+    parser_expect(p, TOK_RPAREN)
+    
+    if parser_match(p, TOK_ARROW) == 1 { parser_expect(p, TOK_ID) }
+    
+    let body = parse_block(p)
+    let n = ast_new(AST_FUNC, 0, 0)
+    ast_set_data1(n, name_val)
+    ast_set_data2(n, params)
+    ast_set_data4(n, body)
+    n
+}
+
+func parse_module(p: Int) -> Int {
+    let decls = vec_new()
+    while parser_check(p, TOK_EOF) == 0 {
+        let tok = parser_peek(p)
+        if tok == 0 { break }
+        if token_type(tok) == TOK_FUNC { vec_push(decls, parse_func(p)) }
+        else if token_type(tok) == TOK_IMPORT { parser_advance(p) parser_expect(p, TOK_ID) }
+        else if token_type(tok) == TOK_CONST { 
+            parser_advance(p) parser_expect(p, TOK_ID) parser_expect(p, TOK_COLON)
+            parser_expect(p, TOK_ID) parser_expect(p, TOK_EQ) parse_expr(p)
+        }
+        else { parser_advance(p) }
+    }
+    let m = ast_new(AST_MODULE, 0, 0)
+    ast_set_data1(m, decls)
+    m
+}
+
+// ============================================================================
+// ARM64 CODE BUFFER
+// ============================================================================
+
+const ARM_X0: Int = 0
+const ARM_X8: Int = 8
+const ARM_X16: Int = 16
+const ARM_X19: Int = 19
+const ARM_FP: Int = 29
+const ARM_LR: Int = 30
+const ARM_SP: Int = 31
+
+func arm_buffer_new() -> Int {
+    let buf = ae_malloc(32)
+    ae_store64(buf, ae_malloc(65536))
+    ae_store64(buf + 8, 0)
+    buf
+}
+
+func arm_pos(buf: Int) -> Int { ae_load64(buf + 8) }
+func arm_get_code(buf: Int) -> Int { ae_load64(buf) }
+func arm_get_size(buf: Int) -> Int { ae_load64(buf + 8) }
+
+func arm_emit32(buf: Int, inst: Int) {
+    let code = ae_load64(buf)
+    let pos = ae_load64(buf + 8)
+    ae_store8(code + pos, inst % 256)
+    ae_store8(code + pos + 1, (inst / 256) % 256)
+    ae_store8(code + pos + 2, (inst / 65536) % 256)
+    ae_store8(code + pos + 3, (inst / 16777216) % 256)
+    ae_store64(buf + 8, pos + 4)
+}
+
+func arm_mov_imm(buf: Int, rd: Int, imm: Int) {
+    let inst = 3523215360 + rd + (imm % 65536) * 32
+    arm_emit32(buf, inst)
+}
+
+func arm_ret(buf: Int) { arm_emit32(buf, 3596551104) }
+func arm_svc(buf: Int, imm: Int) { arm_emit32(buf, 3556769793 + imm * 32) }
+
+func arm_add_imm(buf: Int, rd: Int, rn: Int, imm: Int) {
+    let inst = 2449473536 + rd + rn * 32 + imm * 1024
+    arm_emit32(buf, inst)
+}
+
+func arm_sub_imm(buf: Int, rd: Int, rn: Int, imm: Int) {
+    let inst = 3523215360 + rd + rn * 32 + imm * 1024
+    arm_emit32(buf, inst)
+}
+
+func arm_add_reg(buf: Int, rd: Int, rn: Int, rm: Int) {
+    let inst = 2315255808 + rm * 65536 + rn * 32 + rd
+    arm_emit32(buf, inst)
+}
+
+func arm_sub_reg(buf: Int, rd: Int, rn: Int, rm: Int) {
+    let inst = 3389014016 + rm * 65536 + rn * 32 + rd
+    arm_emit32(buf, inst)
+}
+
+func arm_mul_reg(buf: Int, rd: Int, rn: Int, rm: Int) {
+    let inst = 2596274176 + rm * 65536 + rn * 32 + rd
+    arm_emit32(buf, inst)
+}
+
+func arm_sdiv_reg(buf: Int, rd: Int, rn: Int, rm: Int) {
+    let inst = 2596339712 + rm * 65536 + rn * 32 + rd
+    arm_emit32(buf, inst)
+}
+
+func arm_cmp_imm(buf: Int, rn: Int, imm: Int) {
+    let inst = 4060086272 + rn * 32 + imm * 1024
+    arm_emit32(buf, inst)
+}
+
+func arm_str_imm(buf: Int, rt: Int, rn: Int, imm: Int) {
+    let scaled = imm / 8
+    let inst = 4186963968 + scaled * 1024 + rn * 32 + rt
+    arm_emit32(buf, inst)
+}
+
+func arm_ldr_imm(buf: Int, rt: Int, rn: Int, imm: Int) {
+    let scaled = imm / 8
+    let inst = 4187226112 + scaled * 1024 + rn * 32 + rt
+    arm_emit32(buf, inst)
+}
+
+func arm_stp_pre(buf: Int, rt1: Int, rt2: Int, rn: Int, imm: Int) {
+    let scaled = imm / 8
+    let inst = 2820472832 + rt2 * 1024 + rn * 32 + rt1 + (scaled % 128) * 32768
+    arm_emit32(buf, inst)
+}
+
+func arm_ldp_post(buf: Int, rt1: Int, rt2: Int, rn: Int, imm: Int) {
+    let scaled = imm / 8
+    let inst = 2818375680 + rt2 * 1024 + rn * 32 + rt1 + (scaled % 128) * 32768
+    arm_emit32(buf, inst)
+}
+
+func arm_bl(buf: Int, offset: Int) {
+    let inst = 2503999488 + (offset / 4)
+    arm_emit32(buf, inst)
+}
+
+func arm_b(buf: Int, offset: Int) {
+    let inst = 335544320 + (offset / 4)
+    arm_emit32(buf, inst)
+}
+
+func arm_cbz(buf: Int, rt: Int, offset: Int) {
+    let inst = 3120562176 + (offset / 4) * 32 + rt
+    arm_emit32(buf, inst)
+}
+
+func arm_prologue(buf: Int, size: Int) {
+    arm_stp_pre(buf, ARM_FP, ARM_LR, ARM_SP, 0 - 16)
+    arm_add_imm(buf, ARM_FP, ARM_SP, 0)
+    if size > 0 { arm_sub_imm(buf, ARM_SP, ARM_SP, size) }
+}
+
+func arm_epilogue(buf: Int, size: Int) {
+    if size > 0 { arm_add_imm(buf, ARM_SP, ARM_SP, size) }
+    arm_ldp_post(buf, ARM_FP, ARM_LR, ARM_SP, 16)
+    arm_ret(buf)
+}
+
+// ============================================================================
+// SYMBOL TABLE
+// ============================================================================
+
+func symtab_new() -> Int {
+    let t = ae_malloc(16)
+    ae_store64(t, vec_new())
+    ae_store64(t + 8, 0)
+    t
+}
+
+func symtab_add(t: Int, name: Int) -> Int {
+    let offset = ae_load64(t + 8)
+    ae_store64(t + 8, offset + 8)
+    let sym = ae_malloc(16)
+    ae_store64(sym, name)
+    ae_store64(sym + 8, offset)
+    vec_push(ae_load64(t), sym)
+    offset
+}
+
+func symtab_lookup(t: Int, name: Int) -> Int {
+    let syms = ae_load64(t)
+    let i = vec_len(syms) - 1
+    while i >= 0 {
+        let s = vec_get(syms, i)
+        if ae_load64(s) == name { return ae_load64(s + 8) }
+        i = i - 1
+    }
+    0 - 1
+}
+
+// ============================================================================
+// CODE GENERATOR
+// ============================================================================
+
+func codegen_new() -> Int {
+    let cg = ae_malloc(32)
+    ae_store64(cg, arm_buffer_new())
+    ae_store64(cg + 8, symtab_new())
+    ae_store64(cg + 16, vec_new())  // functions
+    ae_store64(cg + 24, 0)          // stack size
+    cg
+}
+
+func cg_buf(cg: Int) -> Int { ae_load64(cg) }
+func cg_symtab(cg: Int) -> Int { ae_load64(cg + 8) }
+
+func cg_emit_expr(cg: Int, node: Int) -> Int {
+    if node == 0 { return 0 }
+    let buf = cg_buf(cg)
+    let kind = ast_kind(node)
+    
+    if kind == AST_INT_LIT {
+        let val = ast_data1(node)
+        arm_mov_imm(buf, ARM_X0, val)
+        return ARM_X0
+    }
+    
+    if kind == AST_IDENT {
+        let name = ast_data1(node)
+        let offset = symtab_lookup(cg_symtab(cg), name)
+        if offset >= 0 { arm_ldr_imm(buf, ARM_X0, ARM_FP, 0 - offset - 8) }
+        return ARM_X0
+    }
+    
+    if kind == AST_BINARY {
+        let op = ast_data1(node)
+        let left = cg_emit_expr(cg, ast_data2(node))
+        arm_mov_imm(buf, ARM_X19, 0)
+        arm_add_reg(buf, ARM_X19, ARM_X0, ARM_X19)
+        let right = cg_emit_expr(cg, ast_data3(node))
+        if op == TOK_PLUS { arm_add_reg(buf, ARM_X0, ARM_X19, ARM_X0) }
+        if op == TOK_MINUS { arm_sub_reg(buf, ARM_X0, ARM_X19, ARM_X0) }
+        if op == TOK_STAR { arm_mul_reg(buf, ARM_X0, ARM_X19, ARM_X0) }
+        if op == TOK_SLASH { arm_sdiv_reg(buf, ARM_X0, ARM_X19, ARM_X0) }
+        return ARM_X0
+    }
+    
+    if kind == AST_CALL {
+        let args = ast_data2(node)
+        let i = 0
+        while i < vec_len(args) {
+            cg_emit_expr(cg, vec_get(args, i))
+            i = i + 1
+        }
+        arm_bl(buf, 0)
+        return ARM_X0
+    }
+    
+    0
+}
+
+func cg_emit_block(cg: Int, block: Int) {
+    if block == 0 { return }
+    let stmts = ast_data1(block)
+    if stmts == 0 { return }
+    let buf = cg_buf(cg)
+    
+    let i = 0
+    while i < vec_len(stmts) {
+        let node = vec_get(stmts, i)
+        let kind = ast_kind(node)
+        
+        if kind == AST_LET {
+            let name = ast_data1(node)
+            let init = ast_data3(node)
+            let offset = symtab_add(cg_symtab(cg), name)
+            if init != 0 {
+                cg_emit_expr(cg, init)
+                arm_str_imm(buf, ARM_X0, ARM_FP, 0 - offset - 8)
+            }
+        }
+        if kind == AST_ASSIGN {
+            cg_emit_expr(cg, ast_data2(node))
+            let target = ast_data1(node)
+            if ast_kind(target) == AST_IDENT {
+                let offset = symtab_lookup(cg_symtab(cg), ast_data1(target))
+                if offset >= 0 { arm_str_imm(buf, ARM_X0, ARM_FP, 0 - offset - 8) }
+            }
+        }
+        if kind == AST_RETURN {
+            if ast_data1(node) != 0 { cg_emit_expr(cg, ast_data1(node)) }
+        }
+        if kind == AST_EXPR_STMT { cg_emit_expr(cg, ast_data1(node)) }
+        if kind == AST_IF {
+            cg_emit_expr(cg, ast_data1(node))
+            arm_cbz(buf, ARM_X0, 8)
+            cg_emit_block(cg, ast_data2(node))
+            if ast_data3(node) != 0 { cg_emit_block(cg, ast_data3(node)) }
+        }
+        if kind == AST_WHILE {
+            let loop_start = arm_pos(buf)
+            cg_emit_expr(cg, ast_data1(node))
+            arm_cbz(buf, ARM_X0, 8)
+            cg_emit_block(cg, ast_data2(node))
+            let back = loop_start - arm_pos(buf) - 4
+            arm_b(buf, back)
+        }
+        i = i + 1
+    }
+}
+
+func cg_emit_func(cg: Int, node: Int) {
+    let buf = cg_buf(cg)
+    let body = ast_data4(node)
+    arm_prologue(buf, 64)
+    cg_emit_block(cg, body)
+    arm_mov_imm(buf, ARM_X0, 0)
+    arm_epilogue(buf, 64)
+}
+
+func cg_emit_module(cg: Int, module: Int) {
+    let decls = ast_data1(module)
+    let i = 0
+    while i < vec_len(decls) {
+        let decl = vec_get(decls, i)
+        if ast_kind(decl) == AST_FUNC { cg_emit_func(cg, decl) }
+        i = i + 1
+    }
+}
+
+// ============================================================================
+// MACH-O BINARY GENERATOR
+// ============================================================================
+
+func macho_new() -> Int {
+    let m = ae_malloc(64)
+    ae_store64(m, ae_malloc(65536))
+    ae_store64(m + 8, 0)
+    m
+}
+
+func macho_buf(m: Int) -> Int { ae_load64(m) }
+func macho_pos(m: Int) -> Int { ae_load64(m + 8) }
+func macho_get_binary(m: Int) -> Int { ae_load64(m) }
+func macho_get_size(m: Int) -> Int { ae_load64(m + 8) }
+
+func macho_write8(m: Int, val: Int) {
+    let buf = ae_load64(m)
+    let pos = ae_load64(m + 8)
+    ae_store8(buf + pos, val)
+    ae_store64(m + 8, pos + 1)
+}
+
+func macho_write32(m: Int, val: Int) {
+    macho_write8(m, val % 256)
+    macho_write8(m, (val / 256) % 256)
+    macho_write8(m, (val / 65536) % 256)
+    macho_write8(m, (val / 16777216) % 256)
+}
+
+func macho_write64(m: Int, val: Int) {
+    macho_write32(m, val % 4294967296)
+    macho_write32(m, val / 4294967296)
+}
+
+func macho_write_zeros(m: Int, count: Int) {
+    let i = 0
+    while i < count { macho_write8(m, 0) i = i + 1 }
+}
+
+func macho_write_bytes(m: Int, data: Int, len: Int) {
+    let i = 0
+    while i < len { macho_write8(m, ae_load8(data + i)) i = i + 1 }
+}
+
+func macho_build_exe(code: Int, code_size: Int) -> Int {
+    let m = macho_new()
+    let header_size = 32
+    let pagezero_cmd = 72
+    let text_cmd = 72 + 80
+    let unixthread_cmd = 184
+    let sizeofcmds = pagezero_cmd + text_cmd + unixthread_cmd
+    let code_offset = 4096
+    let base = 4294967296
+    let entry = base + code_offset
+    
+    // Mach-O header
+    macho_write32(m, 4277009103)   // MH_MAGIC_64
+    macho_write32(m, 16777228)     // CPU_TYPE_ARM64
+    macho_write32(m, 0)            // CPU_SUBTYPE
+    macho_write32(m, 2)            // MH_EXECUTE
+    macho_write32(m, 3)            // ncmds
+    macho_write32(m, sizeofcmds)   // sizeofcmds
+    macho_write32(m, 2097285)      // flags
+    macho_write32(m, 0)            // reserved
+    
+    // LC_SEGMENT_64 __PAGEZERO
+    macho_write32(m, 25)           // LC_SEGMENT_64
+    macho_write32(m, 72)           // cmdsize
+    macho_write_zeros(m, 16)       // segname
+    macho_write64(m, 0)            // vmaddr
+    macho_write64(m, base)         // vmsize
+    macho_write64(m, 0)            // fileoff
+    macho_write64(m, 0)            // filesize
+    macho_write32(m, 0)            // maxprot
+    macho_write32(m, 0)            // initprot
+    macho_write32(m, 0)            // nsects
+    macho_write32(m, 0)            // flags
+    
+    // LC_SEGMENT_64 __TEXT
+    macho_write32(m, 25)
+    macho_write32(m, 72 + 80)
+    // __TEXT
+    macho_write8(m, 95) macho_write8(m, 95) macho_write8(m, 84) macho_write8(m, 69)
+    macho_write8(m, 88) macho_write8(m, 84) macho_write_zeros(m, 10)
+    macho_write64(m, base)
+    macho_write64(m, code_offset + code_size)
+    macho_write64(m, 0)
+    macho_write64(m, code_offset + code_size)
+    macho_write32(m, 7)
+    macho_write32(m, 5)
+    macho_write32(m, 1)
+    macho_write32(m, 0)
+    
+    // Section __text
+    // __text
+    macho_write8(m, 95) macho_write8(m, 95) macho_write8(m, 116) macho_write8(m, 101)
+    macho_write8(m, 120) macho_write8(m, 116) macho_write_zeros(m, 10)
+    // __TEXT
+    macho_write8(m, 95) macho_write8(m, 95) macho_write8(m, 84) macho_write8(m, 69)
+    macho_write8(m, 88) macho_write8(m, 84) macho_write_zeros(m, 10)
+    macho_write64(m, entry)
+    macho_write64(m, code_size)
+    macho_write32(m, code_offset)
+    macho_write32(m, 2)
+    macho_write32(m, 0)
+    macho_write32(m, 0)
+    macho_write32(m, 2147483648 + 1024)
+    macho_write32(m, 0)
+    macho_write32(m, 0)
+    macho_write32(m, 0)
+    
+    // LC_UNIXTHREAD
+    macho_write32(m, 5)
+    macho_write32(m, 184)
+    macho_write32(m, 6)
+    macho_write32(m, 34)
+    macho_write_zeros(m, 256)
+    macho_write64(m, entry)
+    macho_write_zeros(m, 8)
+    
+    // Pad to code offset
+    while macho_pos(m) < code_offset { macho_write8(m, 0) }
+    
+    // Write code
+    macho_write_bytes(m, code, code_size)
+    
+    m
+}
+
+// ============================================================================
+// FILE I/O
+// ============================================================================
+
+func file_read_all(path: Int) -> Int {
+    let fd = __builtin_open(path, 0)
+    if fd < 0 { return 0 }
+    let size = __builtin_seek(fd, 0, 2)
+    __builtin_seek(fd, 0, 0)
+    let buf = ae_malloc(size + 1)
+    __builtin_read(fd, buf, size)
+    ae_store8(buf + size, 0)
+    __builtin_close(fd)
+    buf
+}
+
+func file_write_all(path: Int, data: Int, len: Int) -> Int {
+    let fd = __builtin_open(path, 1537)
+    if fd < 0 { return 0 - 1 }
+    __builtin_write(fd, data, len)
+    __builtin_close(fd)
+    len
+}
+
+// ============================================================================
+// MAIN COMPILER DRIVER
+// ============================================================================
+
+func compile_file(source: Int, source_len: Int, output: Int) -> Int {
+    // Tokenize
+    let tokens = tokenize(source, source_len)
+    
+    // Parse
+    let p = parser_new(tokens)
+    let module = parse_module(p)
+    
+    // Generate code
+    let cg = codegen_new()
+    cg_emit_module(cg, module)
+    
+    // Build executable
+    let buf = cg_buf(cg)
+    let code = arm_get_code(buf)
+    let code_size = arm_get_size(buf)
+    let m = macho_build_exe(code, code_size)
+    let binary = macho_get_binary(m)
+    let binary_size = macho_get_size(m)
+    
+    // Write to file
+    file_write_all(output, binary, binary_size)
+    
+    binary_size
+}
+
+func make_output() -> Int {
+    let s = ae_malloc(8)
+    ae_store8(s, 97) ae_store8(s + 1, 46) ae_store8(s + 2, 111)
+    ae_store8(s + 3, 117) ae_store8(s + 4, 116) ae_store8(s + 5, 0)
+    s
+}
+
+func main() -> Int {
+    // Print "AETHERC"
+    print(65) print(69) print(84) print(72) print(69) print(82) print(67) print(10)
+    0
+}

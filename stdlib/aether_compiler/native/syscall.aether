@@ -1,10 +1,10 @@
-// AETHER NATIVE SYSCALLS - macOS/Darwin ARM64
+// AETHER NATIVE SYSCALLS - CROSS-PLATFORM
 // Direct syscall interface - NO C REQUIRED!
 
 import std
 
 // ============================================================================
-// SYSCALL NUMBERS (macOS ARM64)
+// MACOS SYSCALL NUMBERS (ARM64 & x64)
 // ============================================================================
 
 const SYS_EXIT: Int = 1
@@ -16,7 +16,34 @@ const SYS_MMAP: Int = 197
 const SYS_MUNMAP: Int = 73
 const SYS_FSTAT: Int = 189
 
-// Open flags
+// ============================================================================
+// LINUX SYSCALL NUMBERS (x64)
+// ============================================================================
+
+const LINUX_SYS_READ: Int = 0
+const LINUX_SYS_WRITE: Int = 1
+const LINUX_SYS_OPEN: Int = 2
+const LINUX_SYS_CLOSE: Int = 3
+const LINUX_SYS_MMAP: Int = 9
+const LINUX_SYS_MUNMAP: Int = 11
+const LINUX_SYS_EXIT: Int = 60
+
+// ============================================================================
+// LINUX SYSCALL NUMBERS (ARM64)
+// ============================================================================
+
+const LINUX_ARM_SYS_READ: Int = 63
+const LINUX_ARM_SYS_WRITE: Int = 64
+const LINUX_ARM_SYS_OPENAT: Int = 56
+const LINUX_ARM_SYS_CLOSE: Int = 57
+const LINUX_ARM_SYS_MMAP: Int = 222
+const LINUX_ARM_SYS_MUNMAP: Int = 215
+const LINUX_ARM_SYS_EXIT: Int = 93
+
+// ============================================================================
+// OPEN FLAGS (POSIX)
+// ============================================================================
+
 const O_RDONLY: Int = 0
 const O_WRONLY: Int = 1
 const O_RDWR: Int = 2
