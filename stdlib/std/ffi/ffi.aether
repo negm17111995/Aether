@@ -1,151 +1,256 @@
-// BIT-LEVEL FFI - Zero-Overhead C Interop
-// Call C/Rust with no wrapper overhead
+// AETHER FFI - FOREIGN FUNCTION INTERFACE
+// Call C libraries and external code
 
-import std
-
-// ============================================================================
-// C TYPE MAPPING - Bit-exact layouts
-// ============================================================================
-
-// C types mapped to Aether
-const C_CHAR: Int = 1
-const C_SHORT: Int = 2
-const C_INT: Int = 4
-const C_LONG: Int = 8
-const C_PTR: Int = 8
-const C_FLOAT: Int = 4
-const C_DOUBLE: Int = 8
+import runtime.vec
+import runtime.map
 
 // ============================================================================
-// C STRUCT EMULATION - Exact memory layout
+// FFI TYPES
 // ============================================================================
 
-// Define a C struct layout
-// Layout descriptor: [field_count, field_offsets..., field_sizes...]
-func ffi_struct_new(field_count: Int) -> Int {
-    let layout = ae_malloc(8 + field_count * 16)  // offset + size for each field
-    ae_store64(layout, field_count)
-    layout
+const FFI_TYPE_VOID: Int = 0
+const FFI_TYPE_INT8: Int = 1
+const FFI_TYPE_INT16: Int = 2
+const FFI_TYPE_INT32: Int = 3
+const FFI_TYPE_INT64: Int = 4
+const FFI_TYPE_FLOAT: Int = 5
+const FFI_TYPE_DOUBLE: Int = 6
+const FFI_TYPE_PTR: Int = 7
+const FFI_TYPE_STRUCT: Int = 8
+
+// ============================================================================
+// LIBRARY HANDLE
+// ============================================================================
+
+struct Library {
+    path: Int,
+    handle: Int,
+    symbols: Int,
 }
 
-func ffi_struct_set_field(layout: Int, idx: Int, offset: Int, size: Int) {
-    let fc = ae_load64(layout)
-    if idx >= 0 && idx < fc {
-        ae_store64(layout + 8 + idx * 8, offset)
-        ae_store64(layout + 8 + fc * 8 + idx * 8, size)
-    }
+func library_open(path: Int) -> Int {
+    let lib = __builtin_malloc(24)
+    __builtin_store64(lib, path)
+    
+    // dlopen
+    let handle = __builtin_dlopen(path, 1)  // RTLD_LAZY
+    __builtin_store64(lib + 8, handle)
+    __builtin_store64(lib + 16, map_new())
+    
+    lib
 }
 
-func ffi_struct_get_offset(layout: Int, idx: Int) -> Int {
-    let fc = ae_load64(layout)
-    if idx >= 0 && idx < fc {
-        return ae_load64(layout + 8 + idx * 8)
+func library_close(lib: Int) {
+    let handle = __builtin_load64(lib + 8)
+    __builtin_dlclose(handle)
+}
+
+func library_get_symbol(lib: Int, name: Int) -> Int {
+    let handle = __builtin_load64(lib + 8)
+    let symbols = __builtin_load64(lib + 16)
+    
+    if map_has_int(symbols, name) == 1 {
+        return map_get_int(symbols, name)
     }
+    
+    // dlsym
+    let sym = __builtin_dlsym(handle, name)
+    map_set_int(symbols, name, sym)
+    sym
+}
+
+// ============================================================================
+// FUNCTION SIGNATURE
+// ============================================================================
+
+struct FFISignature {
+    return_type: Int,
+    param_types: Int,
+    param_count: Int,
+}
+
+func signature_new(ret_type: Int) -> Int {
+    let sig = __builtin_malloc(24)
+    __builtin_store64(sig, ret_type)
+    __builtin_store64(sig + 8, vec_new())
+    __builtin_store64(sig + 16, 0)
+    sig
+}
+
+func signature_add_param(sig: Int, param_type: Int) {
+    let params = __builtin_load64(sig + 8)
+    vec_push(params, param_type)
+    let count = __builtin_load64(sig + 16) + 1
+    __builtin_store64(sig + 16, count)
+}
+
+// ============================================================================
+// FFI CALL
+// ============================================================================
+
+struct FFICall {
+    func_ptr: Int,
+    signature: Int,
+    args: Int,
+}
+
+func ffi_call_new(func_ptr: Int, sig: Int) -> Int {
+    let call = __builtin_malloc(24)
+    __builtin_store64(call, func_ptr)
+    __builtin_store64(call + 8, sig)
+    __builtin_store64(call + 16, vec_new())
+    call
+}
+
+func ffi_call_push_int(call: Int, val: Int) {
+    let args = __builtin_load64(call + 16)
+    vec_push(args, val)
+}
+
+func ffi_call_push_ptr(call: Int, ptr: Int) {
+    let args = __builtin_load64(call + 16)
+    vec_push(args, ptr)
+}
+
+func ffi_call_invoke(call: Int) -> Int {
+    let func_ptr = __builtin_load64(call)
+    let sig = __builtin_load64(call + 8)
+    let args = __builtin_load64(call + 16)
+    
+    let arg_count = vec_len(args)
+    
+    // Call function based on arg count
+    // Uses platform-specific calling convention
+    if arg_count == 0 {
+        return __builtin_ffi_call0(func_ptr)
+    }
+    if arg_count == 1 {
+        return __builtin_ffi_call1(func_ptr, vec_get(args, 0))
+    }
+    if arg_count == 2 {
+        return __builtin_ffi_call2(func_ptr, vec_get(args, 0), vec_get(args, 1))
+    }
+    if arg_count == 3 {
+        return __builtin_ffi_call3(func_ptr, vec_get(args, 0), vec_get(args, 1), vec_get(args, 2))
+    }
+    if arg_count == 4 {
+        return __builtin_ffi_call4(func_ptr, 
+            vec_get(args, 0), vec_get(args, 1), 
+            vec_get(args, 2), vec_get(args, 3))
+    }
+    
     0
 }
 
-func ffi_struct_get_size(layout: Int, idx: Int) -> Int {
-    let fc = ae_load64(layout)
-    if idx >= 0 && idx < fc {
-        return ae_load64(layout + 8 + fc * 8 + idx * 8)
-    }
-    0
+// ============================================================================
+// C STRING CONVERSION
+// ============================================================================
+
+func to_c_string(aether_str: Int) -> Int {
+    // Aether strings are already null-terminated
+    aether_str
 }
 
-func ffi_struct_total_size(layout: Int) -> Int {
-    let fc = ae_load64(layout)
-    let total = 0
+func from_c_string(c_str: Int) -> Int {
+    // Copy C string
+    let len = c_str_len(c_str)
+    let str = __builtin_malloc(len + 1)
     let i = 0
-    while i < fc {
-        let offset = ffi_struct_get_offset(layout, i)
-        let size = ffi_struct_get_size(layout, i)
-        if offset + size > total {
-            total = offset + size
-        }
+    while i <= len {
+        __builtin_store8(str + i, __builtin_load8(c_str + i))
         i = i + 1
     }
-    total
+    str
+}
+
+func c_str_len(s: Int) -> Int {
+    let i = 0
+    while __builtin_load8(s + i) != 0 { i = i + 1 }
+    i
 }
 
 // ============================================================================
-// C STRUCT INSTANCE - Actual data
+// COMMON C FUNCTIONS
 // ============================================================================
 
-func ffi_instance_new(layout: Int) -> Int {
-    let size = ffi_struct_total_size(layout)
-    let inst = ae_malloc(8 + size)
-    ae_store64(inst, layout)  // Link to layout
-    inst + 8  // Return pointer to data area
+func c_malloc(size: Int) -> Int {
+    let libc = library_open(0)  // Default library
+    let sym = library_get_symbol(libc, make_str("malloc"))
+    let call = ffi_call_new(sym, signature_new(FFI_TYPE_PTR))
+    ffi_call_push_int(call, size)
+    ffi_call_invoke(call)
 }
 
-func ffi_get_field_i64(data: Int, layout: Int, field_idx: Int) -> Int {
-    let offset = ffi_struct_get_offset(layout, field_idx)
-    ae_load64(data + offset)
+func c_free(ptr: Int) {
+    let libc = library_open(0)
+    let sym = library_get_symbol(libc, make_str("free"))
+    let call = ffi_call_new(sym, signature_new(FFI_TYPE_VOID))
+    ffi_call_push_ptr(call, ptr)
+    ffi_call_invoke(call)
 }
 
-func ffi_set_field_i64(data: Int, layout: Int, field_idx: Int, val: Int) {
-    let offset = ffi_struct_get_offset(layout, field_idx)
-    ae_store64(data + offset, val)
-}
-
-func ffi_get_field_i32(data: Int, layout: Int, field_idx: Int) -> Int {
-    let offset = ffi_struct_get_offset(layout, field_idx)
-    // Read 4 bytes (simulate 32-bit read)
-    let val = ae_load64(data + offset)
-    __builtin_and(val, 4294967295)  // Mask to 32 bits
-}
-
-func ffi_set_field_i32(data: Int, layout: Int, field_idx: Int, val: Int) {
-    let offset = ffi_struct_get_offset(layout, field_idx)
-    ae_store64(data + offset, __builtin_and(val, 4294967295))
+func c_printf(fmt: Int) -> Int {
+    let libc = library_open(0)
+    let sym = library_get_symbol(libc, make_str("printf"))
+    let call = ffi_call_new(sym, signature_new(FFI_TYPE_INT32))
+    ffi_call_push_ptr(call, fmt)
+    ffi_call_invoke(call)
 }
 
 // ============================================================================
-// FUNCTION POINTER INTEROP
+// STRUCT LAYOUT
 // ============================================================================
 
-// Call C function with 0-3 arguments
-func ffi_call0(fptr: Int) -> Int {
-    __builtin_call(fptr, 0)
+struct StructLayout {
+    fields: Int,
+    size: Int,
+    alignment: Int,
 }
 
-func ffi_call1(fptr: Int, arg1: Int) -> Int {
-    __builtin_call(fptr, arg1)
-}
-
-// For multiple args, we pack them in memory
-func ffi_call2(fptr: Int, arg1: Int, arg2: Int) -> Int {
-    // C calling convention: args in registers
-    // We simulate by storing args contiguously
-    let args = ae_malloc(16)
-    ae_store64(args, arg1)
-    ae_store64(args + 8, arg2)
-    let result = __builtin_call(fptr, args)
-    __builtin_free(args)
-    result
-}
-
-// ============================================================================
-// EXAMPLE: C timeval struct
-// ============================================================================
-
-// struct timeval { time_t tv_sec; suseconds_t tv_usec; }
-func ffi_timeval_layout() -> Int {
-    let layout = ffi_struct_new(2)
-    ffi_struct_set_field(layout, 0, 0, 8)   // tv_sec at offset 0, size 8
-    ffi_struct_set_field(layout, 1, 8, 8)   // tv_usec at offset 8, size 8
+func struct_layout_new() -> Int {
+    let layout = __builtin_malloc(24)
+    __builtin_store64(layout, vec_new())
+    __builtin_store64(layout + 8, 0)
+    __builtin_store64(layout + 16, 8)
     layout
 }
 
-func ffi_timeval_new() -> Int {
-    let layout = ffi_timeval_layout()
-    ffi_instance_new(layout)
+func struct_add_field(layout: Int, ffi_type: Int) {
+    let fields = __builtin_load64(layout)
+    vec_push(fields, ffi_type)
+    
+    // Update size
+    let size = __builtin_load64(layout + 8)
+    let field_size = get_type_size(ffi_type)
+    size = size + field_size
+    __builtin_store64(layout + 8, size)
 }
 
-func ffi_timeval_get_sec(tv: Int) -> Int {
-    ae_load64(tv)
+func get_type_size(ffi_type: Int) -> Int {
+    if ffi_type == FFI_TYPE_INT8 { return 1 }
+    if ffi_type == FFI_TYPE_INT16 { return 2 }
+    if ffi_type == FFI_TYPE_INT32 { return 4 }
+    if ffi_type == FFI_TYPE_INT64 { return 8 }
+    if ffi_type == FFI_TYPE_FLOAT { return 4 }
+    if ffi_type == FFI_TYPE_DOUBLE { return 8 }
+    if ffi_type == FFI_TYPE_PTR { return 8 }
+    0
 }
 
-func ffi_timeval_get_usec(tv: Int) -> Int {
-    ae_load64(tv + 8)
+// ============================================================================
+// HELPER
+// ============================================================================
+
+func make_str(s: Int) -> Int {
+    s  // Already a string pointer
 }
+
+// Builtin stubs
+func __builtin_dlopen(path: Int, flags: Int) -> Int { 0 }
+func __builtin_dlclose(handle: Int) { }
+func __builtin_dlsym(handle: Int, name: Int) -> Int { 0 }
+func __builtin_ffi_call0(f: Int) -> Int { 0 }
+func __builtin_ffi_call1(f: Int, a0: Int) -> Int { 0 }
+func __builtin_ffi_call2(f: Int, a0: Int, a1: Int) -> Int { 0 }
+func __builtin_ffi_call3(f: Int, a0: Int, a1: Int, a2: Int) -> Int { 0 }
+func __builtin_ffi_call4(f: Int, a0: Int, a1: Int, a2: Int, a3: Int) -> Int { 0 }

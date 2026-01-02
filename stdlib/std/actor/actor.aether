@@ -1,201 +1,329 @@
-// ACTOR-MODEL CONCURRENCY - Deadlock-Free Message Passing
-// No shared state = mathematically impossible deadlocks
+// AETHER ACTOR SYSTEM
+// Erlang-style actors with message passing and supervision
 
-import std
+import runtime.vec
+import runtime.map
 
 // ============================================================================
-// MAILBOX - Thread-safe message queue
+// ACTOR CONSTANTS
 // ============================================================================
 
-const MAILBOX_SIZE: Int = 256
-const MSG_SIZE: Int = 24  // [sender, tag, payload]
+const ACTOR_RUNNING: Int = 0
+const ACTOR_STOPPED: Int = 1
+const ACTOR_CRASHED: Int = 2
+const ACTOR_WAITING: Int = 3
 
-// Mailbox Layout:
-// [0: head (read position)]
-// [8: tail (write position)]
-// [16: lock]
-// [24: messages...]
+// ============================================================================
+// MESSAGE
+// ============================================================================
 
-func mailbox_new() -> Int {
-    let size = 24 + MAILBOX_SIZE * MSG_SIZE
-    let mb = ae_malloc(size)
-    ae_store64(mb, 0)       // head = 0
-    ae_store64(mb + 8, 0)   // tail = 0
-    ae_store64(mb + 16, 0)  // unlocked
+struct Message {
+    sender: Int,
+    receiver: Int,
+    tag: Int,
+    payload: Int,
+    timestamp: Int,
+}
+
+func message_new(sender: Int, receiver: Int, tag: Int, payload: Int) -> Int {
+    let m = __builtin_malloc(40)
+    __builtin_store64(m, sender)
+    __builtin_store64(m + 8, receiver)
+    __builtin_store64(m + 16, tag)
+    __builtin_store64(m + 24, payload)
+    __builtin_store64(m + 32, 0)  // timestamp
+    m
+}
+
+func msg_sender(m: Int) -> Int { __builtin_load64(m) }
+func msg_receiver(m: Int) -> Int { __builtin_load64(m + 8) }
+func msg_tag(m: Int) -> Int { __builtin_load64(m + 16) }
+func msg_payload(m: Int) -> Int { __builtin_load64(m + 24) }
+
+// ============================================================================
+// MAILBOX
+// ============================================================================
+
+struct Mailbox {
+    messages: Int,   // Queue of messages
+    capacity: Int,
+}
+
+func mailbox_new(capacity: Int) -> Int {
+    let mb = __builtin_malloc(16)
+    __builtin_store64(mb, vec_new())
+    __builtin_store64(mb + 8, capacity)
     mb
 }
 
-func mailbox_lock(mb: Int) {
-    // Spin until we acquire lock
-    while __builtin_atomic_cas(mb + 16, 0, 1) == 0 {
-        __builtin_yield()
-    }
-}
-
-func mailbox_unlock(mb: Int) {
-    __builtin_atomic_store(mb + 16, 0)
-}
-
-func mailbox_send(mb: Int, sender: Int, tag: Int, payload: Int) -> Int {
-    mailbox_lock(mb)
-    
-    let head = ae_load64(mb)
-    let tail = ae_load64(mb + 8)
-    let next_tail = (tail + 1) % MAILBOX_SIZE
-    
-    if next_tail == head {
-        // Mailbox full
-        mailbox_unlock(mb)
-        return 0
-    }
-    
-    let offset = 24 + tail * MSG_SIZE
-    ae_store64(mb + offset, sender)
-    ae_store64(mb + offset + 8, tag)
-    ae_store64(mb + offset + 16, payload)
-    ae_store64(mb + 8, next_tail)
-    
-    mailbox_unlock(mb)
+func mailbox_send(mb: Int, msg: Int) -> Int {
+    let messages = __builtin_load64(mb)
+    let capacity = __builtin_load64(mb + 8)
+    if vec_len(messages) >= capacity { return 0 }
+    vec_push(messages, msg)
     1
 }
 
-func mailbox_recv(mb: Int) -> Int {
-    mailbox_lock(mb)
-    
-    let head = ae_load64(mb)
-    let tail = ae_load64(mb + 8)
-    
-    if head == tail {
-        // Mailbox empty
-        mailbox_unlock(mb)
-        return 0
-    }
-    
-    let offset = 24 + head * MSG_SIZE
-    let msg = ae_malloc(MSG_SIZE)
-    ae_store64(msg, ae_load64(mb + offset))
-    ae_store64(msg + 8, ae_load64(mb + offset + 8))
-    ae_store64(msg + 16, ae_load64(mb + offset + 16))
-    
-    ae_store64(mb, (head + 1) % MAILBOX_SIZE)
-    
-    mailbox_unlock(mb)
-    msg
+func mailbox_receive(mb: Int) -> Int {
+    let messages = __builtin_load64(mb)
+    if vec_len(messages) == 0 { return 0 }
+    vec_remove(messages, 0)
 }
 
-func mailbox_is_empty(mb: Int) -> Int {
-    let head = ae_load64(mb)
-    let tail = ae_load64(mb + 8)
-    if head == tail { return 1 }
-    0
+func mailbox_peek(mb: Int) -> Int {
+    let messages = __builtin_load64(mb)
+    if vec_len(messages) == 0 { return 0 }
+    vec_get(messages, 0)
+}
+
+func mailbox_count(mb: Int) -> Int {
+    let messages = __builtin_load64(mb)
+    vec_len(messages)
 }
 
 // ============================================================================
-// ACTOR - Isolated unit with mailbox
+// ACTOR
 // ============================================================================
 
-// Actor Layout:
-// [0: id]
-// [8: mailbox ptr]
-// [16: state ptr]
-// [24: handler ptr]
-
-func actor_new(id: Int, initial_state: Int) -> Int {
-    let actor = ae_malloc(32)
-    ae_store64(actor, id)
-    ae_store64(actor + 8, mailbox_new())
-    ae_store64(actor + 16, initial_state)
-    ae_store64(actor + 24, 0)  // handler set later
-    actor
+struct Actor {
+    id: Int,
+    state: Int,
+    status: Int,
+    mailbox: Int,
+    behavior: Int,   // Function pointer
+    parent: Int,
+    children: Int,
 }
 
-func actor_id(actor: Int) -> Int {
-    ae_load64(actor)
+func actor_new(id: Int, behavior: Int) -> Int {
+    let a = __builtin_malloc(56)
+    __builtin_store64(a, id)
+    __builtin_store64(a + 8, 0)              // state
+    __builtin_store64(a + 16, ACTOR_RUNNING)
+    __builtin_store64(a + 24, mailbox_new(1000))
+    __builtin_store64(a + 32, behavior)
+    __builtin_store64(a + 40, 0)             // parent
+    __builtin_store64(a + 48, vec_new())     // children
+    a
 }
 
-func actor_mailbox(actor: Int) -> Int {
-    ae_load64(actor + 8)
-}
+func actor_id(a: Int) -> Int { __builtin_load64(a) }
+func actor_state(a: Int) -> Int { __builtin_load64(a + 8) }
+func actor_status(a: Int) -> Int { __builtin_load64(a + 16) }
+func actor_mailbox(a: Int) -> Int { __builtin_load64(a + 24) }
+func actor_behavior(a: Int) -> Int { __builtin_load64(a + 32) }
+func actor_parent(a: Int) -> Int { __builtin_load64(a + 40) }
+func actor_children(a: Int) -> Int { __builtin_load64(a + 48) }
 
-func actor_state(actor: Int) -> Int {
-    ae_load64(actor + 16)
-}
-
-func actor_set_state(actor: Int, state: Int) {
-    ae_store64(actor + 16, state)
-}
+func actor_set_state(a: Int, s: Int) { __builtin_store64(a + 8, s) }
+func actor_set_status(a: Int, s: Int) { __builtin_store64(a + 16, s) }
+func actor_set_parent(a: Int, p: Int) { __builtin_store64(a + 40, p) }
 
 // Send message to actor
-func actor_send(actor: Int, sender_id: Int, tag: Int, payload: Int) -> Int {
+func actor_send(actor: Int, msg: Int) -> Int {
     let mb = actor_mailbox(actor)
-    mailbox_send(mb, sender_id, tag, payload)
+    mailbox_send(mb, msg)
 }
 
-// Process one message from mailbox
+// Receive next message
 func actor_receive(actor: Int) -> Int {
     let mb = actor_mailbox(actor)
-    mailbox_recv(mb)
+    mailbox_receive(mb)
+}
+
+// Process one message
+func actor_step(actor: Int) -> Int {
+    let msg = actor_receive(actor)
+    if msg == 0 { return 0 }
+    
+    let behavior = actor_behavior(actor)
+    // Call behavior with message and current state
+    // Returns new state
+    let new_state = actor_state(actor)  // Simplified
+    actor_set_state(actor, new_state)
+    1
 }
 
 // ============================================================================
-// MESSAGE TAGS
+// ACTOR SYSTEM
 // ============================================================================
 
-const MSG_PING: Int = 1
-const MSG_PONG: Int = 2
-const MSG_COMPUTE: Int = 3
-const MSG_RESULT: Int = 4
-const MSG_STOP: Int = 5
-
-// ============================================================================
-// ACTOR SYSTEM - Manages multiple actors
-// ============================================================================
-
-const MAX_ACTORS: Int = 64
+struct ActorSystem {
+    actors: Int,      // Map of id -> actor
+    scheduler: Int,   // Scheduler state
+    next_id: Int,
+    running: Int,
+}
 
 func actor_system_new() -> Int {
-    let sys = ae_malloc(8 + MAX_ACTORS * 8)
-    ae_store64(sys, 0)  // count = 0
+    let sys = __builtin_malloc(32)
+    __builtin_store64(sys, map_new())
+    __builtin_store64(sys + 8, vec_new())
+    __builtin_store64(sys + 16, 1)
+    __builtin_store64(sys + 24, 1)
     sys
 }
 
-func actor_system_spawn(sys: Int, initial_state: Int) -> Int {
-    let count = ae_load64(sys)
-    if count >= MAX_ACTORS {
-        return 0
+func system_actors(sys: Int) -> Int { __builtin_load64(sys) }
+func system_scheduler(sys: Int) -> Int { __builtin_load64(sys + 8) }
+func system_next_id(sys: Int) -> Int { __builtin_load64(sys + 16) }
+func system_running(sys: Int) -> Int { __builtin_load64(sys + 24) }
+
+func system_set_running(sys: Int, r: Int) { __builtin_store64(sys + 24, r) }
+
+// Spawn new actor
+func system_spawn(sys: Int, behavior: Int) -> Int {
+    let id = system_next_id(sys)
+    __builtin_store64(sys + 16, id + 1)
+    
+    let actor = actor_new(id, behavior)
+    let actors = system_actors(sys)
+    map_set_int(actors, id, actor)
+    
+    let scheduler = system_scheduler(sys)
+    vec_push(scheduler, id)
+    
+    id
+}
+
+// Spawn with parent
+func system_spawn_child(sys: Int, parent: Int, behavior: Int) -> Int {
+    let id = system_spawn(sys, behavior)
+    let actors = system_actors(sys)
+    
+    let child = map_get_int(actors, id)
+    let parent_actor = map_get_int(actors, parent)
+    
+    if child != 0 && parent_actor != 0 {
+        actor_set_parent(child, parent)
+        let children = actor_children(parent_actor)
+        vec_push(children, id)
     }
     
-    let actor = actor_new(count, initial_state)
-    ae_store64(sys + 8 + count * 8, actor)
-    ae_store64(sys, count + 1)
-    actor
+    id
 }
 
-func actor_system_get(sys: Int, id: Int) -> Int {
-    let count = ae_load64(sys)
-    if id < 0 || id >= count {
-        return 0
-    }
-    ae_load64(sys + 8 + id * 8)
+// Get actor by ID
+func system_get_actor(sys: Int, id: Int) -> Int {
+    let actors = system_actors(sys)
+    map_get_int(actors, id)
 }
 
-// Run one tick of actor system (process one message per actor)
-func actor_system_tick(sys: Int) -> Int {
-    let count = ae_load64(sys)
+// Send message
+func system_send(sys: Int, to: Int, from: Int, tag: Int, payload: Int) -> Int {
+    let actor = system_get_actor(sys, to)
+    if actor == 0 { return 0 }
+    let msg = message_new(from, to, tag, payload)
+    actor_send(actor, msg)
+}
+
+// Run scheduler (round-robin)
+func system_run_once(sys: Int) -> Int {
+    let scheduler = system_scheduler(sys)
+    if vec_len(scheduler) == 0 { return 0 }
+    
+    let actors = system_actors(sys)
     let processed = 0
     let i = 0
     
-    while i < count {
-        let actor = ae_load64(sys + 8 + i * 8)
-        let msg = actor_receive(actor)
-        if msg != 0 {
-            processed = processed + 1
-            // Message received: [sender, tag, payload]
-            // Handler would process here
-            __builtin_free(msg)
+    while i < vec_len(scheduler) {
+        let id = vec_get(scheduler, i)
+        let actor = map_get_int(actors, id)
+        if actor != 0 && actor_status(actor) == ACTOR_RUNNING {
+            processed = processed + actor_step(actor)
         }
         i = i + 1
     }
     
     processed
+}
+
+// Run until no more messages
+func system_run(sys: Int) {
+    while system_running(sys) == 1 {
+        let processed = system_run_once(sys)
+        if processed == 0 { break }
+    }
+}
+
+// Shutdown system
+func system_shutdown(sys: Int) {
+    system_set_running(sys, 0)
+}
+
+// ============================================================================
+// SUPERVISOR
+// Manages child actor lifecycle
+// ============================================================================
+
+const STRATEGY_ONE_FOR_ONE: Int = 0
+const STRATEGY_ONE_FOR_ALL: Int = 1
+const STRATEGY_REST_FOR_ONE: Int = 2
+
+struct Supervisor {
+    actor: Int,
+    strategy: Int,
+    children: Int,
+    max_restarts: Int,
+    restart_window: Int,
+}
+
+func supervisor_new(sys: Int, strategy: Int) -> Int {
+    let sup = __builtin_malloc(40)
+    let id = system_spawn(sys, 0)  // Supervisor behavior
+    __builtin_store64(sup, id)
+    __builtin_store64(sup + 8, strategy)
+    __builtin_store64(sup + 16, vec_new())
+    __builtin_store64(sup + 24, 3)     // max restarts
+    __builtin_store64(sup + 32, 5000)  // window (ms)
+    sup
+}
+
+func supervisor_start_child(sup: Int, sys: Int, behavior: Int) -> Int {
+    let sup_id = __builtin_load64(sup)
+    let id = system_spawn_child(sys, sup_id, behavior)
+    let children = __builtin_load64(sup + 16)
+    vec_push(children, id)
+    id
+}
+
+func supervisor_restart_child(sup: Int, sys: Int, id: Int) {
+    let strategy = __builtin_load64(sup + 8)
+    
+    if strategy == STRATEGY_ONE_FOR_ONE {
+        // Restart only the crashed child
+        let actor = system_get_actor(sys, id)
+        if actor != 0 {
+            actor_set_status(actor, ACTOR_RUNNING)
+        }
+    }
+    if strategy == STRATEGY_ONE_FOR_ALL {
+        // Restart all children
+        let children = __builtin_load64(sup + 16)
+        let i = 0
+        while i < vec_len(children) {
+            let child_id = vec_get(children, i)
+            let actor = system_get_actor(sys, child_id)
+            if actor != 0 {
+                actor_set_status(actor, ACTOR_RUNNING)
+            }
+            i = i + 1
+        }
+    }
+}
+
+// ============================================================================
+// COMMON ACTOR PATTERNS
+// ============================================================================
+
+// GenServer-style call (synchronous request-reply)
+func actor_call(sys: Int, from: Int, to: Int, request: Int) -> Int {
+    system_send(sys, to, from, 1, request)  // tag=1 for call
+    // In real implementation, would wait for reply
+    0
+}
+
+// GenServer-style cast (asynchronous)
+func actor_cast(sys: Int, from: Int, to: Int, message: Int) {
+    system_send(sys, to, from, 2, message)  // tag=2 for cast
 }

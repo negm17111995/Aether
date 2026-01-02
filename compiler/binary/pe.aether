@@ -1,0 +1,227 @@
+// AETHER PE GENERATOR
+// Pure Aether - Generates Windows executable binaries (PE format)
+
+import runtime.vec
+
+// ============================================================================
+// PE CONSTANTS
+// ============================================================================
+
+// DOS header magic
+const MZ_MAGIC: Int = 23117               // 0x5A4D ("MZ")
+
+// PE signature
+const PE_SIGNATURE: Int = 17744           // 0x4550 ("PE\0\0")
+
+// Machine types
+const IMAGE_FILE_MACHINE_AMD64: Int = 34404
+
+// Characteristics
+const IMAGE_FILE_EXECUTABLE_IMAGE: Int = 2
+const IMAGE_FILE_LARGE_ADDRESS_AWARE: Int = 32
+
+// Optional header magic
+const PE32_PLUS_MAGIC: Int = 523         // 0x020B (PE32+)
+
+// Subsystem
+const IMAGE_SUBSYSTEM_WINDOWS_CUI: Int = 3  // Console application
+
+// Section characteristics
+const IMAGE_SCN_CNT_CODE: Int = 32
+const IMAGE_SCN_MEM_EXECUTE: Int = 536870912
+const IMAGE_SCN_MEM_READ: Int = 1073741824
+
+// ============================================================================
+// PE BUILDER
+// ============================================================================
+
+func pe_new() -> Int {
+    vec_bytes_new()
+}
+
+func pe_pos(p: Int) -> Int {
+    vec_len(p)
+}
+
+func pe_get_binary(p: Int) -> Int {
+    vec_data(p)
+}
+
+func pe_get_size(p: Int) -> Int {
+    vec_len(p)
+}
+
+func pe_write8(p: Int, val: Int) {
+    vec_push8(p, val)
+}
+
+func pe_write16(p: Int, val: Int) {
+    vec_push16(p, val)
+}
+
+func pe_write32(p: Int, val: Int) {
+    vec_push32(p, val)
+}
+
+func pe_write64(p: Int, val: Int) {
+    vec_push64(p, val)
+}
+
+func pe_write_zeros(p: Int, count: Int) {
+    let i = 0
+    while i < count {
+        pe_write8(p, 0)
+        i = i + 1
+    }
+}
+
+func pe_write_bytes(p: Int, data: Int, len: Int) {
+    let i = 0
+    while i < len {
+        pe_write8(p, __builtin_load8(data + i))
+        i = i + 1
+    }
+}
+
+// ============================================================================
+// BUILD PE EXECUTABLE
+// ============================================================================
+
+func pe_build_exe(code: Int, code_size: Int) -> Int {
+    let p = pe_new()
+    
+    // Calculate sizes and offsets
+    let dos_header_size = 64
+    let pe_header_offset = 128            // Where PE header starts
+    let coff_header_size = 20
+    let optional_header_size = 240        // PE32+ optional header
+    let section_header_size = 40
+    let num_sections = 1
+    let headers_size = 512                // Page-aligned headers
+    let section_alignment = 4096
+    let file_alignment = 512
+    let image_base = 5368709120           // 0x140000000 (preferred for Win64)
+    let code_rva = 4096                   // RVA of .text section
+    let entry_rva = code_rva              // Entry point RVA
+    
+    // =========== DOS HEADER ===========
+    pe_write16(p, MZ_MAGIC)               // e_magic
+    pe_write_zeros(p, 58)                 // DOS header padding
+    pe_write32(p, pe_header_offset)       // e_lfanew: offset to PE header
+    
+    // DOS stub padding
+    while pe_pos(p) < pe_header_offset {
+        pe_write8(p, 0)
+    }
+    
+    // =========== PE SIGNATURE ===========
+    pe_write8(p, 80)                      // 'P'
+    pe_write8(p, 69)                      // 'E'
+    pe_write8(p, 0)
+    pe_write8(p, 0)
+    
+    // =========== COFF HEADER ===========
+    pe_write16(p, IMAGE_FILE_MACHINE_AMD64) // Machine
+    pe_write16(p, num_sections)             // NumberOfSections
+    pe_write32(p, 0)                        // TimeDateStamp
+    pe_write32(p, 0)                        // PointerToSymbolTable
+    pe_write32(p, 0)                        // NumberOfSymbols
+    pe_write16(p, optional_header_size)     // SizeOfOptionalHeader
+    pe_write16(p, IMAGE_FILE_EXECUTABLE_IMAGE + IMAGE_FILE_LARGE_ADDRESS_AWARE)
+    
+    // =========== OPTIONAL HEADER (PE32+) ===========
+    pe_write16(p, PE32_PLUS_MAGIC)        // Magic
+    pe_write8(p, 14)                      // MajorLinkerVersion
+    pe_write8(p, 0)                       // MinorLinkerVersion
+    pe_write32(p, code_size)              // SizeOfCode
+    pe_write32(p, 0)                      // SizeOfInitializedData
+    pe_write32(p, 0)                      // SizeOfUninitializedData
+    pe_write32(p, entry_rva)              // AddressOfEntryPoint
+    pe_write32(p, code_rva)               // BaseOfCode
+    
+    pe_write64(p, image_base)             // ImageBase
+    pe_write32(p, section_alignment)      // SectionAlignment
+    pe_write32(p, file_alignment)         // FileAlignment
+    pe_write16(p, 6)                      // MajorOperatingSystemVersion
+    pe_write16(p, 0)                      // MinorOperatingSystemVersion
+    pe_write16(p, 0)                      // MajorImageVersion
+    pe_write16(p, 0)                      // MinorImageVersion
+    pe_write16(p, 6)                      // MajorSubsystemVersion
+    pe_write16(p, 0)                      // MinorSubsystemVersion
+    pe_write32(p, 0)                      // Win32VersionValue
+    
+    // SizeOfImage: headers + code section (aligned)
+    let code_section_size = ((code_size + section_alignment - 1) / section_alignment) * section_alignment
+    let image_size = code_rva + code_section_size
+    pe_write32(p, image_size)             // SizeOfImage
+    pe_write32(p, headers_size)           // SizeOfHeaders
+    pe_write32(p, 0)                      // CheckSum
+    pe_write16(p, IMAGE_SUBSYSTEM_WINDOWS_CUI)  // Subsystem
+    pe_write16(p, 0)                      // DllCharacteristics
+    
+    pe_write64(p, 1048576)                // SizeOfStackReserve (1MB)
+    pe_write64(p, 4096)                   // SizeOfStackCommit
+    pe_write64(p, 1048576)                // SizeOfHeapReserve
+    pe_write64(p, 4096)                   // SizeOfHeapCommit
+    pe_write32(p, 0)                      // LoaderFlags
+    pe_write32(p, 16)                     // NumberOfRvaAndSizes
+    
+    // Data directories (16 entries)
+    let i = 0
+    while i < 16 {
+        pe_write32(p, 0)                  // VirtualAddress
+        pe_write32(p, 0)                  // Size
+        i = i + 1
+    }
+    
+    // =========== SECTION HEADERS ===========
+    // .text section
+    pe_write8(p, 46)                      // '.'
+    pe_write8(p, 116)                     // 't'
+    pe_write8(p, 101)                     // 'e'
+    pe_write8(p, 120)                     // 'x'
+    pe_write8(p, 116)                     // 't'
+    pe_write_zeros(p, 3)                  // Name padding
+    
+    pe_write32(p, code_size)              // VirtualSize
+    pe_write32(p, code_rva)               // VirtualAddress
+    let raw_size = ((code_size + file_alignment - 1) / file_alignment) * file_alignment
+    pe_write32(p, raw_size)               // SizeOfRawData
+    pe_write32(p, headers_size)           // PointerToRawData
+    pe_write32(p, 0)                      // PointerToRelocations
+    pe_write32(p, 0)                      // PointerToLinenumbers
+    pe_write16(p, 0)                      // NumberOfRelocations
+    pe_write16(p, 0)                      // NumberOfLinenumbers
+    pe_write32(p, IMAGE_SCN_CNT_CODE + IMAGE_SCN_MEM_EXECUTE + IMAGE_SCN_MEM_READ)
+    
+    // =========== PAD TO HEADERS SIZE ===========
+    while pe_pos(p) < headers_size {
+        pe_write8(p, 0)
+    }
+    
+    // =========== WRITE CODE ===========
+    pe_write_bytes(p, code, code_size)
+    
+    // =========== PAD TO FILE ALIGNMENT ===========
+    while pe_pos(p) % file_alignment != 0 {
+        pe_write8(p, 0)
+    }
+    
+    p
+}
+
+// ============================================================================
+// WRITE TO FILE
+// ============================================================================
+
+func pe_write_file(p: Int, path: Int) -> Int {
+    let fd = __builtin_open(path, 577)    // O_WRONLY | O_CREAT | O_TRUNC
+    if fd < 0 { return 0 - 1 }
+    
+    let data = pe_get_binary(p)
+    let size = pe_get_size(p)
+    __builtin_write(fd, data, size)
+    __builtin_close(fd)
+    
+    size
+}

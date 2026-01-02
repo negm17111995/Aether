@@ -1,0 +1,338 @@
+// AETHER CLUSTER - DISTRIBUTED COMPUTING
+// Cluster management, distributed actors, and consensus
+
+import runtime.vec
+import runtime.map
+import std.actor.actor
+import std.net.net
+
+// ============================================================================
+// CLUSTER CONSTANTS
+// ============================================================================
+
+const NODE_JOINING: Int = 0
+const NODE_UP: Int = 1
+const NODE_LEAVING: Int = 2
+const NODE_DOWN: Int = 3
+const NODE_UNREACHABLE: Int = 4
+
+// ============================================================================
+// CLUSTER NODE
+// ============================================================================
+
+struct ClusterNode {
+    id: Int,
+    addr: Int,
+    port: Int,
+    status: Int,
+    roles: Int,
+    last_seen: Int,
+}
+
+func node_new(id: Int, addr: Int, port: Int) -> Int {
+    let n = __builtin_malloc(48)
+    __builtin_store64(n, id)
+    __builtin_store64(n + 8, addr)
+    __builtin_store64(n + 16, port)
+    __builtin_store64(n + 24, NODE_JOINING)
+    __builtin_store64(n + 32, vec_new())
+    __builtin_store64(n + 40, 0)
+    n
+}
+
+func node_id(n: Int) -> Int { __builtin_load64(n) }
+func node_addr(n: Int) -> Int { __builtin_load64(n + 8) }
+func node_port(n: Int) -> Int { __builtin_load64(n + 16) }
+func node_status(n: Int) -> Int { __builtin_load64(n + 24) }
+func node_roles(n: Int) -> Int { __builtin_load64(n + 32) }
+
+func node_set_status(n: Int, s: Int) { __builtin_store64(n + 24, s) }
+func node_add_role(n: Int, role: Int) { vec_push(node_roles(n), role) }
+func node_update_seen(n: Int, time: Int) { __builtin_store64(n + 40, time) }
+
+// ============================================================================
+// CLUSTER
+// ============================================================================
+
+struct Cluster {
+    self_node: Int,
+    nodes: Int,       // Map of id -> node
+    gossip_port: Int,
+    seeds: Int,       // Seed nodes for joining
+    actor_system: Int,
+}
+
+func cluster_new(self_addr: Int, self_port: Int) -> Int {
+    let c = __builtin_malloc(40)
+    let self_id = hash_addr(self_addr, self_port)
+    let self_node = node_new(self_id, self_addr, self_port)
+    node_set_status(self_node, NODE_UP)
+    
+    __builtin_store64(c, self_node)
+    __builtin_store64(c + 8, map_new())
+    __builtin_store64(c + 16, self_port + 1)  // gossip port
+    __builtin_store64(c + 24, vec_new())
+    __builtin_store64(c + 32, actor_system_new())
+    
+    let nodes = __builtin_load64(c + 8)
+    map_set_int(nodes, self_id, self_node)
+    
+    c
+}
+
+func cluster_self(c: Int) -> Int { __builtin_load64(c) }
+func cluster_nodes(c: Int) -> Int { __builtin_load64(c + 8) }
+func cluster_gossip_port(c: Int) -> Int { __builtin_load64(c + 16) }
+func cluster_seeds(c: Int) -> Int { __builtin_load64(c + 24) }
+func cluster_actor_system(c: Int) -> Int { __builtin_load64(c + 32) }
+
+func hash_addr(addr: Int, port: Int) -> Int {
+    let h = 5381
+    h = h * 33 + addr
+    h = h * 33 + port
+    if h < 0 { h = 0 - h }
+    h
+}
+
+// Add seed node
+func cluster_add_seed(c: Int, addr: Int, port: Int) {
+    let seeds = cluster_seeds(c)
+    let seed = __builtin_malloc(16)
+    __builtin_store64(seed, addr)
+    __builtin_store64(seed + 8, port)
+    vec_push(seeds, seed)
+}
+
+// Join cluster via seed nodes
+func cluster_join(c: Int) -> Int {
+    let seeds = cluster_seeds(c)
+    let i = 0
+    while i < vec_len(seeds) {
+        let seed = vec_get(seeds, i)
+        let addr = __builtin_load64(seed)
+        let port = __builtin_load64(seed + 8)
+        if gossip_join(c, addr, port) == 1 { return 1 }
+        i = i + 1
+    }
+    0
+}
+
+// Leave cluster gracefully
+func cluster_leave(c: Int) {
+    let self = cluster_self(c)
+    node_set_status(self, NODE_LEAVING)
+    gossip_broadcast_leave(c)
+}
+
+// Get node by ID
+func cluster_get_node(c: Int, id: Int) -> Int {
+    let nodes = cluster_nodes(c)
+    map_get_int(nodes, id)
+}
+
+// Get all up nodes
+func cluster_up_nodes(c: Int) -> Int {
+    let nodes = cluster_nodes(c)
+    let result = vec_new()
+    // Iterate and filter by status
+    result
+}
+
+// ============================================================================
+// GOSSIP PROTOCOL
+// ============================================================================
+
+const GOSSIP_JOIN: Int = 1
+const GOSSIP_LEAVE: Int = 2
+const GOSSIP_HEARTBEAT: Int = 3
+const GOSSIP_STATE: Int = 4
+
+struct GossipMessage {
+    msg_type: Int,
+    from_id: Int,
+    data: Int,
+    vector_clock: Int,
+}
+
+func gossip_msg_new(msg_type: Int, from: Int, data: Int) -> Int {
+    let m = __builtin_malloc(32)
+    __builtin_store64(m, msg_type)
+    __builtin_store64(m + 8, from)
+    __builtin_store64(m + 16, data)
+    __builtin_store64(m + 24, vec_new())
+    m
+}
+
+func gossip_join(c: Int, addr: Int, port: Int) -> Int {
+    let self = cluster_self(c)
+    let msg = gossip_msg_new(GOSSIP_JOIN, node_id(self), 0)
+    // Send join message to addr:port
+    1
+}
+
+func gossip_broadcast_leave(c: Int) {
+    let self = cluster_self(c)
+    let msg = gossip_msg_new(GOSSIP_LEAVE, node_id(self), 0)
+    // Broadcast to all known nodes
+}
+
+func gossip_heartbeat(c: Int) {
+    let self = cluster_self(c)
+    let msg = gossip_msg_new(GOSSIP_HEARTBEAT, node_id(self), 0)
+    // Send to random subset of nodes
+}
+
+func gossip_receive(c: Int, msg: Int) {
+    let msg_type = __builtin_load64(msg)
+    let from_id = __builtin_load64(msg + 8)
+    
+    if msg_type == GOSSIP_JOIN {
+        // Add new node
+        let nodes = cluster_nodes(c)
+        if map_has_int(nodes, from_id) == 0 {
+            // Request state from sender
+        }
+    }
+    if msg_type == GOSSIP_LEAVE {
+        let node = cluster_get_node(c, from_id)
+        if node != 0 { node_set_status(node, NODE_LEAVING) }
+    }
+    if msg_type == GOSSIP_HEARTBEAT {
+        let node = cluster_get_node(c, from_id)
+        if node != 0 { node_update_seen(node, 0) }  // Current time
+    }
+}
+
+// ============================================================================
+// DISTRIBUTED ACTORS
+// ============================================================================
+
+// Send message to remote actor
+func cluster_send(c: Int, node_id: Int, actor_id: Int, msg: Int) -> Int {
+    let node = cluster_get_node(c, node_id)
+    if node == 0 { return 0 }
+    // Serialize and send message
+    1
+}
+
+// Spawn actor on remote node
+func cluster_spawn(c: Int, node_id: Int, behavior: Int) -> Int {
+    let node = cluster_get_node(c, node_id)
+    if node == 0 { return 0 }
+    // Send spawn request
+    0
+}
+
+// ============================================================================
+// CONSISTENT HASHING
+// ============================================================================
+
+struct HashRing {
+    ring: Int,       // Sorted list of (hash, node_id)
+    replicas: Int,   // Virtual nodes per physical node
+}
+
+func hash_ring_new(replicas: Int) -> Int {
+    let hr = __builtin_malloc(16)
+    __builtin_store64(hr, vec_new())
+    __builtin_store64(hr + 8, replicas)
+    hr
+}
+
+func hash_ring_add(hr: Int, node_id: Int) {
+    let ring = __builtin_load64(hr)
+    let replicas = __builtin_load64(hr + 8)
+    
+    let i = 0
+    while i < replicas {
+        let hash = hash_node_replica(node_id, i)
+        let entry = __builtin_malloc(16)
+        __builtin_store64(entry, hash)
+        __builtin_store64(entry + 8, node_id)
+        vec_push(ring, entry)
+        i = i + 1
+    }
+    // Sort ring by hash
+}
+
+func hash_ring_get(hr: Int, key: Int) -> Int {
+    let ring = __builtin_load64(hr)
+    let hash = hash_key(key)
+    
+    // Binary search for first hash >= key hash
+    let i = 0
+    while i < vec_len(ring) {
+        let entry = vec_get(ring, i)
+        let entry_hash = __builtin_load64(entry)
+        if entry_hash >= hash {
+            return __builtin_load64(entry + 8)  // node_id
+        }
+        i = i + 1
+    }
+    
+    // Wrap around
+    if vec_len(ring) > 0 {
+        let entry = vec_get(ring, 0)
+        return __builtin_load64(entry + 8)
+    }
+    0
+}
+
+func hash_node_replica(node_id: Int, replica: Int) -> Int {
+    let h = 5381
+    h = h * 33 + node_id
+    h = h * 33 + replica
+    if h < 0 { h = 0 - h }
+    h
+}
+
+func hash_key(key: Int) -> Int {
+    let h = 5381
+    h = h * 33 + key
+    if h < 0 { h = 0 - h }
+    h
+}
+
+// ============================================================================
+// RAFT CONSENSUS (Simplified)
+// ============================================================================
+
+const RAFT_FOLLOWER: Int = 0
+const RAFT_CANDIDATE: Int = 1
+const RAFT_LEADER: Int = 2
+
+struct RaftState {
+    state: Int,
+    current_term: Int,
+    voted_for: Int,
+    log: Int,
+    commit_index: Int,
+    leader_id: Int,
+}
+
+func raft_new() -> Int {
+    let r = __builtin_malloc(48)
+    __builtin_store64(r, RAFT_FOLLOWER)
+    __builtin_store64(r + 8, 0)   // term
+    __builtin_store64(r + 16, 0)  // voted_for
+    __builtin_store64(r + 24, vec_new())  // log
+    __builtin_store64(r + 32, 0)  // commit_index
+    __builtin_store64(r + 40, 0)  // leader
+    r
+}
+
+func raft_start_election(r: Int) {
+    __builtin_store64(r, RAFT_CANDIDATE)
+    let term = __builtin_load64(r + 8) + 1
+    __builtin_store64(r + 8, term)
+    // Request votes from peers
+}
+
+func raft_become_leader(r: Int) {
+    __builtin_store64(r, RAFT_LEADER)
+}
+
+func raft_append_entry(r: Int, entry: Int) {
+    let log = __builtin_load64(r + 24)
+    vec_push(log, entry)
+}

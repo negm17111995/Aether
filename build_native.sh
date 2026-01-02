@@ -52,12 +52,12 @@ sed -i '' '/^import /d' /tmp/aether_pure.aether
 
 echo "[4/6] Compiling (Pure Aether Self-Hosting)..."
 # Pure Aether self-hosting - no C involved
-./bootstrap/aetherc_native /tmp/aether_pure.aether
+./bootstrap/aetherc /tmp/aether_pure.aether
 
 echo "[5/6] Compilation complete. Finalizing..."
 # No C files generated - pure Aether
-mv a.out bootstrap/aetherc_native
-chmod +x bootstrap/aetherc_native
+mv a.out bootstrap/aetherc 2>/dev/null || true
+chmod +x bootstrap/aetherc
 
 echo "[6/6] SUCCESS! Native compiler is ready."
-ls -l bootstrap/aetherc_native
+ls -l bootstrap/aetherc

@@ -1,0 +1,300 @@
+// AETHER MACH-O GENERATOR
+// Pure Aether - Generates macOS executable binaries (Mach-O format)
+
+import runtime.vec
+
+// ============================================================================
+// MACH-O CONSTANTS
+// ============================================================================
+
+// Magic numbers
+const MH_MAGIC_64: Int = 4277009103      // 0xFEEDFACF
+
+// CPU Types
+const CPU_TYPE_X86_64: Int = 16777223    // 0x01000007
+const CPU_TYPE_ARM64: Int = 16777228     // 0x0100000C
+
+// File Types
+const MH_EXECUTE: Int = 2
+
+// Flags
+const MH_NOUNDEFS: Int = 1
+const MH_DYLDLINK: Int = 4
+const MH_TWOLEVEL: Int = 128
+const MH_PIE: Int = 2097152
+
+// Load Commands
+const LC_SEGMENT_64: Int = 25            // 0x19
+const LC_SYMTAB: Int = 2
+const LC_DYSYMTAB: Int = 11
+const LC_LOAD_DYLINKER: Int = 14
+const LC_UUID: Int = 27
+const LC_MAIN: Int = 2147483688          // 0x80000028
+const LC_UNIXTHREAD: Int = 5
+
+// VM Protection
+const VM_PROT_NONE: Int = 0
+const VM_PROT_READ: Int = 1
+const VM_PROT_WRITE: Int = 2
+const VM_PROT_EXECUTE: Int = 4
+
+// Section Types
+const S_REGULAR: Int = 0
+const S_ATTR_PURE_INSTRUCTIONS: Int = 2147483648
+const S_ATTR_SOME_INSTRUCTIONS: Int = 1024
+
+// ============================================================================
+// MACH-O BUILDER
+// ============================================================================
+
+func macho_new() -> Int {
+    vec_bytes_new()
+}
+
+func macho_pos(m: Int) -> Int {
+    vec_len(m)
+}
+
+func macho_get_binary(m: Int) -> Int {
+    vec_data(m)
+}
+
+func macho_get_size(m: Int) -> Int {
+    vec_len(m)
+}
+
+func macho_write8(m: Int, val: Int) {
+    vec_push8(m, val)
+}
+
+func macho_write16(m: Int, val: Int) {
+    vec_push16(m, val)
+}
+
+func macho_write32(m: Int, val: Int) {
+    vec_push32(m, val)
+}
+
+func macho_write64(m: Int, val: Int) {
+    vec_push64(m, val)
+}
+
+func macho_write_zeros(m: Int, count: Int) {
+    let i = 0
+    while i < count {
+        macho_write8(m, 0)
+        i = i + 1
+    }
+}
+
+func macho_write_bytes(m: Int, data: Int, len: Int) {
+    let i = 0
+    while i < len {
+        macho_write8(m, __builtin_load8(data + i))
+        i = i + 1
+    }
+}
+
+func macho_write_str(m: Int, s: Int) {
+    let i = 0
+    while __builtin_load8(s + i) != 0 {
+        macho_write8(m, __builtin_load8(s + i))
+        i = i + 1
+    }
+}
+
+// ============================================================================
+// BUILD MACH-O EXECUTABLE
+// ============================================================================
+
+// arch: 0 = x86_64, 1 = ARM64
+func macho_build_exe(arch: Int, code: Int, code_size: Int) -> Int {
+    let m = macho_new()
+    
+    // Calculate sizes and offsets
+    let header_size = 32                  // Mach-O header
+    let pagezero_cmd = 72                 // LC_SEGMENT_64 for __PAGEZERO
+    let text_cmd = 72 + 80                // LC_SEGMENT_64 for __TEXT + section
+    let unixthread_cmd = 184              // LC_UNIXTHREAD
+    let sizeofcmds = pagezero_cmd + text_cmd + unixthread_cmd
+    let header_total = header_size + sizeofcmds
+    let code_offset = 4096                // Page-aligned
+    let base_addr = 4294967296            // 0x100000000
+    let entry_addr = base_addr + code_offset
+    
+    // CPU type
+    let cpu_type = CPU_TYPE_X86_64
+    if arch == 1 { cpu_type = CPU_TYPE_ARM64 }
+    
+    // =========== MACH-O HEADER ===========
+    macho_write32(m, MH_MAGIC_64)         // magic
+    macho_write32(m, cpu_type)            // cputype
+    macho_write32(m, 0)                   // cpusubtype
+    macho_write32(m, MH_EXECUTE)          // filetype
+    macho_write32(m, 3)                   // ncmds
+    macho_write32(m, sizeofcmds)          // sizeofcmds
+    macho_write32(m, MH_NOUNDEFS + MH_PIE) // flags
+    macho_write32(m, 0)                   // reserved
+    
+    // =========== LC_SEGMENT_64: __PAGEZERO ===========
+    macho_write32(m, LC_SEGMENT_64)       // cmd
+    macho_write32(m, 72)                  // cmdsize
+    
+    // segname: "__PAGEZERO" (16 bytes)
+    macho_write8(m, 95) macho_write8(m, 95)  // __
+    macho_write8(m, 80) macho_write8(m, 65)  // PA
+    macho_write8(m, 71) macho_write8(m, 69)  // GE
+    macho_write8(m, 90) macho_write8(m, 69)  // ZE
+    macho_write8(m, 82) macho_write8(m, 79)  // RO
+    macho_write_zeros(m, 6)
+    
+    macho_write64(m, 0)                   // vmaddr
+    macho_write64(m, base_addr)           // vmsize
+    macho_write64(m, 0)                   // fileoff
+    macho_write64(m, 0)                   // filesize
+    macho_write32(m, VM_PROT_NONE)        // maxprot
+    macho_write32(m, VM_PROT_NONE)        // initprot
+    macho_write32(m, 0)                   // nsects
+    macho_write32(m, 0)                   // flags
+    
+    // =========== LC_SEGMENT_64: __TEXT ===========
+    macho_write32(m, LC_SEGMENT_64)       // cmd
+    macho_write32(m, 72 + 80)             // cmdsize (includes section)
+    
+    // segname: "__TEXT" (16 bytes)
+    macho_write8(m, 95) macho_write8(m, 95)  // __
+    macho_write8(m, 84) macho_write8(m, 69)  // TE
+    macho_write8(m, 88) macho_write8(m, 84)  // XT
+    macho_write_zeros(m, 10)
+    
+    let text_vmsize = code_offset + code_size
+    macho_write64(m, base_addr)           // vmaddr
+    macho_write64(m, text_vmsize)         // vmsize
+    macho_write64(m, 0)                   // fileoff
+    macho_write64(m, text_vmsize)         // filesize
+    macho_write32(m, VM_PROT_READ + VM_PROT_EXECUTE)  // maxprot
+    macho_write32(m, VM_PROT_READ + VM_PROT_EXECUTE)  // initprot
+    macho_write32(m, 1)                   // nsects
+    macho_write32(m, 0)                   // flags
+    
+    // =========== Section: __text ===========
+    // sectname: "__text" (16 bytes)
+    macho_write8(m, 95) macho_write8(m, 95)  // __
+    macho_write8(m, 116) macho_write8(m, 101) // te
+    macho_write8(m, 120) macho_write8(m, 116) // xt
+    macho_write_zeros(m, 10)
+    
+    // segname: "__TEXT" (16 bytes)
+    macho_write8(m, 95) macho_write8(m, 95)  // __
+    macho_write8(m, 84) macho_write8(m, 69)  // TE
+    macho_write8(m, 88) macho_write8(m, 84)  // XT
+    macho_write_zeros(m, 10)
+    
+    macho_write64(m, entry_addr)          // addr
+    macho_write64(m, code_size)           // size
+    macho_write32(m, code_offset)         // offset
+    macho_write32(m, 2)                   // align (2^2 = 4 bytes)
+    macho_write32(m, 0)                   // reloff
+    macho_write32(m, 0)                   // nreloc
+    macho_write32(m, S_ATTR_PURE_INSTRUCTIONS + S_ATTR_SOME_INSTRUCTIONS)  // flags
+    macho_write32(m, 0)                   // reserved1
+    macho_write32(m, 0)                   // reserved2
+    macho_write32(m, 0)                   // reserved3
+    
+    // =========== LC_UNIXTHREAD ===========
+    macho_write32(m, LC_UNIXTHREAD)       // cmd
+    macho_write32(m, 184)                 // cmdsize
+    
+    if arch == 1 {
+        // ARM64 thread state
+        macho_write32(m, 6)               // ARM_THREAD_STATE64
+        macho_write32(m, 68)              // count (272 bytes / 4)
+        
+        // x0-x28 (29 registers * 8 bytes = 232 bytes)
+        macho_write_zeros(m, 232)
+        
+        // fp (x29)
+        macho_write64(m, 0)
+        
+        // lr (x30)
+        macho_write64(m, 0)
+        
+        // sp
+        macho_write64(m, 0)
+        
+        // pc - entry point
+        macho_write64(m, entry_addr)
+        
+        // cpsr
+        macho_write32(m, 0)
+        
+        // pad
+        macho_write32(m, 0)
+    } else {
+        // x86_64 thread state
+        macho_write32(m, 4)               // x86_THREAD_STATE64
+        macho_write32(m, 42)              // count (168 bytes / 4)
+        
+        // rax, rbx, rcx, rdx
+        macho_write64(m, 0)
+        macho_write64(m, 0)
+        macho_write64(m, 0)
+        macho_write64(m, 0)
+        
+        // rdi, rsi, rbp, rsp
+        macho_write64(m, 0)
+        macho_write64(m, 0)
+        macho_write64(m, 0)
+        macho_write64(m, 0)
+        
+        // r8-r15
+        macho_write64(m, 0)
+        macho_write64(m, 0)
+        macho_write64(m, 0)
+        macho_write64(m, 0)
+        macho_write64(m, 0)
+        macho_write64(m, 0)
+        macho_write64(m, 0)
+        macho_write64(m, 0)
+        
+        // rip - entry point
+        macho_write64(m, entry_addr)
+        
+        // rflags
+        macho_write64(m, 0)
+        
+        // cs, fs, gs
+        macho_write64(m, 0)
+        macho_write64(m, 0)
+        macho_write64(m, 0)
+    }
+    
+    // =========== PAD TO CODE OFFSET ===========
+    while macho_pos(m) < code_offset {
+        macho_write8(m, 0)
+    }
+    
+    // =========== WRITE CODE ===========
+    macho_write_bytes(m, code, code_size)
+    
+    m
+}
+
+// ============================================================================
+// WRITE TO FILE
+// ============================================================================
+
+func macho_write_file(m: Int, path: Int) -> Int {
+    let fd = __builtin_open(path, 577)  // O_WRONLY | O_CREAT | O_TRUNC
+    if fd < 0 { return 0 - 1 }
+    
+    let data = macho_get_binary(m)
+    let size = macho_get_size(m)
+    __builtin_write(fd, data, size)
+    __builtin_close(fd)
+    
+    // Make executable (chmod +x)
+    __builtin_chmod(path, 493)  // 0755
+    
+    size
+}

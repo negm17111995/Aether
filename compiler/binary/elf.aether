@@ -1,0 +1,202 @@
+// AETHER ELF GENERATOR
+// Pure Aether - Generates Linux executable binaries (ELF format)
+
+import runtime.vec
+
+// ============================================================================
+// ELF CONSTANTS
+// ============================================================================
+
+// Magic
+const ELF_MAGIC: Int = 1179403647        // 0x464C457F ("\x7FELF")
+
+// Class
+const ELFCLASS64: Int = 2
+
+// Data encoding
+const ELFDATA2LSB: Int = 1               // Little-endian
+
+// OS/ABI
+const ELFOSABI_LINUX: Int = 0
+
+// Type
+const ET_EXEC: Int = 2
+
+// Machine
+const EM_X86_64: Int = 62
+const EM_AARCH64: Int = 183
+
+// Segment types
+const PT_NULL: Int = 0
+const PT_LOAD: Int = 1
+const PT_INTERP: Int = 3
+const PT_PHDR: Int = 6
+
+// Segment flags
+const PF_X: Int = 1
+const PF_W: Int = 2
+const PF_R: Int = 4
+
+// Section types
+const SHT_NULL: Int = 0
+const SHT_PROGBITS: Int = 1
+const SHT_SYMTAB: Int = 2
+const SHT_STRTAB: Int = 3
+
+// Section flags
+const SHF_WRITE: Int = 1
+const SHF_ALLOC: Int = 2
+const SHF_EXECINSTR: Int = 4
+
+// ============================================================================
+// ELF BUILDER
+// ============================================================================
+
+func elf_new() -> Int {
+    vec_bytes_new()
+}
+
+func elf_pos(e: Int) -> Int {
+    vec_len(e)
+}
+
+func elf_get_binary(e: Int) -> Int {
+    vec_data(e)
+}
+
+func elf_get_size(e: Int) -> Int {
+    vec_len(e)
+}
+
+func elf_write8(e: Int, val: Int) {
+    vec_push8(e, val)
+}
+
+func elf_write16(e: Int, val: Int) {
+    vec_push16(e, val)
+}
+
+func elf_write32(e: Int, val: Int) {
+    vec_push32(e, val)
+}
+
+func elf_write64(e: Int, val: Int) {
+    vec_push64(e, val)
+}
+
+func elf_write_zeros(e: Int, count: Int) {
+    let i = 0
+    while i < count {
+        elf_write8(e, 0)
+        i = i + 1
+    }
+}
+
+func elf_write_bytes(e: Int, data: Int, len: Int) {
+    let i = 0
+    while i < len {
+        elf_write8(e, __builtin_load8(data + i))
+        i = i + 1
+    }
+}
+
+// ============================================================================
+// BUILD ELF EXECUTABLE
+// ============================================================================
+
+// arch: 0 = x86_64, 1 = ARM64
+func elf_build_exe(arch: Int, code: Int, code_size: Int) -> Int {
+    let e = elf_new()
+    
+    // Calculate sizes and offsets
+    let ehdr_size = 64                    // ELF header
+    let phdr_size = 56                    // Program header
+    let num_phdrs = 2                     // PHDR + LOAD
+    let phdrs_size = phdr_size * num_phdrs
+    let header_total = ehdr_size + phdrs_size
+    let code_offset = 4096                // Page-aligned
+    let base_addr = 4194304               // 0x400000 (standard Linux base)
+    let entry_addr = base_addr + code_offset
+    
+    // Machine type
+    let machine = EM_X86_64
+    if arch == 1 { machine = EM_AARCH64 }
+    
+    // =========== ELF HEADER ===========
+    // e_ident[16]
+    elf_write8(e, 127)                    // 0x7F
+    elf_write8(e, 69)                     // 'E'
+    elf_write8(e, 76)                     // 'L'
+    elf_write8(e, 70)                     // 'F'
+    elf_write8(e, ELFCLASS64)             // 64-bit
+    elf_write8(e, ELFDATA2LSB)            // Little-endian
+    elf_write8(e, 1)                      // ELF version
+    elf_write8(e, ELFOSABI_LINUX)         // Linux
+    elf_write_zeros(e, 8)                 // Padding
+    
+    elf_write16(e, ET_EXEC)               // e_type: executable
+    elf_write16(e, machine)               // e_machine
+    elf_write32(e, 1)                     // e_version
+    elf_write64(e, entry_addr)            // e_entry
+    elf_write64(e, ehdr_size)             // e_phoff: program headers offset
+    elf_write64(e, 0)                     // e_shoff: section headers offset
+    elf_write32(e, 0)                     // e_flags
+    elf_write16(e, ehdr_size)             // e_ehsize
+    elf_write16(e, phdr_size)             // e_phentsize
+    elf_write16(e, num_phdrs)             // e_phnum
+    elf_write16(e, 64)                    // e_shentsize
+    elf_write16(e, 0)                     // e_shnum
+    elf_write16(e, 0)                     // e_shstrndx
+    
+    // =========== PROGRAM HEADERS ===========
+    
+    // PT_PHDR - describes program headers
+    elf_write32(e, PT_PHDR)               // p_type
+    elf_write32(e, PF_R)                  // p_flags
+    elf_write64(e, ehdr_size)             // p_offset
+    elf_write64(e, base_addr + ehdr_size) // p_vaddr
+    elf_write64(e, base_addr + ehdr_size) // p_paddr
+    elf_write64(e, phdrs_size)            // p_filesz
+    elf_write64(e, phdrs_size)            // p_memsz
+    elf_write64(e, 8)                     // p_align
+    
+    // PT_LOAD - loadable segment containing code
+    let load_size = code_offset + code_size
+    elf_write32(e, PT_LOAD)               // p_type
+    elf_write32(e, PF_R + PF_X)           // p_flags: read + execute
+    elf_write64(e, 0)                     // p_offset
+    elf_write64(e, base_addr)             // p_vaddr
+    elf_write64(e, base_addr)             // p_paddr
+    elf_write64(e, load_size)             // p_filesz
+    elf_write64(e, load_size)             // p_memsz
+    elf_write64(e, 4096)                  // p_align
+    
+    // =========== PAD TO CODE OFFSET ===========
+    while elf_pos(e) < code_offset {
+        elf_write8(e, 0)
+    }
+    
+    // =========== WRITE CODE ===========
+    elf_write_bytes(e, code, code_size)
+    
+    e
+}
+
+// ============================================================================
+// WRITE TO FILE
+// ============================================================================
+
+func elf_write_file(e: Int, path: Int) -> Int {
+    let fd = __builtin_open(path, 577)    // O_WRONLY | O_CREAT | O_TRUNC
+    if fd < 0 { return 0 - 1 }
+    
+    let data = elf_get_binary(e)
+    let size = elf_get_size(e)
+    __builtin_write(fd, data, size)
+    __builtin_close(fd)
+    
+    // Make executable (chmod +x)
+    __builtin_chmod(path, 493)            // 0755
+    
+    size
+}

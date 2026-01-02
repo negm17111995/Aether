@@ -1,0 +1,269 @@
+// AETHER VECTOR - Dynamic Array Implementation
+// Pure Aether - No external dependencies
+
+// ============================================================================
+// VECTOR LAYOUT: [data_ptr, len, cap]
+// ============================================================================
+
+const VEC_DATA: Int = 0
+const VEC_LEN: Int = 8  
+const VEC_CAP: Int = 16
+const VEC_SIZE: Int = 24
+
+// ============================================================================
+// VECTOR OPERATIONS
+// ============================================================================
+
+// Create new empty vector
+func vec_new() -> Int {
+    let v = __builtin_malloc(VEC_SIZE)
+    let data = __builtin_malloc(64)
+    __builtin_store64(v + VEC_DATA, data)
+    __builtin_store64(v + VEC_LEN, 0)
+    __builtin_store64(v + VEC_CAP, 8)
+    v
+}
+
+// Create vector with initial capacity
+func vec_with_cap(cap: Int) -> Int {
+    let v = __builtin_malloc(VEC_SIZE)
+    let data = __builtin_malloc(cap * 8)
+    __builtin_store64(v + VEC_DATA, data)
+    __builtin_store64(v + VEC_LEN, 0)
+    __builtin_store64(v + VEC_CAP, cap)
+    v
+}
+
+// Get vector length
+func vec_len(v: Int) -> Int {
+    __builtin_load64(v + VEC_LEN)
+}
+
+// Get vector capacity
+func vec_cap(v: Int) -> Int {
+    __builtin_load64(v + VEC_CAP)
+}
+
+// Check if vector is empty
+func vec_is_empty(v: Int) -> Int {
+    if vec_len(v) == 0 { return 1 }
+    0
+}
+
+// Get element at index
+func vec_get(v: Int, idx: Int) -> Int {
+    let data = __builtin_load64(v + VEC_DATA)
+    __builtin_load64(data + idx * 8)
+}
+
+// Set element at index
+func vec_set(v: Int, idx: Int, val: Int) {
+    let data = __builtin_load64(v + VEC_DATA)
+    __builtin_store64(data + idx * 8, val)
+}
+
+// Ensure capacity
+func vec_ensure_cap(v: Int, needed: Int) {
+    let cap = __builtin_load64(v + VEC_CAP)
+    if needed <= cap { return }
+    
+    let new_cap = cap * 2
+    while new_cap < needed { new_cap = new_cap * 2 }
+    
+    let old_data = __builtin_load64(v + VEC_DATA)
+    let new_data = __builtin_malloc(new_cap * 8)
+    let len = __builtin_load64(v + VEC_LEN)
+    
+    let i = 0
+    while i < len {
+        __builtin_store64(new_data + i * 8, __builtin_load64(old_data + i * 8))
+        i = i + 1
+    }
+    
+    __builtin_store64(v + VEC_DATA, new_data)
+    __builtin_store64(v + VEC_CAP, new_cap)
+}
+
+// Push element to end
+func vec_push(v: Int, val: Int) {
+    let len = __builtin_load64(v + VEC_LEN)
+    vec_ensure_cap(v, len + 1)
+    let data = __builtin_load64(v + VEC_DATA)
+    __builtin_store64(data + len * 8, val)
+    __builtin_store64(v + VEC_LEN, len + 1)
+}
+
+// Pop element from end
+func vec_pop(v: Int) -> Int {
+    let len = __builtin_load64(v + VEC_LEN)
+    if len == 0 { return 0 }
+    let new_len = len - 1
+    __builtin_store64(v + VEC_LEN, new_len)
+    let data = __builtin_load64(v + VEC_DATA)
+    __builtin_load64(data + new_len * 8)
+}
+
+// Get first element
+func vec_first(v: Int) -> Int {
+    vec_get(v, 0)
+}
+
+// Get last element
+func vec_last(v: Int) -> Int {
+    let len = vec_len(v)
+    if len == 0 { return 0 }
+    vec_get(v, len - 1)
+}
+
+// Clear all elements
+func vec_clear(v: Int) {
+    __builtin_store64(v + VEC_LEN, 0)
+}
+
+// Insert element at index
+func vec_insert(v: Int, idx: Int, val: Int) {
+    let len = vec_len(v)
+    vec_ensure_cap(v, len + 1)
+    let data = __builtin_load64(v + VEC_DATA)
+    
+    // Shift elements right
+    let i = len
+    while i > idx {
+        __builtin_store64(data + i * 8, __builtin_load64(data + (i - 1) * 8))
+        i = i - 1
+    }
+    
+    __builtin_store64(data + idx * 8, val)
+    __builtin_store64(v + VEC_LEN, len + 1)
+}
+
+// Remove element at index
+func vec_remove(v: Int, idx: Int) -> Int {
+    let len = vec_len(v)
+    if idx >= len { return 0 }
+    
+    let data = __builtin_load64(v + VEC_DATA)
+    let val = __builtin_load64(data + idx * 8)
+    
+    // Shift elements left
+    let i = idx
+    while i < len - 1 {
+        __builtin_store64(data + i * 8, __builtin_load64(data + (i + 1) * 8))
+        i = i + 1
+    }
+    
+    __builtin_store64(v + VEC_LEN, len - 1)
+    val
+}
+
+// Clone vector
+func vec_clone(v: Int) -> Int {
+    let len = vec_len(v)
+    let new_v = vec_with_cap(len)
+    let i = 0
+    while i < len {
+        vec_push(new_v, vec_get(v, i))
+        i = i + 1
+    }
+    new_v
+}
+
+// Reverse vector in place
+func vec_reverse(v: Int) {
+    let len = vec_len(v)
+    let i = 0
+    while i < len / 2 {
+        let j = len - 1 - i
+        let tmp = vec_get(v, i)
+        vec_set(v, i, vec_get(v, j))
+        vec_set(v, j, tmp)
+        i = i + 1
+    }
+}
+
+// ============================================================================
+// BYTE VECTOR OPERATIONS (for binary output)
+// ============================================================================
+
+// Create byte vector
+func vec_bytes_new() -> Int {
+    let v = __builtin_malloc(VEC_SIZE)
+    let data = __builtin_malloc(1024)
+    __builtin_store64(v + VEC_DATA, data)
+    __builtin_store64(v + VEC_LEN, 0)
+    __builtin_store64(v + VEC_CAP, 1024)
+    v
+}
+
+// Push single byte
+func vec_push8(v: Int, val: Int) {
+    let len = __builtin_load64(v + VEC_LEN)
+    let cap = __builtin_load64(v + VEC_CAP)
+    
+    if len >= cap {
+        let new_cap = cap * 2
+        let old_data = __builtin_load64(v + VEC_DATA)
+        let new_data = __builtin_malloc(new_cap)
+        
+        let i = 0
+        while i < len {
+            __builtin_store8(new_data + i, __builtin_load8(old_data + i))
+            i = i + 1
+        }
+        
+        __builtin_store64(v + VEC_DATA, new_data)
+        __builtin_store64(v + VEC_CAP, new_cap)
+    }
+    
+    let data = __builtin_load64(v + VEC_DATA)
+    __builtin_store8(data + len, val)
+    __builtin_store64(v + VEC_LEN, len + 1)
+}
+
+// Push 16-bit value (little-endian)
+func vec_push16(v: Int, val: Int) {
+    vec_push8(v, val % 256)
+    vec_push8(v, (val / 256) % 256)
+}
+
+// Push 32-bit value (little-endian)
+func vec_push32(v: Int, val: Int) {
+    vec_push8(v, val % 256)
+    vec_push8(v, (val / 256) % 256)
+    vec_push8(v, (val / 65536) % 256)
+    vec_push8(v, (val / 16777216) % 256)
+}
+
+// Push 64-bit value (little-endian)
+func vec_push64(v: Int, val: Int) {
+    vec_push32(v, val % 4294967296)
+    vec_push32(v, val / 4294967296)
+}
+
+// Get byte at index
+func vec_get8(v: Int, idx: Int) -> Int {
+    let data = __builtin_load64(v + VEC_DATA)
+    __builtin_load8(data + idx)
+}
+
+// Set byte at index
+func vec_set8(v: Int, idx: Int, val: Int) {
+    let data = __builtin_load64(v + VEC_DATA)
+    __builtin_store8(data + idx, val)
+}
+
+// Write bytes to file
+func vec_write_file(v: Int, path: Int) -> Int {
+    let fd = __builtin_open(path, 577)
+    if fd < 0 { return 0 - 1 }
+    let data = __builtin_load64(v + VEC_DATA)
+    let len = __builtin_load64(v + VEC_LEN)
+    __builtin_write(fd, data, len)
+    __builtin_close(fd)
+    len
+}
+
+// Get data pointer
+func vec_data(v: Int) -> Int {
+    __builtin_load64(v + VEC_DATA)
+}

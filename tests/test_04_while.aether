@@ -1,0 +1,38 @@
+// TEST 4: While loops
+// Tests: while statement, loop control, incrementing
+
+func main() -> Int {
+    // Count from 0 to 5
+    let i = 0
+    let sum = 0
+    while i < 5 {
+        sum = sum + i
+        i = i + 1
+    }
+    
+    // 0+1+2+3+4 = 10
+    if sum != 10 { return 1 }
+    
+    // Test break simulation (early exit)
+    let j = 0
+    let count = 0
+    while j < 100 {
+        if j == 5 {
+            j = 100  // Exit loop
+        } else {
+            count = count + 1
+            j = j + 1
+        }
+    }
+    if count != 5 { return 2 }
+    
+    // Print "OK"
+    print(79)
+    print(75)
+    print(10)
+    0
+}
+
+func print(c: Int) {
+    __builtin_print(c)
+}

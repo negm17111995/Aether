@@ -1,0 +1,532 @@
+// AETHER X86_64 CODE GENERATOR
+// Pure Aether - Generates x86_64 machine code
+
+import runtime.vec
+
+// ============================================================================
+// X86_64 REGISTERS
+// ============================================================================
+
+const REG_RAX: Int = 0
+const REG_RCX: Int = 1
+const REG_RDX: Int = 2
+const REG_RBX: Int = 3
+const REG_RSP: Int = 4
+const REG_RBP: Int = 5
+const REG_RSI: Int = 6
+const REG_RDI: Int = 7
+const REG_R8: Int = 8
+const REG_R9: Int = 9
+const REG_R10: Int = 10
+const REG_R11: Int = 11
+const REG_R12: Int = 12
+const REG_R13: Int = 13
+const REG_R14: Int = 14
+const REG_R15: Int = 15
+
+// ============================================================================
+// X86_64 CODE BUFFER
+// ============================================================================
+
+func x64_buffer_new() -> Int {
+    vec_bytes_new()
+}
+
+func x64_pos(buf: Int) -> Int {
+    vec_len(buf)
+}
+
+func x64_get_code(buf: Int) -> Int {
+    vec_data(buf)
+}
+
+func x64_get_size(buf: Int) -> Int {
+    vec_len(buf)
+}
+
+func x64_emit8(buf: Int, val: Int) {
+    vec_push8(buf, val)
+}
+
+func x64_emit16(buf: Int, val: Int) {
+    vec_push8(buf, val % 256)
+    vec_push8(buf, (val / 256) % 256)
+}
+
+func x64_emit32(buf: Int, val: Int) {
+    vec_push32(buf, val)
+}
+
+func x64_emit64(buf: Int, val: Int) {
+    vec_push64(buf, val)
+}
+
+// ============================================================================
+// REX PREFIX
+// ============================================================================
+
+func x64_rex(buf: Int, w: Int, r: Int, x: Int, b: Int) {
+    let rex = 64 + (w * 8) + (r * 4) + (x * 2) + b
+    x64_emit8(buf, rex)
+}
+
+func x64_rex_w(buf: Int) {
+    x64_rex(buf, 1, 0, 0, 0)
+}
+
+func x64_need_rex_r(r: Int) -> Int {
+    if r >= 8 { return 1 }
+    0
+}
+
+func x64_reg_low(r: Int) -> Int {
+    r % 8
+}
+
+// ============================================================================
+// MOD/RM ENCODING
+// ============================================================================
+
+func x64_modrm(mod: Int, reg: Int, rm: Int) -> Int {
+    (mod * 64) + ((reg % 8) * 8) + (rm % 8)
+}
+
+func x64_sib(scale: Int, idx: Int, base: Int) -> Int {
+    (scale * 64) + ((idx % 8) * 8) + (base % 8)
+}
+
+// ============================================================================
+// MOV INSTRUCTIONS
+// ============================================================================
+
+// MOV r64, imm64
+func x64_mov_imm64(buf: Int, rd: Int, imm: Int) {
+    x64_rex(buf, 1, 0, 0, x64_need_rex_r(rd))
+    x64_emit8(buf, 184 + x64_reg_low(rd))
+    x64_emit64(buf, imm)
+}
+
+// MOV r64, imm32 (sign-extended)
+func x64_mov_imm32(buf: Int, rd: Int, imm: Int) {
+    x64_rex(buf, 1, 0, 0, x64_need_rex_r(rd))
+    x64_emit8(buf, 199)
+    x64_emit8(buf, x64_modrm(3, 0, rd))
+    x64_emit32(buf, imm)
+}
+
+// MOV r64, r64
+func x64_mov_rr(buf: Int, rd: Int, rs: Int) {
+    x64_rex(buf, 1, x64_need_rex_r(rs), 0, x64_need_rex_r(rd))
+    x64_emit8(buf, 137)
+    x64_emit8(buf, x64_modrm(3, rs, rd))
+}
+
+// MOV r64, [r64]
+func x64_mov_rm(buf: Int, rd: Int, rs: Int) {
+    x64_rex(buf, 1, x64_need_rex_r(rd), 0, x64_need_rex_r(rs))
+    x64_emit8(buf, 139)
+    if rs == REG_RSP || rs == REG_R12 {
+        x64_emit8(buf, x64_modrm(0, rd, 4))
+        x64_emit8(buf, x64_sib(0, 4, rs))
+    } else if rs == REG_RBP || rs == REG_R13 {
+        x64_emit8(buf, x64_modrm(1, rd, rs))
+        x64_emit8(buf, 0)
+    } else {
+        x64_emit8(buf, x64_modrm(0, rd, rs))
+    }
+}
+
+// MOV r64, [r64 + disp32]
+func x64_mov_rm_disp(buf: Int, rd: Int, rs: Int, disp: Int) {
+    x64_rex(buf, 1, x64_need_rex_r(rd), 0, x64_need_rex_r(rs))
+    x64_emit8(buf, 139)
+    if rs == REG_RSP || rs == REG_R12 {
+        x64_emit8(buf, x64_modrm(2, rd, 4))
+        x64_emit8(buf, x64_sib(0, 4, rs))
+    } else {
+        x64_emit8(buf, x64_modrm(2, rd, rs))
+    }
+    x64_emit32(buf, disp)
+}
+
+// MOV [r64], r64
+func x64_mov_mr(buf: Int, rd: Int, rs: Int) {
+    x64_rex(buf, 1, x64_need_rex_r(rs), 0, x64_need_rex_r(rd))
+    x64_emit8(buf, 137)
+    if rd == REG_RSP || rd == REG_R12 {
+        x64_emit8(buf, x64_modrm(0, rs, 4))
+        x64_emit8(buf, x64_sib(0, 4, rd))
+    } else if rd == REG_RBP || rd == REG_R13 {
+        x64_emit8(buf, x64_modrm(1, rs, rd))
+        x64_emit8(buf, 0)
+    } else {
+        x64_emit8(buf, x64_modrm(0, rs, rd))
+    }
+}
+
+// MOV [r64 + disp32], r64
+func x64_mov_mr_disp(buf: Int, rd: Int, disp: Int, rs: Int) {
+    x64_rex(buf, 1, x64_need_rex_r(rs), 0, x64_need_rex_r(rd))
+    x64_emit8(buf, 137)
+    if rd == REG_RSP || rd == REG_R12 {
+        x64_emit8(buf, x64_modrm(2, rs, 4))
+        x64_emit8(buf, x64_sib(0, 4, rd))
+    } else {
+        x64_emit8(buf, x64_modrm(2, rs, rd))
+    }
+    x64_emit32(buf, disp)
+}
+
+// MOVZX r64, byte [r64]
+func x64_movzx_rm8(buf: Int, rd: Int, rs: Int) {
+    x64_rex(buf, 1, x64_need_rex_r(rd), 0, x64_need_rex_r(rs))
+    x64_emit8(buf, 15)
+    x64_emit8(buf, 182)
+    x64_emit8(buf, x64_modrm(0, rd, rs))
+}
+
+// MOV byte [r64], r8
+func x64_mov_mr8(buf: Int, rd: Int, rs: Int) {
+    if rd >= 8 || rs >= 8 {
+        x64_rex(buf, 0, x64_need_rex_r(rs), 0, x64_need_rex_r(rd))
+    }
+    x64_emit8(buf, 136)
+    x64_emit8(buf, x64_modrm(0, rs, rd))
+}
+
+// ============================================================================
+// ARITHMETIC INSTRUCTIONS
+// ============================================================================
+
+// ADD r64, r64
+func x64_add_rr(buf: Int, rd: Int, rs: Int) {
+    x64_rex(buf, 1, x64_need_rex_r(rs), 0, x64_need_rex_r(rd))
+    x64_emit8(buf, 1)
+    x64_emit8(buf, x64_modrm(3, rs, rd))
+}
+
+// ADD r64, imm32
+func x64_add_imm32(buf: Int, rd: Int, imm: Int) {
+    x64_rex(buf, 1, 0, 0, x64_need_rex_r(rd))
+    x64_emit8(buf, 129)
+    x64_emit8(buf, x64_modrm(3, 0, rd))
+    x64_emit32(buf, imm)
+}
+
+// SUB r64, r64
+func x64_sub_rr(buf: Int, rd: Int, rs: Int) {
+    x64_rex(buf, 1, x64_need_rex_r(rs), 0, x64_need_rex_r(rd))
+    x64_emit8(buf, 41)
+    x64_emit8(buf, x64_modrm(3, rs, rd))
+}
+
+// SUB r64, imm32
+func x64_sub_imm32(buf: Int, rd: Int, imm: Int) {
+    x64_rex(buf, 1, 0, 0, x64_need_rex_r(rd))
+    x64_emit8(buf, 129)
+    x64_emit8(buf, x64_modrm(3, 5, rd))
+    x64_emit32(buf, imm)
+}
+
+// IMUL r64, r64
+func x64_imul_rr(buf: Int, rd: Int, rs: Int) {
+    x64_rex(buf, 1, x64_need_rex_r(rd), 0, x64_need_rex_r(rs))
+    x64_emit8(buf, 15)
+    x64_emit8(buf, 175)
+    x64_emit8(buf, x64_modrm(3, rd, rs))
+}
+
+// IDIV r64 (RDX:RAX / r64, quotient in RAX, remainder in RDX)
+func x64_idiv_r(buf: Int, rs: Int) {
+    x64_rex(buf, 1, 0, 0, x64_need_rex_r(rs))
+    x64_emit8(buf, 247)
+    x64_emit8(buf, x64_modrm(3, 7, rs))
+}
+
+// CQO (sign-extend RAX into RDX:RAX)
+func x64_cqo(buf: Int) {
+    x64_rex_w(buf)
+    x64_emit8(buf, 153)
+}
+
+// NEG r64
+func x64_neg_r(buf: Int, rd: Int) {
+    x64_rex(buf, 1, 0, 0, x64_need_rex_r(rd))
+    x64_emit8(buf, 247)
+    x64_emit8(buf, x64_modrm(3, 3, rd))
+}
+
+// NOT r64
+func x64_not_r(buf: Int, rd: Int) {
+    x64_rex(buf, 1, 0, 0, x64_need_rex_r(rd))
+    x64_emit8(buf, 247)
+    x64_emit8(buf, x64_modrm(3, 2, rd))
+}
+
+// AND r64, r64
+func x64_and_rr(buf: Int, rd: Int, rs: Int) {
+    x64_rex(buf, 1, x64_need_rex_r(rs), 0, x64_need_rex_r(rd))
+    x64_emit8(buf, 33)
+    x64_emit8(buf, x64_modrm(3, rs, rd))
+}
+
+// OR r64, r64
+func x64_or_rr(buf: Int, rd: Int, rs: Int) {
+    x64_rex(buf, 1, x64_need_rex_r(rs), 0, x64_need_rex_r(rd))
+    x64_emit8(buf, 9)
+    x64_emit8(buf, x64_modrm(3, rs, rd))
+}
+
+// XOR r64, r64
+func x64_xor_rr(buf: Int, rd: Int, rs: Int) {
+    x64_rex(buf, 1, x64_need_rex_r(rs), 0, x64_need_rex_r(rd))
+    x64_emit8(buf, 49)
+    x64_emit8(buf, x64_modrm(3, rs, rd))
+}
+
+// SHL r64, CL
+func x64_shl_cl(buf: Int, rd: Int) {
+    x64_rex(buf, 1, 0, 0, x64_need_rex_r(rd))
+    x64_emit8(buf, 211)
+    x64_emit8(buf, x64_modrm(3, 4, rd))
+}
+
+// SHR r64, CL
+func x64_shr_cl(buf: Int, rd: Int) {
+    x64_rex(buf, 1, 0, 0, x64_need_rex_r(rd))
+    x64_emit8(buf, 211)
+    x64_emit8(buf, x64_modrm(3, 5, rd))
+}
+
+// SAR r64, CL
+func x64_sar_cl(buf: Int, rd: Int) {
+    x64_rex(buf, 1, 0, 0, x64_need_rex_r(rd))
+    x64_emit8(buf, 211)
+    x64_emit8(buf, x64_modrm(3, 7, rd))
+}
+
+// ============================================================================
+// COMPARISON
+// ============================================================================
+
+// CMP r64, r64
+func x64_cmp_rr(buf: Int, rd: Int, rs: Int) {
+    x64_rex(buf, 1, x64_need_rex_r(rs), 0, x64_need_rex_r(rd))
+    x64_emit8(buf, 57)
+    x64_emit8(buf, x64_modrm(3, rs, rd))
+}
+
+// CMP r64, imm32
+func x64_cmp_imm32(buf: Int, rd: Int, imm: Int) {
+    x64_rex(buf, 1, 0, 0, x64_need_rex_r(rd))
+    x64_emit8(buf, 129)
+    x64_emit8(buf, x64_modrm(3, 7, rd))
+    x64_emit32(buf, imm)
+}
+
+// TEST r64, r64
+func x64_test_rr(buf: Int, rd: Int, rs: Int) {
+    x64_rex(buf, 1, x64_need_rex_r(rs), 0, x64_need_rex_r(rd))
+    x64_emit8(buf, 133)
+    x64_emit8(buf, x64_modrm(3, rs, rd))
+}
+
+// SETE r8
+func x64_sete_r(buf: Int, rd: Int) {
+    if rd >= 4 { x64_rex(buf, 0, 0, 0, x64_need_rex_r(rd)) }
+    x64_emit8(buf, 15)
+    x64_emit8(buf, 148)
+    x64_emit8(buf, x64_modrm(3, 0, rd))
+}
+
+// SETNE r8
+func x64_setne_r(buf: Int, rd: Int) {
+    if rd >= 4 { x64_rex(buf, 0, 0, 0, x64_need_rex_r(rd)) }
+    x64_emit8(buf, 15)
+    x64_emit8(buf, 149)
+    x64_emit8(buf, x64_modrm(3, 0, rd))
+}
+
+// SETL r8
+func x64_setl_r(buf: Int, rd: Int) {
+    if rd >= 4 { x64_rex(buf, 0, 0, 0, x64_need_rex_r(rd)) }
+    x64_emit8(buf, 15)
+    x64_emit8(buf, 156)
+    x64_emit8(buf, x64_modrm(3, 0, rd))
+}
+
+// SETLE r8
+func x64_setle_r(buf: Int, rd: Int) {
+    if rd >= 4 { x64_rex(buf, 0, 0, 0, x64_need_rex_r(rd)) }
+    x64_emit8(buf, 15)
+    x64_emit8(buf, 158)
+    x64_emit8(buf, x64_modrm(3, 0, rd))
+}
+
+// SETG r8
+func x64_setg_r(buf: Int, rd: Int) {
+    if rd >= 4 { x64_rex(buf, 0, 0, 0, x64_need_rex_r(rd)) }
+    x64_emit8(buf, 15)
+    x64_emit8(buf, 159)
+    x64_emit8(buf, x64_modrm(3, 0, rd))
+}
+
+// SETGE r8
+func x64_setge_r(buf: Int, rd: Int) {
+    if rd >= 4 { x64_rex(buf, 0, 0, 0, x64_need_rex_r(rd)) }
+    x64_emit8(buf, 15)
+    x64_emit8(buf, 157)
+    x64_emit8(buf, x64_modrm(3, 0, rd))
+}
+
+// MOVZX r64, r8 (zero-extend byte to qword)
+func x64_movzx_r8(buf: Int, rd: Int, rs: Int) {
+    x64_rex(buf, 1, x64_need_rex_r(rd), 0, x64_need_rex_r(rs))
+    x64_emit8(buf, 15)
+    x64_emit8(buf, 182)
+    x64_emit8(buf, x64_modrm(3, rd, rs))
+}
+
+// ============================================================================
+// CONTROL FLOW
+// ============================================================================
+
+// JMP rel32
+func x64_jmp_rel32(buf: Int, offset: Int) {
+    x64_emit8(buf, 233)
+    x64_emit32(buf, offset)
+}
+
+// JE rel32
+func x64_je_rel32(buf: Int, offset: Int) {
+    x64_emit8(buf, 15)
+    x64_emit8(buf, 132)
+    x64_emit32(buf, offset)
+}
+
+// JNE rel32
+func x64_jne_rel32(buf: Int, offset: Int) {
+    x64_emit8(buf, 15)
+    x64_emit8(buf, 133)
+    x64_emit32(buf, offset)
+}
+
+// JL rel32
+func x64_jl_rel32(buf: Int, offset: Int) {
+    x64_emit8(buf, 15)
+    x64_emit8(buf, 140)
+    x64_emit32(buf, offset)
+}
+
+// JLE rel32
+func x64_jle_rel32(buf: Int, offset: Int) {
+    x64_emit8(buf, 15)
+    x64_emit8(buf, 142)
+    x64_emit32(buf, offset)
+}
+
+// JG rel32
+func x64_jg_rel32(buf: Int, offset: Int) {
+    x64_emit8(buf, 15)
+    x64_emit8(buf, 143)
+    x64_emit32(buf, offset)
+}
+
+// JGE rel32
+func x64_jge_rel32(buf: Int, offset: Int) {
+    x64_emit8(buf, 15)
+    x64_emit8(buf, 141)
+    x64_emit32(buf, offset)
+}
+
+// CALL rel32
+func x64_call_rel32(buf: Int, offset: Int) {
+    x64_emit8(buf, 232)
+    x64_emit32(buf, offset)
+}
+
+// CALL r64
+func x64_call_r(buf: Int, rd: Int) {
+    if rd >= 8 { x64_rex(buf, 0, 0, 0, 1) }
+    x64_emit8(buf, 255)
+    x64_emit8(buf, x64_modrm(3, 2, rd))
+}
+
+// RET
+func x64_ret(buf: Int) {
+    x64_emit8(buf, 195)
+}
+
+// ============================================================================
+// STACK
+// ============================================================================
+
+// PUSH r64
+func x64_push_r(buf: Int, rd: Int) {
+    if rd >= 8 { x64_rex(buf, 0, 0, 0, 1) }
+    x64_emit8(buf, 80 + x64_reg_low(rd))
+}
+
+// POP r64
+func x64_pop_r(buf: Int, rd: Int) {
+    if rd >= 8 { x64_rex(buf, 0, 0, 0, 1) }
+    x64_emit8(buf, 88 + x64_reg_low(rd))
+}
+
+// ============================================================================
+// SYSTEM
+// ============================================================================
+
+// SYSCALL
+func x64_syscall(buf: Int) {
+    x64_emit8(buf, 15)
+    x64_emit8(buf, 5)
+}
+
+// NOP
+func x64_nop(buf: Int) {
+    x64_emit8(buf, 144)
+}
+
+// ============================================================================
+// FUNCTION PROLOGUE/EPILOGUE
+// ============================================================================
+
+func x64_prologue(buf: Int, stack_size: Int) {
+    // push rbp
+    x64_push_r(buf, REG_RBP)
+    // mov rbp, rsp
+    x64_mov_rr(buf, REG_RBP, REG_RSP)
+    // sub rsp, stack_size
+    if stack_size > 0 {
+        x64_sub_imm32(buf, REG_RSP, stack_size)
+    }
+}
+
+func x64_epilogue(buf: Int, stack_size: Int) {
+    // add rsp, stack_size
+    if stack_size > 0 {
+        x64_add_imm32(buf, REG_RSP, stack_size)
+    }
+    // pop rbp
+    x64_pop_r(buf, REG_RBP)
+    // ret
+    x64_ret(buf)
+}
+
+// ============================================================================
+// LEA INSTRUCTION
+// ============================================================================
+
+// LEA r64, [r64 + disp32]
+func x64_lea_disp(buf: Int, rd: Int, rs: Int, disp: Int) {
+    x64_rex(buf, 1, x64_need_rex_r(rd), 0, x64_need_rex_r(rs))
+    x64_emit8(buf, 141)
+    if rs == REG_RSP || rs == REG_R12 {
+        x64_emit8(buf, x64_modrm(2, rd, 4))
+        x64_emit8(buf, x64_sib(0, 4, rs))
+    } else {
+        x64_emit8(buf, x64_modrm(2, rd, rs))
+    }
+    x64_emit32(buf, disp)
+}

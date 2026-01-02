@@ -1,0 +1,493 @@
+// AETHER CODE GENERATOR
+// Pure Aether - Compiles AST to native machine code
+
+import runtime.vec
+import runtime.map
+import compiler.ast
+import compiler.lexer
+import compiler.codegen.arm64
+import compiler.codegen.x86_64
+
+// ============================================================================
+// ARCHITECTURE CONSTANTS
+// ============================================================================
+
+const ARCH_X86_64: Int = 0
+const ARCH_ARM64: Int = 1
+
+// ============================================================================
+// CODEGEN CONTEXT
+// Layout: [arch, buf, symtab, funcs, strings, stack_size, vreg_counter]
+// ============================================================================
+
+const CG_ARCH: Int = 0
+const CG_BUF: Int = 8
+const CG_SYMTAB: Int = 16
+const CG_FUNCS: Int = 24
+const CG_STRINGS: Int = 32
+const CG_STACK: Int = 40
+const CG_VREG: Int = 48
+const CG_SIZE: Int = 56
+
+func codegen_new(arch: Int) -> Int {
+    let cg = __builtin_malloc(CG_SIZE)
+    __builtin_store64(cg + CG_ARCH, arch)
+    
+    let buf = 0
+    if arch == ARCH_X86_64 { buf = x64_buffer_new() }
+    else { buf = arm_buffer_new() }
+    __builtin_store64(cg + CG_BUF, buf)
+    
+    __builtin_store64(cg + CG_SYMTAB, map_new())
+    __builtin_store64(cg + CG_FUNCS, vec_new())
+    __builtin_store64(cg + CG_STRINGS, vec_new())
+    __builtin_store64(cg + CG_STACK, 0)
+    __builtin_store64(cg + CG_VREG, 0)
+    cg
+}
+
+func cg_arch(cg: Int) -> Int { __builtin_load64(cg + CG_ARCH) }
+func cg_buf(cg: Int) -> Int { __builtin_load64(cg + CG_BUF) }
+func cg_symtab(cg: Int) -> Int { __builtin_load64(cg + CG_SYMTAB) }
+func cg_funcs(cg: Int) -> Int { __builtin_load64(cg + CG_FUNCS) }
+func cg_strings(cg: Int) -> Int { __builtin_load64(cg + CG_STRINGS) }
+func cg_stack(cg: Int) -> Int { __builtin_load64(cg + CG_STACK) }
+
+func cg_set_stack(cg: Int, s: Int) { __builtin_store64(cg + CG_STACK, s) }
+
+func cg_alloc_stack(cg: Int, size: Int) -> Int {
+    let offset = cg_stack(cg)
+    cg_set_stack(cg, offset + size)
+    offset
+}
+
+func cg_next_vreg(cg: Int) -> Int {
+    let id = __builtin_load64(cg + CG_VREG)
+    __builtin_store64(cg + CG_VREG, id + 1)
+    id
+}
+
+func cg_define_var(cg: Int, name: Int, offset: Int) {
+    map_set_int(cg_symtab(cg), name, offset)
+}
+
+func cg_lookup_var(cg: Int, name: Int) -> Int {
+    map_get_int(cg_symtab(cg), name)
+}
+
+// ============================================================================
+// EXPRESSION CODE GENERATION
+// ============================================================================
+
+func emit_expr(cg: Int, expr: Int) -> Int {
+    if expr == 0 { return 0 }
+    let arch = cg_arch(cg)
+    let buf = cg_buf(cg)
+    let kind = ast_kind(expr)
+    
+    // Integer literal
+    if kind == AST_INT_LIT {
+        let val = ast_data1(expr)
+        if arch == ARCH_X86_64 {
+            x64_mov_imm64(buf, REG_RAX, val)
+            return REG_RAX
+        } else {
+            arm_mov_imm64(buf, ARM_X0, val)
+            return ARM_X0
+        }
+    }
+    
+    // Identifier
+    if kind == AST_IDENT {
+        let name = ast_data1(expr)
+        let offset = cg_lookup_var(cg, name)
+        if arch == ARCH_X86_64 {
+            x64_mov_rm_disp(buf, REG_RAX, REG_RBP, 0 - offset - 8)
+            return REG_RAX
+        } else {
+            arm_ldr_imm(buf, ARM_X0, ARM_FP, 0 - offset - 8)
+            return ARM_X0
+        }
+    }
+    
+    // Binary expression
+    if kind == AST_BINARY {
+        let op = ast_data1(expr)
+        
+        // Emit left operand
+        emit_expr(cg, ast_data2(expr))
+        
+        // Save left result
+        if arch == ARCH_X86_64 {
+            x64_push_r(buf, REG_RAX)
+        } else {
+            arm_str_imm(buf, ARM_X0, ARM_SP, 0 - 8)
+            arm_sub_imm(buf, ARM_SP, ARM_SP, 16)
+        }
+        
+        // Emit right operand
+        emit_expr(cg, ast_data3(expr))
+        
+        // Restore left result
+        if arch == ARCH_X86_64 {
+            x64_mov_rr(buf, REG_RCX, REG_RAX)
+            x64_pop_r(buf, REG_RAX)
+        } else {
+            arm_mov_rr(buf, ARM_X1, ARM_X0)
+            arm_add_imm(buf, ARM_SP, ARM_SP, 16)
+            arm_ldr_imm(buf, ARM_X0, ARM_SP, 0 - 8)
+        }
+        
+        // Perform operation
+        if arch == ARCH_X86_64 {
+            if op == TOK_PLUS { x64_add_rr(buf, REG_RAX, REG_RCX) }
+            if op == TOK_MINUS { x64_sub_rr(buf, REG_RAX, REG_RCX) }
+            if op == TOK_STAR { x64_imul_rr(buf, REG_RAX, REG_RCX) }
+            if op == TOK_SLASH {
+                x64_cqo(buf)
+                x64_idiv_r(buf, REG_RCX)
+            }
+            if op == TOK_PERCENT {
+                x64_cqo(buf)
+                x64_idiv_r(buf, REG_RCX)
+                x64_mov_rr(buf, REG_RAX, REG_RDX)
+            }
+            if op == TOK_AMP { x64_and_rr(buf, REG_RAX, REG_RCX) }
+            if op == TOK_PIPE { x64_or_rr(buf, REG_RAX, REG_RCX) }
+            if op == TOK_CARET { x64_xor_rr(buf, REG_RAX, REG_RCX) }
+            if op == TOK_EQEQ {
+                x64_cmp_rr(buf, REG_RAX, REG_RCX)
+                x64_sete_r(buf, REG_RAX)
+                x64_movzx_r8(buf, REG_RAX, REG_RAX)
+            }
+            if op == TOK_NE {
+                x64_cmp_rr(buf, REG_RAX, REG_RCX)
+                x64_setne_r(buf, REG_RAX)
+                x64_movzx_r8(buf, REG_RAX, REG_RAX)
+            }
+            if op == TOK_LT {
+                x64_cmp_rr(buf, REG_RAX, REG_RCX)
+                x64_setl_r(buf, REG_RAX)
+                x64_movzx_r8(buf, REG_RAX, REG_RAX)
+            }
+            if op == TOK_LE {
+                x64_cmp_rr(buf, REG_RAX, REG_RCX)
+                x64_setle_r(buf, REG_RAX)
+                x64_movzx_r8(buf, REG_RAX, REG_RAX)
+            }
+            if op == TOK_GT {
+                x64_cmp_rr(buf, REG_RAX, REG_RCX)
+                x64_setg_r(buf, REG_RAX)
+                x64_movzx_r8(buf, REG_RAX, REG_RAX)
+            }
+            if op == TOK_GE {
+                x64_cmp_rr(buf, REG_RAX, REG_RCX)
+                x64_setge_r(buf, REG_RAX)
+                x64_movzx_r8(buf, REG_RAX, REG_RAX)
+            }
+            return REG_RAX
+        } else {
+            if op == TOK_PLUS { arm_add_reg(buf, ARM_X0, ARM_X0, ARM_X1) }
+            if op == TOK_MINUS { arm_sub_reg(buf, ARM_X0, ARM_X0, ARM_X1) }
+            if op == TOK_STAR { arm_mul_reg(buf, ARM_X0, ARM_X0, ARM_X1) }
+            if op == TOK_SLASH { arm_sdiv_reg(buf, ARM_X0, ARM_X0, ARM_X1) }
+            if op == TOK_AMP { arm_and_reg(buf, ARM_X0, ARM_X0, ARM_X1) }
+            if op == TOK_PIPE { arm_orr_reg(buf, ARM_X0, ARM_X0, ARM_X1) }
+            if op == TOK_CARET { arm_eor_reg(buf, ARM_X0, ARM_X0, ARM_X1) }
+            if op == TOK_EQEQ {
+                arm_cmp_reg(buf, ARM_X0, ARM_X1)
+                arm_cset(buf, ARM_X0, ARM_COND_EQ)
+            }
+            if op == TOK_NE {
+                arm_cmp_reg(buf, ARM_X0, ARM_X1)
+                arm_cset(buf, ARM_X0, ARM_COND_NE)
+            }
+            if op == TOK_LT {
+                arm_cmp_reg(buf, ARM_X0, ARM_X1)
+                arm_cset(buf, ARM_X0, ARM_COND_LT)
+            }
+            if op == TOK_GE {
+                arm_cmp_reg(buf, ARM_X0, ARM_X1)
+                arm_cset(buf, ARM_X0, ARM_COND_GE)
+            }
+            return ARM_X0
+        }
+    }
+    
+    // Unary expression
+    if kind == AST_UNARY {
+        let op = ast_data1(expr)
+        emit_expr(cg, ast_data2(expr))
+        
+        if arch == ARCH_X86_64 {
+            if op == TOK_MINUS { x64_neg_r(buf, REG_RAX) }
+            if op == TOK_BANG {
+                x64_test_rr(buf, REG_RAX, REG_RAX)
+                x64_sete_r(buf, REG_RAX)
+                x64_movzx_r8(buf, REG_RAX, REG_RAX)
+            }
+            if op == TOK_TILDE { x64_not_r(buf, REG_RAX) }
+            return REG_RAX
+        } else {
+            if op == TOK_MINUS { arm_neg_reg(buf, ARM_X0, ARM_X0) }
+            if op == TOK_BANG {
+                arm_cmp_imm(buf, ARM_X0, 0)
+                arm_cset(buf, ARM_X0, ARM_COND_EQ)
+            }
+            if op == TOK_TILDE { arm_mvn_reg(buf, ARM_X0, ARM_X0) }
+            return ARM_X0
+        }
+    }
+    
+    // Function call
+    if kind == AST_CALL {
+        let args = ast_data2(expr)
+        
+        // Push arguments (simplified - just evaluate and ignore for now)
+        let i = 0
+        while i < vec_len(args) {
+            emit_expr(cg, vec_get(args, i))
+            i = i + 1
+        }
+        
+        // For now, just return 0 in RAX/X0
+        if arch == ARCH_X86_64 {
+            x64_mov_imm32(buf, REG_RAX, 0)
+            return REG_RAX
+        } else {
+            arm_mov_imm(buf, ARM_X0, 0)
+            return ARM_X0
+        }
+    }
+    
+    0
+}
+
+// ============================================================================
+// STATEMENT CODE GENERATION
+// ============================================================================
+
+func emit_stmt(cg: Int, stmt: Int) {
+    if stmt == 0 { return }
+    let arch = cg_arch(cg)
+    let buf = cg_buf(cg)
+    let kind = ast_kind(stmt)
+    
+    // Let statement
+    if kind == AST_LET {
+        let name = ast_data1(stmt)
+        let init = ast_data3(stmt)
+        let offset = cg_alloc_stack(cg, 8)
+        cg_define_var(cg, name, offset)
+        
+        if init != 0 {
+            emit_expr(cg, init)
+            if arch == ARCH_X86_64 {
+                x64_mov_mr_disp(buf, REG_RBP, 0 - offset - 8, REG_RAX)
+            } else {
+                arm_str_imm(buf, ARM_X0, ARM_FP, 0 - offset - 8)
+            }
+        }
+    }
+    
+    // Assignment
+    if kind == AST_ASSIGN {
+        let target = ast_data1(stmt)
+        if ast_kind(target) == AST_IDENT {
+            emit_expr(cg, ast_data2(stmt))
+            let name = ast_data1(target)
+            let offset = cg_lookup_var(cg, name)
+            if arch == ARCH_X86_64 {
+                x64_mov_mr_disp(buf, REG_RBP, 0 - offset - 8, REG_RAX)
+            } else {
+                arm_str_imm(buf, ARM_X0, ARM_FP, 0 - offset - 8)
+            }
+        }
+    }
+    
+    // Return
+    if kind == AST_RETURN {
+        let val = ast_data1(stmt)
+        if val != 0 {
+            emit_expr(cg, val)
+        } else {
+            if arch == ARCH_X86_64 {
+                x64_mov_imm32(buf, REG_RAX, 0)
+            } else {
+                arm_mov_imm(buf, ARM_X0, 0)
+            }
+        }
+    }
+    
+    // If
+    if kind == AST_IF {
+        emit_expr(cg, ast_data1(stmt))
+        
+        let else_label = cg_buf(cg)
+        if arch == ARCH_X86_64 {
+            x64_test_rr(buf, REG_RAX, REG_RAX)
+            let jump_pos = x64_pos(buf)
+            x64_je_rel32(buf, 0)  // Patch later
+            
+            emit_block(cg, ast_data2(stmt))
+            
+            if ast_data3(stmt) != 0 {
+                let end_jump = x64_pos(buf)
+                x64_jmp_rel32(buf, 0)  // Patch later
+                
+                // Patch else jump
+                let else_target = x64_pos(buf)
+                vec_set8(buf, jump_pos + 2, (else_target - jump_pos - 6) % 256)
+                
+                emit_block(cg, ast_data3(stmt))
+                
+                // Patch end jump
+                let end_target = x64_pos(buf)
+                vec_set8(buf, end_jump + 1, (end_target - end_jump - 5) % 256)
+            } else {
+                // Patch else jump
+                let else_target = x64_pos(buf)
+                vec_set8(buf, jump_pos + 2, (else_target - jump_pos - 6) % 256)
+            }
+        } else {
+            arm_cmp_imm(buf, ARM_X0, 0)
+            let jump_pos = arm_pos(buf)
+            arm_bcond(buf, ARM_COND_EQ, 8)  // Placeholder
+            
+            emit_block(cg, ast_data2(stmt))
+            
+            if ast_data3(stmt) != 0 {
+                emit_block(cg, ast_data3(stmt))
+            }
+        }
+    }
+    
+    // While
+    if kind == AST_WHILE {
+        if arch == ARCH_X86_64 {
+            let loop_start = x64_pos(buf)
+            
+            emit_expr(cg, ast_data1(stmt))
+            x64_test_rr(buf, REG_RAX, REG_RAX)
+            let exit_jump = x64_pos(buf)
+            x64_je_rel32(buf, 0)  // Patch later
+            
+            emit_block(cg, ast_data2(stmt))
+            
+            // Jump back to start
+            let back_offset = loop_start - x64_pos(buf) - 5
+            x64_jmp_rel32(buf, back_offset)
+            
+            // Patch exit jump
+            let exit_target = x64_pos(buf)
+            vec_set8(buf, exit_jump + 2, (exit_target - exit_jump - 6) % 256)
+        } else {
+            let loop_start = arm_pos(buf)
+            
+            emit_expr(cg, ast_data1(stmt))
+            arm_cbz(buf, ARM_X0, 8)  // Placeholder exit
+            
+            emit_block(cg, ast_data2(stmt))
+            
+            // Jump back
+            let back_offset = loop_start - arm_pos(buf) - 4
+            arm_b(buf, back_offset)
+        }
+    }
+    
+    // Expression statement
+    if kind == AST_EXPR_STMT {
+        emit_expr(cg, ast_data1(stmt))
+    }
+    
+    // Block
+    if kind == AST_BLOCK {
+        emit_block(cg, stmt)
+    }
+}
+
+func emit_block(cg: Int, block: Int) {
+    if block == 0 { return }
+    let stmts = ast_data1(block)
+    if stmts == 0 { return }
+    
+    let i = 0
+    while i < vec_len(stmts) {
+        emit_stmt(cg, vec_get(stmts, i))
+        i = i + 1
+    }
+}
+
+// ============================================================================
+// FUNCTION CODE GENERATION
+// ============================================================================
+
+func emit_func(cg: Int, func_node: Int) {
+    let arch = cg_arch(cg)
+    let buf = cg_buf(cg)
+    let body = ast_data4(func_node)
+    
+    // Reset stack allocation
+    cg_set_stack(cg, 0)
+    
+    // Emit prologue
+    let stack_size = 64  // Fixed for now
+    if arch == ARCH_X86_64 {
+        x64_prologue(buf, stack_size)
+    } else {
+        arm_prologue(buf, stack_size)
+    }
+    
+    // Emit body
+    emit_block(cg, body)
+    
+    // Default return 0
+    if arch == ARCH_X86_64 {
+        x64_mov_imm32(buf, REG_RAX, 0)
+        x64_epilogue(buf, stack_size)
+    } else {
+        arm_mov_imm(buf, ARM_X0, 0)
+        arm_epilogue(buf, stack_size)
+    }
+}
+
+// ============================================================================
+// MODULE CODE GENERATION
+// ============================================================================
+
+func emit_module(cg: Int, module: Int) {
+    let decls = ast_data1(module)
+    if decls == 0 { return }
+    
+    // First, find main function and emit it first
+    let i = 0
+    while i < vec_len(decls) {
+        let decl = vec_get(decls, i)
+        if ast_kind(decl) == AST_FUNC {
+            emit_func(cg, decl)
+        }
+        i = i + 1
+    }
+}
+
+// ============================================================================
+// GET GENERATED CODE
+// ============================================================================
+
+func codegen_get_code(cg: Int) -> Int {
+    let buf = cg_buf(cg)
+    let arch = cg_arch(cg)
+    if arch == ARCH_X86_64 {
+        return x64_get_code(buf)
+    }
+    arm_get_code(buf)
+}
+
+func codegen_get_size(cg: Int) -> Int {
+    let buf = cg_buf(cg)
+    let arch = cg_arch(cg)
+    if arch == ARCH_X86_64 {
+        return x64_get_size(buf)
+    }
+    arm_get_size(buf)
+}

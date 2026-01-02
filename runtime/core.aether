@@ -1,0 +1,295 @@
+// AETHER RUNTIME CORE - Pure Aether Primitives
+// All low-level operations that compile directly to native instructions
+// NO C DEPENDENCIES - These are compiler intrinsics
+
+// ============================================================================
+// MEMORY PRIMITIVES - Compile to native load/store instructions
+// ============================================================================
+
+// These are INTRINSIC functions - the compiler recognizes them and emits
+// native machine code directly, no library call needed.
+
+// Load 8-bit value from memory address
+func ae_load8(addr: Int) -> Int {
+    __builtin_load8(addr)
+}
+
+// Load 16-bit value from memory address
+func ae_load16(addr: Int) -> Int {
+    __builtin_load16(addr)
+}
+
+// Load 32-bit value from memory address
+func ae_load32(addr: Int) -> Int {
+    __builtin_load32(addr)
+}
+
+// Load 64-bit value from memory address
+func ae_load64(addr: Int) -> Int {
+    __builtin_load64(addr)
+}
+
+// Store 8-bit value to memory address
+func ae_store8(addr: Int, val: Int) {
+    __builtin_store8(addr, val)
+}
+
+// Store 16-bit value to memory address
+func ae_store16(addr: Int, val: Int) {
+    __builtin_store16(addr, val)
+}
+
+// Store 32-bit value to memory address
+func ae_store32(addr: Int, val: Int) {
+    __builtin_store32(addr, val)
+}
+
+// Store 64-bit value to memory address
+func ae_store64(addr: Int, val: Int) {
+    __builtin_store64(addr, val)
+}
+
+// ============================================================================
+// MEMORY ALLOCATION - Compile to mmap/VirtualAlloc syscalls
+// ============================================================================
+
+// Allocate memory - uses mmap on Unix, VirtualAlloc on Windows
+func ae_malloc(size: Int) -> Int {
+    __builtin_malloc(size)
+}
+
+// Free memory
+func ae_free(ptr: Int) {
+    __builtin_free(ptr)
+}
+
+// Reallocate memory
+func ae_realloc(ptr: Int, new_size: Int) -> Int {
+    let new_ptr = ae_malloc(new_size)
+    // Copy old data (simplified - assumes old size <= new_size)
+    new_ptr
+}
+
+// ============================================================================
+// MEMORY OPERATIONS
+// ============================================================================
+
+// Copy memory from src to dst
+func ae_memcpy(dst: Int, src: Int, len: Int) {
+    let i = 0
+    while i < len {
+        __builtin_store8(dst + i, __builtin_load8(src + i))
+        i = i + 1
+    }
+}
+
+// Set memory to value
+func ae_memset(dst: Int, val: Int, len: Int) {
+    let i = 0
+    while i < len {
+        __builtin_store8(dst + i, val)
+        i = i + 1
+    }
+}
+
+// Compare memory
+func ae_memcmp(a: Int, b: Int, len: Int) -> Int {
+    let i = 0
+    while i < len {
+        let va = __builtin_load8(a + i)
+        let vb = __builtin_load8(b + i)
+        if va < vb { return 0 - 1 }
+        if va > vb { return 1 }
+        i = i + 1
+    }
+    0
+}
+
+// ============================================================================
+// I/O PRIMITIVES - Compile to syscalls
+// ============================================================================
+
+// Print single character to stdout
+func print(c: Int) {
+    __builtin_print(c)
+}
+
+// Print string to stdout
+func print_str(s: Int) {
+    let i = 0
+    while __builtin_load8(s + i) != 0 {
+        print(__builtin_load8(s + i))
+        i = i + 1
+    }
+}
+
+// Print integer to stdout
+func print_int(n: Int) {
+    if n < 0 {
+        print(45)  // '-'
+        n = 0 - n
+    }
+    if n == 0 {
+        print(48)  // '0'
+        return
+    }
+    let buf = ae_malloc(32)
+    let i = 0
+    while n > 0 {
+        __builtin_store8(buf + i, 48 + n % 10)
+        n = n / 10
+        i = i + 1
+    }
+    while i > 0 {
+        i = i - 1
+        print(__builtin_load8(buf + i))
+    }
+}
+
+// Print newline
+func println() {
+    print(10)
+}
+
+// ============================================================================
+// FILE I/O - Compile to open/read/write/close syscalls
+// ============================================================================
+
+// Open file - returns file descriptor
+func file_open(path: Int, flags: Int) -> Int {
+    __builtin_open(path, flags)
+}
+
+// Read from file
+func file_read(fd: Int, buf: Int, len: Int) -> Int {
+    __builtin_read(fd, buf, len)
+}
+
+// Write to file
+func file_write(fd: Int, buf: Int, len: Int) -> Int {
+    __builtin_write(fd, buf, len)
+}
+
+// Seek in file
+func file_seek(fd: Int, offset: Int, whence: Int) -> Int {
+    __builtin_seek(fd, offset, whence)
+}
+
+// Close file
+func file_close(fd: Int) {
+    __builtin_close(fd)
+}
+
+// Read entire file into memory
+func file_read_all(path: Int) -> Int {
+    let fd = file_open(path, 0)
+    if fd < 0 { return 0 }
+    let size = file_seek(fd, 0, 2)
+    file_seek(fd, 0, 0)
+    let buf = ae_malloc(size + 1)
+    file_read(fd, buf, size)
+    __builtin_store8(buf + size, 0)
+    file_close(fd)
+    buf
+}
+
+// Write data to file
+func file_write_all(path: Int, data: Int, len: Int) -> Int {
+    let fd = file_open(path, 577)  // O_WRONLY | O_CREAT | O_TRUNC
+    if fd < 0 { return 0 - 1 }
+    file_write(fd, data, len)
+    file_close(fd)
+    len
+}
+
+// ============================================================================
+// PROCESS CONTROL - Compile to syscalls
+// ============================================================================
+
+// Exit process
+func exit(code: Int) {
+    __builtin_exit(code)
+}
+
+// Get command line argument count
+func argc() -> Int {
+    __builtin_argc()
+}
+
+// Get command line argument
+func argv(idx: Int) -> Int {
+    __builtin_argv(idx)
+}
+
+// ============================================================================
+// STRING UTILITIES
+// ============================================================================
+
+// Get string length
+func str_len(s: Int) -> Int {
+    let i = 0
+    while __builtin_load8(s + i) != 0 { i = i + 1 }
+    i
+}
+
+// Compare strings
+func str_eq(a: Int, b: Int) -> Int {
+    let i = 0
+    while 1 == 1 {
+        let ca = __builtin_load8(a + i)
+        let cb = __builtin_load8(b + i)
+        if ca != cb { return 0 }
+        if ca == 0 { return 1 }
+        i = i + 1
+    }
+    0
+}
+
+// Copy string
+func str_copy(dst: Int, src: Int) -> Int {
+    let i = 0
+    while 1 == 1 {
+        let c = __builtin_load8(src + i)
+        __builtin_store8(dst + i, c)
+        if c == 0 { break }
+        i = i + 1
+    }
+    dst
+}
+
+// Concatenate strings
+func str_cat(dst: Int, src: Int) -> Int {
+    let len = str_len(dst)
+    str_copy(dst + len, src)
+    dst
+}
+
+// Duplicate string
+func str_dup(s: Int) -> Int {
+    let len = str_len(s)
+    let d = ae_malloc(len + 1)
+    str_copy(d, s)
+    d
+}
+
+// ============================================================================
+// HASH FUNCTION
+// ============================================================================
+
+func hash_str(s: Int) -> Int {
+    let h = 5381
+    let i = 0
+    while __builtin_load8(s + i) != 0 {
+        h = h * 33 + __builtin_load8(s + i)
+        i = i + 1
+    }
+    h
+}
+
+func hash_int(n: Int) -> Int {
+    let h = n
+    h = h ^ (h / 65536)
+    h = h * 2654435769
+    h = h ^ (h / 65536)
+    h
+}

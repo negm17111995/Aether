@@ -1,0 +1,481 @@
+// AETHER TYPECHECKER
+// Pure Aether - Type checking and semantic analysis
+
+import runtime.vec
+import runtime.map
+import compiler.ast
+
+// ============================================================================
+// TYPE CONSTANTS
+// ============================================================================
+
+const TYPE_UNKNOWN: Int = 0
+const TYPE_VOID: Int = 1
+const TYPE_INT: Int = 2
+const TYPE_FLOAT: Int = 3
+const TYPE_BOOL: Int = 4
+const TYPE_CHAR: Int = 5
+const TYPE_STRING: Int = 6
+const TYPE_PTR: Int = 7
+const TYPE_ARRAY: Int = 8
+const TYPE_FUNC: Int = 9
+const TYPE_STRUCT: Int = 10
+const TYPE_ENUM: Int = 11
+const TYPE_GENERIC: Int = 12
+
+// ============================================================================
+// TYPE STRUCTURE
+// Layout: [kind, inner, size, name, fields]
+// ============================================================================
+
+const TYINFO_KIND: Int = 0
+const TYINFO_INNER: Int = 8
+const TYINFO_SIZE: Int = 16
+const TYINFO_NAME: Int = 24
+const TYINFO_FIELDS: Int = 32
+const TYINFO_STRUCT_SIZE: Int = 40
+
+func type_new(kind: Int) -> Int {
+    let t = __builtin_malloc(TYINFO_STRUCT_SIZE)
+    __builtin_store64(t + TYINFO_KIND, kind)
+    __builtin_store64(t + TYINFO_INNER, 0)
+    __builtin_store64(t + TYINFO_SIZE, 8)
+    __builtin_store64(t + TYINFO_NAME, 0)
+    __builtin_store64(t + TYINFO_FIELDS, 0)
+    t
+}
+
+func type_kind(t: Int) -> Int { __builtin_load64(t + TYINFO_KIND) }
+func type_inner(t: Int) -> Int { __builtin_load64(t + TYINFO_INNER) }
+func type_size(t: Int) -> Int { __builtin_load64(t + TYINFO_SIZE) }
+func type_name(t: Int) -> Int { __builtin_load64(t + TYINFO_NAME) }
+func type_fields(t: Int) -> Int { __builtin_load64(t + TYINFO_FIELDS) }
+
+func type_set_inner(t: Int, inner: Int) { __builtin_store64(t + TYINFO_INNER, inner) }
+func type_set_size(t: Int, size: Int) { __builtin_store64(t + TYINFO_SIZE, size) }
+func type_set_name(t: Int, name: Int) { __builtin_store64(t + TYINFO_NAME, name) }
+func type_set_fields(t: Int, fields: Int) { __builtin_store64(t + TYINFO_FIELDS, fields) }
+
+// ============================================================================
+// BUILT-IN TYPES
+// ============================================================================
+
+func type_void() -> Int { type_new(TYPE_VOID) }
+func type_int() -> Int { type_new(TYPE_INT) }
+func type_float() -> Int { type_new(TYPE_FLOAT) }
+func type_bool() -> Int { type_new(TYPE_BOOL) }
+func type_char() -> Int { type_new(TYPE_CHAR) }
+func type_string() -> Int { type_new(TYPE_STRING) }
+
+func type_ptr(inner: Int) -> Int {
+    let t = type_new(TYPE_PTR)
+    type_set_inner(t, inner)
+    t
+}
+
+func type_array(elem: Int, size: Int) -> Int {
+    let t = type_new(TYPE_ARRAY)
+    type_set_inner(t, elem)
+    type_set_size(t, size)
+    t
+}
+
+// ============================================================================
+// TYPE CONTEXT
+// Layout: [types, symbols, scopes, errors, current_func]
+// ============================================================================
+
+const TYCTX_TYPES: Int = 0
+const TYCTX_SYMBOLS: Int = 8
+const TYCTX_SCOPES: Int = 16
+const TYCTX_ERRORS: Int = 24
+const TYCTX_FUNC: Int = 32
+const TYCTX_SIZE: Int = 40
+
+func tyctx_new() -> Int {
+    let ctx = __builtin_malloc(TYCTX_SIZE)
+    __builtin_store64(ctx + TYCTX_TYPES, map_new())
+    __builtin_store64(ctx + TYCTX_SYMBOLS, vec_new())
+    __builtin_store64(ctx + TYCTX_SCOPES, vec_new())
+    __builtin_store64(ctx + TYCTX_ERRORS, vec_new())
+    __builtin_store64(ctx + TYCTX_FUNC, 0)
+    
+    // Push global scope
+    vec_push(__builtin_load64(ctx + TYCTX_SCOPES), map_new())
+    
+    ctx
+}
+
+func tyctx_types(ctx: Int) -> Int { __builtin_load64(ctx + TYCTX_TYPES) }
+func tyctx_symbols(ctx: Int) -> Int { __builtin_load64(ctx + TYCTX_SYMBOLS) }
+func tyctx_scopes(ctx: Int) -> Int { __builtin_load64(ctx + TYCTX_SCOPES) }
+func tyctx_errors(ctx: Int) -> Int { __builtin_load64(ctx + TYCTX_ERRORS) }
+func tyctx_current_func(ctx: Int) -> Int { __builtin_load64(ctx + TYCTX_FUNC) }
+
+func tyctx_set_func(ctx: Int, f: Int) { __builtin_store64(ctx + TYCTX_FUNC, f) }
+
+func tyctx_push_scope(ctx: Int) {
+    let scopes = tyctx_scopes(ctx)
+    vec_push(scopes, map_new())
+}
+
+func tyctx_pop_scope(ctx: Int) {
+    let scopes = tyctx_scopes(ctx)
+    vec_pop(scopes)
+}
+
+func tyctx_define(ctx: Int, name: Int, typ: Int) {
+    let scopes = tyctx_scopes(ctx)
+    let current = vec_last(scopes)
+    map_set_int(current, name, typ)
+}
+
+func tyctx_lookup(ctx: Int, name: Int) -> Int {
+    let scopes = tyctx_scopes(ctx)
+    let i = vec_len(scopes) - 1
+    while i >= 0 {
+        let scope = vec_get(scopes, i)
+        if map_has_int(scope, name) == 1 {
+            return map_get_int(scope, name)
+        }
+        i = i - 1
+    }
+    0
+}
+
+func tyctx_error(ctx: Int, msg: Int, line: Int, col: Int) {
+    let errors = tyctx_errors(ctx)
+    let err = __builtin_malloc(24)
+    __builtin_store64(err, msg)
+    __builtin_store64(err + 8, line)
+    __builtin_store64(err + 16, col)
+    vec_push(errors, err)
+}
+
+// ============================================================================
+// TYPE CHECKING
+// ============================================================================
+
+func check_type_node(ctx: Int, node: Int) -> Int {
+    if node == 0 { return type_int() }
+    let kind = ast_kind(node)
+    
+    if kind == AST_TYPE_NAME {
+        let name = ast_data1(node)
+        // Check built-in types by comparing name
+        // For now, return Int as default
+        return type_int()
+    }
+    
+    if kind == AST_TYPE_PTR {
+        let inner = check_type_node(ctx, ast_data1(node))
+        return type_ptr(inner)
+    }
+    
+    if kind == AST_TYPE_ARRAY {
+        let elem = check_type_node(ctx, ast_data1(node))
+        let size = ast_data2(node)
+        return type_array(elem, size)
+    }
+    
+    type_int()
+}
+
+func check_expr(ctx: Int, expr: Int) -> Int {
+    if expr == 0 { return type_void() }
+    let kind = ast_kind(expr)
+    
+    // Integer literal
+    if kind == AST_INT_LIT {
+        let t = type_int()
+        ast_set_type(expr, t)
+        return t
+    }
+    
+    // Float literal
+    if kind == AST_FLOAT_LIT {
+        let t = type_float()
+        ast_set_type(expr, t)
+        return t
+    }
+    
+    // Bool literal
+    if kind == AST_BOOL_LIT {
+        let t = type_bool()
+        ast_set_type(expr, t)
+        return t
+    }
+    
+    // String literal
+    if kind == AST_STR_LIT {
+        let t = type_string()
+        ast_set_type(expr, t)
+        return t
+    }
+    
+    // Identifier
+    if kind == AST_IDENT {
+        let name = ast_data1(expr)
+        let t = tyctx_lookup(ctx, name)
+        if t == 0 {
+            tyctx_error(ctx, name, ast_line(expr), ast_col(expr))
+            t = type_int()
+        }
+        ast_set_type(expr, t)
+        return t
+    }
+    
+    // Binary expression
+    if kind == AST_BINARY {
+        let left = check_expr(ctx, ast_data2(expr))
+        let right = check_expr(ctx, ast_data3(expr))
+        let op = ast_data1(expr)
+        
+        // Comparison operators return bool
+        if op == TOK_EQEQ || op == TOK_NE || op == TOK_LT || op == TOK_LE || op == TOK_GT || op == TOK_GE {
+            let t = type_bool()
+            ast_set_type(expr, t)
+            return t
+        }
+        
+        // Logical operators return bool
+        if op == TOK_AMPAMP || op == TOK_PIPEPIPE {
+            let t = type_bool()
+            ast_set_type(expr, t)
+            return t
+        }
+        
+        // Arithmetic operators return left type
+        ast_set_type(expr, left)
+        return left
+    }
+    
+    // Unary expression
+    if kind == AST_UNARY {
+        let operand = check_expr(ctx, ast_data2(expr))
+        let op = ast_data1(expr)
+        
+        if op == TOK_BANG {
+            let t = type_bool()
+            ast_set_type(expr, t)
+            return t
+        }
+        
+        ast_set_type(expr, operand)
+        return operand
+    }
+    
+    // Function call
+    if kind == AST_CALL {
+        let func_expr = ast_data1(expr)
+        let func_type = check_expr(ctx, func_expr)
+        
+        let args = ast_data2(expr)
+        let i = 0
+        while i < vec_len(args) {
+            check_expr(ctx, vec_get(args, i))
+            i = i + 1
+        }
+        
+        // Return type (simplified - assume Int for now)
+        let t = type_int()
+        ast_set_type(expr, t)
+        return t
+    }
+    
+    // Index expression
+    if kind == AST_INDEX {
+        let arr = check_expr(ctx, ast_data1(expr))
+        let idx = check_expr(ctx, ast_data2(expr))
+        
+        // Return element type
+        let elem = type_inner(arr)
+        if elem == 0 { elem = type_int() }
+        ast_set_type(expr, elem)
+        return elem
+    }
+    
+    // Field access
+    if kind == AST_FIELD {
+        let obj = check_expr(ctx, ast_data1(expr))
+        // Simplified - return Int for now
+        let t = type_int()
+        ast_set_type(expr, t)
+        return t
+    }
+    
+    type_int()
+}
+
+func check_stmt(ctx: Int, stmt: Int) {
+    if stmt == 0 { return }
+    let kind = ast_kind(stmt)
+    
+    // Let statement
+    if kind == AST_LET {
+        let name = ast_data1(stmt)
+        let type_node = ast_data2(stmt)
+        let init = ast_data3(stmt)
+        
+        let var_type = type_int()
+        if type_node != 0 {
+            var_type = check_type_node(ctx, type_node)
+        }
+        if init != 0 {
+            let init_type = check_expr(ctx, init)
+            if type_node == 0 { var_type = init_type }
+        }
+        
+        tyctx_define(ctx, name, var_type)
+        ast_set_type(stmt, var_type)
+    }
+    
+    // Assignment
+    if kind == AST_ASSIGN {
+        let target_type = check_expr(ctx, ast_data1(stmt))
+        let value_type = check_expr(ctx, ast_data2(stmt))
+    }
+    
+    // Return
+    if kind == AST_RETURN {
+        let val = ast_data1(stmt)
+        if val != 0 { check_expr(ctx, val) }
+    }
+    
+    // If
+    if kind == AST_IF {
+        check_expr(ctx, ast_data1(stmt))
+        check_block(ctx, ast_data2(stmt))
+        if ast_data3(stmt) != 0 {
+            check_block(ctx, ast_data3(stmt))
+        }
+    }
+    
+    // While
+    if kind == AST_WHILE {
+        check_expr(ctx, ast_data1(stmt))
+        check_block(ctx, ast_data2(stmt))
+    }
+    
+    // For
+    if kind == AST_FOR {
+        let var_name = ast_data1(stmt)
+        let iter = ast_data2(stmt)
+        let body = ast_data3(stmt)
+        
+        tyctx_push_scope(ctx)
+        check_expr(ctx, iter)
+        tyctx_define(ctx, var_name, type_int())
+        check_block(ctx, body)
+        tyctx_pop_scope(ctx)
+    }
+    
+    // Expression statement
+    if kind == AST_EXPR_STMT {
+        check_expr(ctx, ast_data1(stmt))
+    }
+    
+    // Block
+    if kind == AST_BLOCK {
+        check_block(ctx, stmt)
+    }
+}
+
+func check_block(ctx: Int, block: Int) {
+    if block == 0 { return }
+    let stmts = ast_data1(block)
+    if stmts == 0 { return }
+    
+    tyctx_push_scope(ctx)
+    let i = 0
+    while i < vec_len(stmts) {
+        check_stmt(ctx, vec_get(stmts, i))
+        i = i + 1
+    }
+    tyctx_pop_scope(ctx)
+}
+
+func check_func(ctx: Int, func_node: Int) {
+    let name = ast_data1(func_node)
+    let params = ast_data2(func_node)
+    let ret_type = ast_data3(func_node)
+    let body = ast_data4(func_node)
+    
+    // Create function type
+    let func_type = type_new(TYPE_FUNC)
+    tyctx_define(ctx, name, func_type)
+    
+    tyctx_set_func(ctx, func_node)
+    tyctx_push_scope(ctx)
+    
+    // Add parameters to scope
+    let i = 0
+    while i < vec_len(params) {
+        let p = vec_get(params, i)
+        let param_name = param_name(p)
+        let param_type = check_type_node(ctx, param_type(p))
+        tyctx_define(ctx, param_name, param_type)
+        i = i + 1
+    }
+    
+    // Check body
+    check_block(ctx, body)
+    
+    tyctx_pop_scope(ctx)
+    tyctx_set_func(ctx, 0)
+}
+
+func check_struct(ctx: Int, struct_node: Int) {
+    let name = ast_data1(struct_node)
+    let fields = ast_data2(struct_node)
+    
+    let struct_type = type_new(TYPE_STRUCT)
+    type_set_name(struct_type, name)
+    type_set_fields(struct_type, fields)
+    
+    tyctx_define(ctx, name, struct_type)
+}
+
+func check_module(ctx: Int, module: Int) -> Int {
+    let decls = ast_data1(module)
+    if decls == 0 { return 1 }
+    
+    // First pass: register all types and function signatures
+    let i = 0
+    while i < vec_len(decls) {
+        let decl = vec_get(decls, i)
+        let kind = ast_kind(decl)
+        
+        if kind == AST_STRUCT { check_struct(ctx, decl) }
+        if kind == AST_CONST {
+            let name = ast_data1(decl)
+            let typ = check_type_node(ctx, ast_data2(decl))
+            tyctx_define(ctx, name, typ)
+        }
+        i = i + 1
+    }
+    
+    // Second pass: check function bodies
+    i = 0
+    while i < vec_len(decls) {
+        let decl = vec_get(decls, i)
+        if ast_kind(decl) == AST_FUNC {
+            check_func(ctx, decl)
+        }
+        i = i + 1
+    }
+    
+    // Return 0 if no errors
+    if vec_len(tyctx_errors(ctx)) == 0 { return 0 }
+    1
+}
+
+// ============================================================================
+// MAIN TYPE CHECK FUNCTION
+// ============================================================================
+
+func typecheck(module: Int) -> Int {
+    let ctx = tyctx_new()
+    check_module(ctx, module)
+    vec_len(tyctx_errors(ctx))
+}

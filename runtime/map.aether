@@ -1,0 +1,229 @@
+// AETHER MAP - Hash Map Implementation
+// Pure Aether - No external dependencies
+
+// ============================================================================
+// MAP LAYOUT: [buckets, size, cap]
+// ============================================================================
+
+const MAP_BUCKETS: Int = 0
+const MAP_SIZE: Int = 8
+const MAP_CAP: Int = 16
+const MAP_STRUCT_SIZE: Int = 24
+
+// Entry: [key, value, next]
+const ENTRY_KEY: Int = 0
+const ENTRY_VAL: Int = 8
+const ENTRY_NEXT: Int = 16
+const ENTRY_SIZE: Int = 24
+
+// ============================================================================
+// HASH FUNCTIONS
+// ============================================================================
+
+func map_hash_int(n: Int) -> Int {
+    let h = n
+    h = h ^ (h / 65536)
+    h = h * 2654435769
+    h = h ^ (h / 65536)
+    if h < 0 { h = 0 - h }
+    h
+}
+
+func map_hash_str(s: Int) -> Int {
+    let h = 5381
+    let i = 0
+    while __builtin_load8(s + i) != 0 {
+        h = h * 33 + __builtin_load8(s + i)
+        i = i + 1
+    }
+    if h < 0 { h = 0 - h }
+    h
+}
+
+// ============================================================================
+// MAP OPERATIONS
+// ============================================================================
+
+// Create new empty map
+func map_new() -> Int {
+    let cap = 16
+    let m = __builtin_malloc(MAP_STRUCT_SIZE)
+    let buckets = __builtin_malloc(cap * 8)
+    
+    // Initialize buckets to null
+    let i = 0
+    while i < cap {
+        __builtin_store64(buckets + i * 8, 0)
+        i = i + 1
+    }
+    
+    __builtin_store64(m + MAP_BUCKETS, buckets)
+    __builtin_store64(m + MAP_SIZE, 0)
+    __builtin_store64(m + MAP_CAP, cap)
+    m
+}
+
+// Get map size
+func map_size(m: Int) -> Int {
+    __builtin_load64(m + MAP_SIZE)
+}
+
+// Check if map is empty
+func map_is_empty(m: Int) -> Int {
+    if map_size(m) == 0 { return 1 }
+    0
+}
+
+// Get entry for integer key
+func map_get_int(m: Int, key: Int) -> Int {
+    let cap = __builtin_load64(m + MAP_CAP)
+    let idx = map_hash_int(key) % cap
+    let buckets = __builtin_load64(m + MAP_BUCKETS)
+    let entry = __builtin_load64(buckets + idx * 8)
+    
+    while entry != 0 {
+        if __builtin_load64(entry + ENTRY_KEY) == key {
+            return __builtin_load64(entry + ENTRY_VAL)
+        }
+        entry = __builtin_load64(entry + ENTRY_NEXT)
+    }
+    0
+}
+
+// Set entry for integer key
+func map_set_int(m: Int, key: Int, val: Int) {
+    let cap = __builtin_load64(m + MAP_CAP)
+    let idx = map_hash_int(key) % cap
+    let buckets = __builtin_load64(m + MAP_BUCKETS)
+    let entry = __builtin_load64(buckets + idx * 8)
+    
+    // Check if key exists
+    let curr = entry
+    while curr != 0 {
+        if __builtin_load64(curr + ENTRY_KEY) == key {
+            __builtin_store64(curr + ENTRY_VAL, val)
+            return
+        }
+        curr = __builtin_load64(curr + ENTRY_NEXT)
+    }
+    
+    // Create new entry
+    let new_entry = __builtin_malloc(ENTRY_SIZE)
+    __builtin_store64(new_entry + ENTRY_KEY, key)
+    __builtin_store64(new_entry + ENTRY_VAL, val)
+    __builtin_store64(new_entry + ENTRY_NEXT, entry)
+    __builtin_store64(buckets + idx * 8, new_entry)
+    
+    let size = __builtin_load64(m + MAP_SIZE)
+    __builtin_store64(m + MAP_SIZE, size + 1)
+}
+
+// Check if integer key exists
+func map_has_int(m: Int, key: Int) -> Int {
+    let cap = __builtin_load64(m + MAP_CAP)
+    let idx = map_hash_int(key) % cap
+    let buckets = __builtin_load64(m + MAP_BUCKETS)
+    let entry = __builtin_load64(buckets + idx * 8)
+    
+    while entry != 0 {
+        if __builtin_load64(entry + ENTRY_KEY) == key { return 1 }
+        entry = __builtin_load64(entry + ENTRY_NEXT)
+    }
+    0
+}
+
+// Remove integer key
+func map_remove_int(m: Int, key: Int) -> Int {
+    let cap = __builtin_load64(m + MAP_CAP)
+    let idx = map_hash_int(key) % cap
+    let buckets = __builtin_load64(m + MAP_BUCKETS)
+    let entry = __builtin_load64(buckets + idx * 8)
+    let prev = 0
+    
+    while entry != 0 {
+        if __builtin_load64(entry + ENTRY_KEY) == key {
+            let val = __builtin_load64(entry + ENTRY_VAL)
+            let next = __builtin_load64(entry + ENTRY_NEXT)
+            
+            if prev == 0 {
+                __builtin_store64(buckets + idx * 8, next)
+            } else {
+                __builtin_store64(prev + ENTRY_NEXT, next)
+            }
+            
+            let size = __builtin_load64(m + MAP_SIZE)
+            __builtin_store64(m + MAP_SIZE, size - 1)
+            return val
+        }
+        prev = entry
+        entry = __builtin_load64(entry + ENTRY_NEXT)
+    }
+    0
+}
+
+// String key operations (using pointer as key)
+func map_get_str(m: Int, key: Int) -> Int {
+    map_get_int(m, key)
+}
+
+func map_set_str(m: Int, key: Int, val: Int) {
+    map_set_int(m, key, val)
+}
+
+func map_has_str(m: Int, key: Int) -> Int {
+    map_has_int(m, key)
+}
+
+// Clear map
+func map_clear(m: Int) {
+    let cap = __builtin_load64(m + MAP_CAP)
+    let buckets = __builtin_load64(m + MAP_BUCKETS)
+    
+    let i = 0
+    while i < cap {
+        __builtin_store64(buckets + i * 8, 0)
+        i = i + 1
+    }
+    
+    __builtin_store64(m + MAP_SIZE, 0)
+}
+
+// ============================================================================
+// MAP ITERATION
+// ============================================================================
+
+// Get all keys as vector
+func map_keys(m: Int) -> Int {
+    let keys = vec_new()
+    let cap = __builtin_load64(m + MAP_CAP)
+    let buckets = __builtin_load64(m + MAP_BUCKETS)
+    
+    let i = 0
+    while i < cap {
+        let entry = __builtin_load64(buckets + i * 8)
+        while entry != 0 {
+            vec_push(keys, __builtin_load64(entry + ENTRY_KEY))
+            entry = __builtin_load64(entry + ENTRY_NEXT)
+        }
+        i = i + 1
+    }
+    keys
+}
+
+// Get all values as vector
+func map_values(m: Int) -> Int {
+    let values = vec_new()
+    let cap = __builtin_load64(m + MAP_CAP)
+    let buckets = __builtin_load64(m + MAP_BUCKETS)
+    
+    let i = 0
+    while i < cap {
+        let entry = __builtin_load64(buckets + i * 8)
+        while entry != 0 {
+            vec_push(values, __builtin_load64(entry + ENTRY_VAL))
+            entry = __builtin_load64(entry + ENTRY_NEXT)
+        }
+        i = i + 1
+    }
+    values
+}

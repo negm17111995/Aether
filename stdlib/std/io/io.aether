@@ -1,0 +1,127 @@
+// AETHER I/O - INPUT/OUTPUT LIBRARY
+// File, console, and stream operations
+
+// ============================================================================
+// FILE OPERATIONS
+// ============================================================================
+
+const O_RDONLY: Int = 0
+const O_WRONLY: Int = 1
+const O_RDWR: Int = 2
+const O_CREAT: Int = 512
+const O_TRUNC: Int = 1024
+
+func file_open(path: Int, flags: Int) -> Int {
+    __builtin_open(path, flags)
+}
+
+func file_read(fd: Int, buf: Int, len: Int) -> Int {
+    __builtin_read(fd, buf, len)
+}
+
+func file_write(fd: Int, buf: Int, len: Int) -> Int {
+    __builtin_write(fd, buf, len)
+}
+
+func file_close(fd: Int) {
+    __builtin_close(fd)
+}
+
+func file_seek(fd: Int, offset: Int, whence: Int) -> Int {
+    __builtin_seek(fd, offset, whence)
+}
+
+func file_size(fd: Int) -> Int {
+    let pos = file_seek(fd, 0, 1)
+    let size = file_seek(fd, 0, 2)
+    file_seek(fd, pos, 0)
+    size
+}
+
+func file_read_all(path: Int) -> Int {
+    let fd = file_open(path, O_RDONLY)
+    if fd < 0 { return 0 }
+    let size = file_seek(fd, 0, 2)
+    file_seek(fd, 0, 0)
+    let buf = __builtin_malloc(size + 1)
+    file_read(fd, buf, size)
+    __builtin_store8(buf + size, 0)
+    file_close(fd)
+    buf
+}
+
+func file_write_all(path: Int, data: Int, len: Int) -> Int {
+    let fd = file_open(path, O_WRONLY + O_CREAT + O_TRUNC)
+    if fd < 0 { return 0 - 1 }
+    file_write(fd, data, len)
+    file_close(fd)
+    len
+}
+
+func file_exists(path: Int) -> Int {
+    let fd = file_open(path, O_RDONLY)
+    if fd < 0 { return 0 }
+    file_close(fd)
+    1
+}
+
+// ============================================================================
+// CONSOLE I/O
+// ============================================================================
+
+func print(c: Int) {
+    __builtin_print(c)
+}
+
+func println() {
+    print(10)
+}
+
+func print_str(s: Int) {
+    let i = 0
+    while __builtin_load8(s + i) != 0 {
+        print(__builtin_load8(s + i))
+        i = i + 1
+    }
+}
+
+func print_line(s: Int) {
+    print_str(s)
+    println()
+}
+
+func print_int(n: Int) {
+    if n < 0 { print(45) n = 0 - n }
+    if n == 0 { print(48) return }
+    let buf = __builtin_malloc(32)
+    let i = 0
+    while n > 0 {
+        __builtin_store8(buf + i, 48 + n % 10)
+        n = n / 10
+        i = i + 1
+    }
+    while i > 0 {
+        i = i - 1
+        print(__builtin_load8(buf + i))
+    }
+}
+
+// ============================================================================
+// STDIN/STDOUT/STDERR
+// ============================================================================
+
+const STDIN: Int = 0
+const STDOUT: Int = 1
+const STDERR: Int = 2
+
+func stdout_write(buf: Int, len: Int) -> Int {
+    file_write(STDOUT, buf, len)
+}
+
+func stderr_write(buf: Int, len: Int) -> Int {
+    file_write(STDERR, buf, len)
+}
+
+func stdin_read(buf: Int, len: Int) -> Int {
+    file_read(STDIN, buf, len)
+}

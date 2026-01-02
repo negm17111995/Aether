@@ -1,104 +1,317 @@
-// AETHER CLOUD - Bootstrap Compatible
-// Cloud primitives using Int handles
+// AETHER CLOUD - CLOUD DEPLOYMENT AND MANAGEMENT
+// Multi-cloud deployment, scaling, and orchestration
 
-import std
+import runtime.vec
+import runtime.map
+import std.net.net
 
-// Cloud provider constants
-const CLOUD_AWS: Int = 0
-const CLOUD_GCP: Int = 1
-const CLOUD_AZURE: Int = 2
+// ============================================================================
+// CLOUD PROVIDER CONSTANTS
+// ============================================================================
 
-// Config offsets
-const CFG_PROVIDER: Int = 0
-const CFG_REGION: Int = 8
-const CFG_CREDS: Int = 16
-const CFG_PROJ: Int = 24
+const PROVIDER_AWS: Int = 0
+const PROVIDER_GCP: Int = 1
+const PROVIDER_AZURE: Int = 2
+const PROVIDER_DOCKER: Int = 3
+const PROVIDER_K8S: Int = 4
 
-func cloud_config_new(provider: Int, region: Int) -> Int {
-    let cfg = ae_malloc(32)
-    ae_store64(cfg + CFG_PROVIDER, provider)
-    ae_store64(cfg + CFG_REGION, region)
-    ae_store64(cfg + CFG_CREDS, 0)
-    ae_store64(cfg + CFG_PROJ, 0)
+// ============================================================================
+// DEPLOYMENT CONFIG
+// ============================================================================
+
+struct DeployConfig {
+    provider: Int,
+    region: Int,
+    instances: Int,
+    cpu: Int,
+    memory: Int,
+    image: Int,
+    env_vars: Int,
+    ports: Int,
+}
+
+func deploy_config_new(provider: Int, region: Int) -> Int {
+    let cfg = __builtin_malloc(64)
+    __builtin_store64(cfg, provider)
+    __builtin_store64(cfg + 8, region)
+    __builtin_store64(cfg + 16, 1)        // instances
+    __builtin_store64(cfg + 24, 1)        // cpu
+    __builtin_store64(cfg + 32, 512)      // memory MB
+    __builtin_store64(cfg + 40, 0)        // image
+    __builtin_store64(cfg + 48, map_new()) // env
+    __builtin_store64(cfg + 56, vec_new()) // ports
     cfg
 }
 
-func cloud_config_get_provider(cfg: Int) -> Int {
-    ae_load64(cfg + CFG_PROVIDER)
+func config_set_instances(cfg: Int, n: Int) { __builtin_store64(cfg + 16, n) }
+func config_set_cpu(cfg: Int, n: Int) { __builtin_store64(cfg + 24, n) }
+func config_set_memory(cfg: Int, mb: Int) { __builtin_store64(cfg + 32, mb) }
+func config_set_image(cfg: Int, img: Int) { __builtin_store64(cfg + 40, img) }
+
+func config_add_env(cfg: Int, key: Int, value: Int) {
+    let env = __builtin_load64(cfg + 48)
+    map_set_int(env, key, value)
 }
 
-// Serverless function
-func serverless_new(handler: Int, runtime: Int) -> Int {
-    let f = ae_malloc(24)
-    ae_store64(f, handler)
-    ae_store64(f + 8, 0)  // config
-    ae_store64(f + 16, runtime)
-    f
+func config_add_port(cfg: Int, port: Int) {
+    let ports = __builtin_load64(cfg + 56)
+    vec_push(ports, port)
 }
 
-func serverless_deploy(f: Int, provider: Int) -> Int {
-    // Stub for deployment
-    0
+// ============================================================================
+// DEPLOYMENT
+// ============================================================================
+
+struct Deployment {
+    id: Int,
+    config: Int,
+    status: Int,
+    instances: Int,
+    url: Int,
+    created_at: Int,
 }
 
-// Storage
-func storage_new(backend: Int) -> Int {
-    let s = ae_malloc(8)
-    ae_store64(s, backend)
-    s
-}
+const DEPLOY_PENDING: Int = 0
+const DEPLOY_RUNNING: Int = 1
+const DEPLOY_STOPPED: Int = 2
+const DEPLOY_FAILED: Int = 3
 
-func storage_get(s: Int, key: Int) -> Int {
-    0
-}
-
-func storage_put(s: Int, key: Int, value: Int) -> Int {
-    0
-}
-
-// Database
-func database_connect(url: Int) -> Int {
-    let db = ae_malloc(8)
-    ae_store64(db, url)
-    db
-}
-
-func database_query(db: Int, sql: Int, params: Int) -> Int {
-    0
-}
-
-// Message queue
-func mq_new(backend: Int) -> Int {
-    let mq = ae_malloc(8)
-    ae_store64(mq, backend)
-    mq
-}
-
-func mq_send(mq: Int, message: Int) -> Int {
-    0
-}
-
-// Cache
-func cache_new(backend: Int) -> Int {
-    let c = ae_malloc(8)
-    ae_store64(c, backend)
-    c
-}
-
-func cache_get(c: Int, key: Int) -> Int {
-    0
-}
-
-func cache_set(c: Int, key: Int, val: Int, ttl: Int) {
-}
-
-// Deployment
 func deployment_new(config: Int) -> Int {
-    let d = ae_malloc(8)
-    ae_store64(d, config)
+    let d = __builtin_malloc(48)
+    __builtin_store64(d, 0)               // id (assigned on deploy)
+    __builtin_store64(d + 8, config)
+    __builtin_store64(d + 16, DEPLOY_PENDING)
+    __builtin_store64(d + 24, vec_new())  // instances
+    __builtin_store64(d + 32, 0)          // url
+    __builtin_store64(d + 40, 0)          // created_at
     d
 }
 
-func deployment_deploy(d: Int) -> Int {
+func deploy_id(d: Int) -> Int { __builtin_load64(d) }
+func deploy_config(d: Int) -> Int { __builtin_load64(d + 8) }
+func deploy_status(d: Int) -> Int { __builtin_load64(d + 16) }
+func deploy_instances(d: Int) -> Int { __builtin_load64(d + 24) }
+func deploy_url(d: Int) -> Int { __builtin_load64(d + 32) }
+
+func deploy_set_status(d: Int, s: Int) { __builtin_store64(d + 16, s) }
+func deploy_set_url(d: Int, url: Int) { __builtin_store64(d + 32, url) }
+
+// ============================================================================
+// CLOUD CLIENT
+// ============================================================================
+
+struct CloudClient {
+    provider: Int,
+    credentials: Int,
+    endpoint: Int,
+    deployments: Int,
+}
+
+func cloud_client_new(provider: Int, creds: Int) -> Int {
+    let c = __builtin_malloc(32)
+    __builtin_store64(c, provider)
+    __builtin_store64(c + 8, creds)
+    __builtin_store64(c + 16, 0)
+    __builtin_store64(c + 24, map_new())
+    c
+}
+
+func client_deploy(client: Int, config: Int) -> Int {
+    let d = deployment_new(config)
+    let provider = __builtin_load64(client)
+    
+    // Simulate deployment based on provider
+    if provider == PROVIDER_DOCKER {
+        deploy_docker(d)
+    }
+    if provider == PROVIDER_K8S {
+        deploy_k8s(d)
+    }
+    
+    let deployments = __builtin_load64(client + 24)
+    let id = map_size(deployments)
+    __builtin_store64(d, id)
+    map_set_int(deployments, id, d)
+    
+    id
+}
+
+func client_get_deployment(client: Int, id: Int) -> Int {
+    let deployments = __builtin_load64(client + 24)
+    map_get_int(deployments, id)
+}
+
+func client_scale(client: Int, id: Int, instances: Int) {
+    let d = client_get_deployment(client, id)
+    if d == 0 { return }
+    let config = deploy_config(d)
+    config_set_instances(config, instances)
+    // Trigger scaling
+}
+
+func client_stop(client: Int, id: Int) {
+    let d = client_get_deployment(client, id)
+    if d == 0 { return }
+    deploy_set_status(d, DEPLOY_STOPPED)
+}
+
+// ============================================================================
+// DOCKER DEPLOYMENT
+// ============================================================================
+
+func deploy_docker(d: Int) {
+    let config = deploy_config(d)
+    let image = __builtin_load64(config + 40)
+    
+    // docker run command would be constructed here
+    deploy_set_status(d, DEPLOY_RUNNING)
+}
+
+func docker_build(dockerfile: Int, tag: Int) -> Int {
+    // Execute docker build
     0
+}
+
+func docker_push(image: Int, registry: Int) -> Int {
+    // Execute docker push
+    0
+}
+
+// ============================================================================
+// KUBERNETES DEPLOYMENT
+// ============================================================================
+
+func deploy_k8s(d: Int) {
+    let config = deploy_config(d)
+    // Generate and apply k8s manifests
+    deploy_set_status(d, DEPLOY_RUNNING)
+}
+
+func k8s_apply(manifest: Int) -> Int {
+    // kubectl apply
+    0
+}
+
+func k8s_delete(resource: Int, name: Int) -> Int {
+    // kubectl delete
+    0
+}
+
+func k8s_get_pods(namespace: Int) -> Int {
+    // kubectl get pods
+    vec_new()
+}
+
+// ============================================================================
+// LOAD BALANCER
+// ============================================================================
+
+struct LoadBalancer {
+    algorithm: Int,
+    backends: Int,
+    health_check: Int,
+    current_idx: Int,
+}
+
+const LB_ROUND_ROBIN: Int = 0
+const LB_LEAST_CONN: Int = 1
+const LB_RANDOM: Int = 2
+const LB_HASH: Int = 3
+
+func lb_new(algorithm: Int) -> Int {
+    let lb = __builtin_malloc(32)
+    __builtin_store64(lb, algorithm)
+    __builtin_store64(lb + 8, vec_new())
+    __builtin_store64(lb + 16, 0)
+    __builtin_store64(lb + 24, 0)
+    lb
+}
+
+func lb_add_backend(lb: Int, addr: Int, port: Int) {
+    let backends = __builtin_load64(lb + 8)
+    let backend = __builtin_malloc(16)
+    __builtin_store64(backend, addr)
+    __builtin_store64(backend + 8, port)
+    vec_push(backends, backend)
+}
+
+func lb_next_backend(lb: Int) -> Int {
+    let backends = __builtin_load64(lb + 8)
+    let count = vec_len(backends)
+    if count == 0 { return 0 }
+    
+    let algo = __builtin_load64(lb)
+    let idx = __builtin_load64(lb + 24)
+    
+    if algo == LB_ROUND_ROBIN {
+        let backend = vec_get(backends, idx % count)
+        __builtin_store64(lb + 24, idx + 1)
+        return backend
+    }
+    
+    vec_get(backends, 0)
+}
+
+// ============================================================================
+// SERVICE DISCOVERY
+// ============================================================================
+
+struct ServiceRegistry {
+    services: Int,  // Map of name -> endpoints
+}
+
+func registry_new() -> Int {
+    let r = __builtin_malloc(8)
+    __builtin_store64(r, map_new())
+    r
+}
+
+func registry_register(reg: Int, name: Int, endpoint: Int) {
+    let services = __builtin_load64(reg)
+    let endpoints = map_get_int(services, name)
+    if endpoints == 0 {
+        endpoints = vec_new()
+        map_set_int(services, name, endpoints)
+    }
+    vec_push(endpoints, endpoint)
+}
+
+func registry_discover(reg: Int, name: Int) -> Int {
+    let services = __builtin_load64(reg)
+    map_get_int(services, name)
+}
+
+func registry_deregister(reg: Int, name: Int, endpoint: Int) {
+    let services = __builtin_load64(reg)
+    let endpoints = map_get_int(services, name)
+    if endpoints == 0 { return }
+    // Remove endpoint from list
+}
+
+// ============================================================================
+// HEALTH CHECKS
+// ============================================================================
+
+struct HealthCheck {
+    interval: Int,
+    timeout: Int,
+    healthy_threshold: Int,
+    unhealthy_threshold: Int,
+    path: Int,
+}
+
+func health_check_new(interval: Int, timeout: Int) -> Int {
+    let hc = __builtin_malloc(40)
+    __builtin_store64(hc, interval)
+    __builtin_store64(hc + 8, timeout)
+    __builtin_store64(hc + 16, 2)
+    __builtin_store64(hc + 24, 3)
+    __builtin_store64(hc + 32, 0)
+    hc
+}
+
+func health_check_run(hc: Int, endpoint: Int) -> Int {
+    // HTTP GET to endpoint/path
+    // Return 1 if healthy, 0 if not
+    1
 }

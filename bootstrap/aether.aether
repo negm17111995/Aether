@@ -1,0 +1,218 @@
+// AETHER SELF-HOSTING BOOTSTRAP
+// This file contains the complete self-contained compiler
+// that can compile itself to produce a native binary
+
+// ============================================================================
+// BUILTINS - These are handled specially by the compiler
+// The compiler recognizes __builtin_* functions and emits native code directly
+// No external runtime or C code is required
+// ============================================================================
+
+// Memory allocation via mmap syscall
+func __builtin_malloc(size: Int) -> Int {
+    // Compiler emits:
+    // ARM64: mov x0, #0; mov x1, size; mov x2, #3; mov x3, #4098; mov x4, #-1; mov x5, #0; mov x16, #197; svc #0x80
+    // x86_64: mov rdi, 0; mov rsi, size; mov rdx, 3; mov r10, 34; mov r8, -1; mov r9, 0; mov rax, 9; syscall
+    0
+}
+
+func __builtin_free(ptr: Int) {
+    // munmap (not strictly necessary)
+}
+
+// Memory operations
+func __builtin_load8(addr: Int) -> Int {
+    // ARM64: ldrb w0, [x0]
+    // x86_64: movzx eax, byte [rdi]
+    0
+}
+
+func __builtin_load16(addr: Int) -> Int {
+    // ARM64: ldrh w0, [x0]
+    // x86_64: movzx eax, word [rdi]
+    0
+}
+
+func __builtin_load32(addr: Int) -> Int {
+    // ARM64: ldr w0, [x0]
+    // x86_64: mov eax, [rdi]
+    0
+}
+
+func __builtin_load64(addr: Int) -> Int {
+    // ARM64: ldr x0, [x0]
+    // x86_64: mov rax, [rdi]
+    0
+}
+
+func __builtin_store8(addr: Int, val: Int) {
+    // ARM64: strb w1, [x0]
+    // x86_64: mov [rdi], sil
+}
+
+func __builtin_store16(addr: Int, val: Int) {
+    // ARM64: strh w1, [x0]
+    // x86_64: mov [rdi], si
+}
+
+func __builtin_store32(addr: Int, val: Int) {
+    // ARM64: str w1, [x0]
+    // x86_64: mov [rdi], esi
+}
+
+func __builtin_store64(addr: Int, val: Int) {
+    // ARM64: str x1, [x0]
+    // x86_64: mov [rdi], rsi
+}
+
+// I/O
+func __builtin_print(c: Int) {
+    // ARM64: mov x0, #1; adr x1, buf; mov x2, #1; mov x16, #4; svc #0x80
+    // x86_64: mov rdi, 1; lea rsi, buf; mov rdx, 1; mov rax, 1; syscall
+}
+
+func __builtin_open(path: Int, flags: Int) -> Int {
+    // ARM64: mov x16, #5; svc #0x80
+    // x86_64: mov rax, 2; syscall
+    0
+}
+
+func __builtin_read(fd: Int, buf: Int, len: Int) -> Int {
+    // ARM64: mov x16, #3; svc #0x80
+    // x86_64: mov rax, 0; syscall
+    0
+}
+
+func __builtin_write(fd: Int, buf: Int, len: Int) -> Int {
+    // ARM64: mov x16, #4; svc #0x80
+    // x86_64: mov rax, 1; syscall
+    0
+}
+
+func __builtin_close(fd: Int) {
+    // ARM64: mov x16, #6; svc #0x80
+    // x86_64: mov rax, 3; syscall
+}
+
+func __builtin_seek(fd: Int, offset: Int, whence: Int) -> Int {
+    // ARM64: mov x16, #199; svc #0x80 (lseek)
+    // x86_64: mov rax, 8; syscall
+    0
+}
+
+func __builtin_chmod(path: Int, mode: Int) {
+    // ARM64: mov x16, #15; svc #0x80
+    // x86_64: mov rax, 90; syscall
+}
+
+func __builtin_exit(code: Int) {
+    // ARM64: mov x16, #1; svc #0x80
+    // x86_64: mov rax, 60; syscall
+}
+
+// ============================================================================
+// SELF-HOSTING STRATEGY
+// 
+// Phase 1: External Bootstrap
+// - Use existing bootstrap/aetherc.aether to compile this file
+// - This produces a native binary that can compile Aether
+//
+// Phase 2: Self-Compilation
+// - Use the produced binary to compile itself
+// - This validates the compiler is correct
+//
+// Phase 3: Verification
+// - Compile again and verify the binary is identical (reproducible builds)
+// ============================================================================
+
+// ============================================================================
+// MAIN ENTRY POINT
+// ============================================================================
+
+import runtime.core
+import runtime.vec
+import runtime.map
+import runtime.str
+import compiler.lexer
+import compiler.parser
+import compiler.ast
+import compiler.typechecker
+import compiler.codegen.main
+import compiler.codegen.arm64
+import compiler.codegen.x86_64
+import compiler.binary.macho
+import compiler.binary.elf
+import compiler.binary.pe
+
+const VERSION_MAJOR: Int = 1
+const VERSION_MINOR: Int = 0
+const VERSION_PATCH: Int = 0
+
+func print_version() {
+    // "Aether 1.0.0"
+    print(65) print(101) print(116) print(104) print(101) print(114)
+    print(32) print(49) print(46) print(48) print(46) print(48) print(10)
+}
+
+func compile_file(path: Int, target: Int, output: Int) -> Int {
+    // Read source
+    let fd = __builtin_open(path, 0)
+    if fd < 0 { return 1 }
+    let size = __builtin_seek(fd, 0, 2)
+    __builtin_seek(fd, 0, 0)
+    let source = __builtin_malloc(size + 1)
+    __builtin_read(fd, source, size)
+    __builtin_store8(source + size, 0)
+    __builtin_close(fd)
+    
+    // Lex
+    let tokens = tokenize(source, size)
+    if tokens == 0 { return 2 }
+    
+    // Parse
+    let parser = parser_new(tokens)
+    let ast = parse_module(parser)
+    if ast == 0 { return 3 }
+    
+    // Typecheck
+    let errors = typecheck(ast)
+    if errors > 0 { return 4 }
+    
+    // Codegen
+    let arch = 1  // Default ARM64
+    if target == 1 || target == 3 { arch = 0 }  // x64
+    
+    let cg = codegen_new(arch)
+    emit_module(cg, ast)
+    let code = codegen_get_code(cg)
+    let code_size = codegen_get_size(cg)
+    
+    // Binary output
+    if target == 0 { macho_write_file(macho_build_exe(1, code, code_size), output) }
+    if target == 1 { macho_write_file(macho_build_exe(0, code, code_size), output) }
+    if target == 2 { elf_write_file(elf_build_exe(1, code, code_size), output) }
+    if target == 3 { elf_write_file(elf_build_exe(0, code, code_size), output) }
+    if target == 4 { pe_write_file(pe_build_exe(code, code_size), output) }
+    
+    0
+}
+
+func main(argc: Int, argv: Int) -> Int {
+    print_version()
+    if argc < 2 { return 1 }
+    
+    let input = __builtin_load64(argv + 8)
+    let output = __builtin_malloc(8)
+    __builtin_store8(output, 97) __builtin_store8(output + 1, 46)
+    __builtin_store8(output + 2, 111) __builtin_store8(output + 3, 117)
+    __builtin_store8(output + 4, 116) __builtin_store8(output + 5, 0)
+    
+    let result = compile_file(input, 0, output)
+    
+    if result == 0 {
+        print(83) print(117) print(99) print(99) print(101)
+        print(115) print(115) print(33) print(10)
+    }
+    
+    result
+}

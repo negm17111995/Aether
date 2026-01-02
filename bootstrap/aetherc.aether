@@ -1001,8 +1001,70 @@ func make_output() -> Int {
     s
 }
 
-func main() -> Int {
-    // Print "AETHERC"
-    print(65) print(69) print(84) print(72) print(69) print(82) print(67) print(10)
-    0
+func str_len_c(s: Int) -> Int {
+    let i = 0
+    while ae_load8(s + i) != 0 { i = i + 1 }
+    i
 }
+
+func get_argv(argv: Int, idx: Int) -> Int {
+    ae_load64(argv + idx * 8)
+}
+
+func print_str(s: Int) {
+    let i = 0
+    while ae_load8(s + i) != 0 {
+        print(ae_load8(s + i))
+        i = i + 1
+    }
+}
+
+func main(argc: Int, argv: Int) -> Int {
+    // Print banner
+    print(65) print(69) print(84) print(72) print(69) print(82) print(67) print(10)
+    // "AETHERC\n"
+    
+    // Check args
+    if argc < 2 {
+        // Print: "Usage: aetherc <file.aether>\n"
+        print(85) print(115) print(97) print(103) print(101) print(58) print(32)
+        print(97) print(101) print(116) print(104) print(101) print(114) print(99)
+        print(32) print(60) print(102) print(105) print(108) print(101) print(62) print(10)
+        return 1
+    }
+    
+    // Get input file path
+    let input_path = get_argv(argv, 1)
+    
+    // Read source file
+    let source = file_read_all(input_path)
+    if source == 0 {
+        // Print: "Error: Cannot read file\n"
+        print(69) print(114) print(114) print(111) print(114) print(58) print(32)
+        print(67) print(97) print(110) print(110) print(111) print(116) print(32)
+        print(114) print(101) print(97) print(100) print(10)
+        return 1
+    }
+    
+    let source_len = str_len_c(source)
+    let output_path = make_output()
+    
+    // Compile
+    let result = compile_file(source, source_len, output_path)
+    
+    if result > 0 {
+        // Print: "Success! Output: a.out\n"
+        print(83) print(117) print(99) print(99) print(101) print(115) print(115)
+        print(33) print(32) print(79) print(117) print(116) print(112) print(117)
+        print(116) print(58) print(32) print(97) print(46) print(111) print(117)
+        print(116) print(10)
+        return 0
+    } else {
+        // Print: "Compilation failed\n"
+        print(67) print(111) print(109) print(112) print(105) print(108) print(97)
+        print(116) print(105) print(111) print(110) print(32) print(102) print(97)
+        print(105) print(108) print(101) print(100) print(10)
+        return 1
+    }
+}
+

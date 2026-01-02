@@ -1,0 +1,228 @@
+// AETHER HOT RELOAD
+// Live code reloading without restart
+
+import runtime.vec
+import runtime.map
+
+// ============================================================================
+// HOT RELOAD STATE
+// ============================================================================
+
+struct HotReload {
+    modules: Int,      // Map of path -> Module
+    watchers: Int,     // File watchers
+    on_reload: Int,    // Callback function
+    enabled: Int,
+}
+
+func hot_reload_new() -> Int {
+    let hr = __builtin_malloc(32)
+    __builtin_store64(hr, map_new())
+    __builtin_store64(hr + 8, vec_new())
+    __builtin_store64(hr + 16, 0)
+    __builtin_store64(hr + 24, 1)
+    hr
+}
+
+func hr_modules(hr: Int) -> Int { __builtin_load64(hr) }
+func hr_watchers(hr: Int) -> Int { __builtin_load64(hr + 8) }
+func hr_enabled(hr: Int) -> Int { __builtin_load64(hr + 24) }
+
+func hr_set_callback(hr: Int, cb: Int) { __builtin_store64(hr + 16, cb) }
+func hr_enable(hr: Int) { __builtin_store64(hr + 24, 1) }
+func hr_disable(hr: Int) { __builtin_store64(hr + 24, 0) }
+
+// ============================================================================
+// MODULE TRACKING
+// ============================================================================
+
+struct TrackedModule {
+    path: Int,
+    hash: Int,
+    code: Int,
+    last_modified: Int,
+    dependencies: Int,
+}
+
+func module_new(path: Int) -> Int {
+    let m = __builtin_malloc(40)
+    __builtin_store64(m, path)
+    __builtin_store64(m + 8, 0)
+    __builtin_store64(m + 16, 0)
+    __builtin_store64(m + 24, 0)
+    __builtin_store64(m + 32, vec_new())
+    m
+}
+
+func module_path(m: Int) -> Int { __builtin_load64(m) }
+func module_hash(m: Int) -> Int { __builtin_load64(m + 8) }
+func module_code(m: Int) -> Int { __builtin_load64(m + 16) }
+func module_deps(m: Int) -> Int { __builtin_load64(m + 32) }
+
+func module_set_hash(m: Int, h: Int) { __builtin_store64(m + 8, h) }
+func module_set_code(m: Int, c: Int) { __builtin_store64(m + 16, c) }
+
+// ============================================================================
+// FILE WATCHING
+// ============================================================================
+
+struct FileWatcher {
+    path: Int,
+    callback: Int,
+    last_check: Int,
+}
+
+func watch_file(hr: Int, path: Int) {
+    let watchers = hr_watchers(hr)
+    let w = __builtin_malloc(24)
+    __builtin_store64(w, path)
+    __builtin_store64(w + 8, 0)
+    __builtin_store64(w + 16, 0)
+    vec_push(watchers, w)
+}
+
+func check_changes(hr: Int) -> Int {
+    let watchers = hr_watchers(hr)
+    let changed = vec_new()
+    let i = 0
+    while i < vec_len(watchers) {
+        let w = vec_get(watchers, i)
+        let path = __builtin_load64(w)
+        if file_changed(path) == 1 {
+            vec_push(changed, path)
+        }
+        i = i + 1
+    }
+    changed
+}
+
+func file_changed(path: Int) -> Int {
+    // Would check file modification time
+    0
+}
+
+// ============================================================================
+// RELOAD OPERATIONS
+// ============================================================================
+
+func reload_module(hr: Int, path: Int) -> Int {
+    if hr_enabled(hr) == 0 { return 0 }
+    
+    let modules = hr_modules(hr)
+    let module = map_get_int(modules, path)
+    
+    if module == 0 {
+        // New module
+        module = module_new(path)
+        map_set_int(modules, path, module)
+    }
+    
+    // Compute new hash
+    let new_hash = compute_file_hash(path)
+    let old_hash = module_hash(module)
+    
+    if new_hash == old_hash { return 0 }  // No change
+    
+    // Recompile
+    let new_code = compile_module(path)
+    if new_code == 0 { return 0 - 1 }  // Compile error
+    
+    module_set_hash(module, new_hash)
+    module_set_code(module, new_code)
+    
+    // Reload dependencies
+    let deps = module_deps(module)
+    let i = 0
+    while i < vec_len(deps) {
+        reload_module(hr, vec_get(deps, i))
+        i = i + 1
+    }
+    
+    // Call callback
+    let callback = __builtin_load64(hr + 16)
+    if callback != 0 {
+        // Call callback(module)
+    }
+    
+    1
+}
+
+func compile_module(path: Int) -> Int {
+    // Read file and compile
+    let fd = __builtin_open(path, 0)
+    if fd < 0 { return 0 }
+    let size = __builtin_seek(fd, 0, 2)
+    __builtin_seek(fd, 0, 0)
+    let source = __builtin_malloc(size + 1)
+    __builtin_read(fd, source, size)
+    __builtin_store8(source + size, 0)
+    __builtin_close(fd)
+    
+    // Would call compiler here
+    source
+}
+
+func compute_file_hash(path: Int) -> Int {
+    let fd = __builtin_open(path, 0)
+    if fd < 0 { return 0 }
+    let size = __builtin_seek(fd, 0, 2)
+    __builtin_seek(fd, 0, 0)
+    let buf = __builtin_malloc(size)
+    __builtin_read(fd, buf, size)
+    __builtin_close(fd)
+    
+    let h = 5381
+    let i = 0
+    while i < size {
+        h = h * 33 + __builtin_load8(buf + i)
+        i = i + 1
+    }
+    if h < 0 { h = 0 - h }
+    h
+}
+
+// ============================================================================
+// STATE PRESERVATION
+// ============================================================================
+
+struct StateSnapshot {
+    variables: Int,
+    timestamp: Int,
+}
+
+func snapshot_state() -> Int {
+    let s = __builtin_malloc(16)
+    __builtin_store64(s, map_new())
+    __builtin_store64(s + 8, 0)
+    s
+}
+
+func restore_state(s: Int) {
+    // Restore variables from snapshot
+}
+
+// ============================================================================
+// MAIN API
+// ============================================================================
+
+func hr_start(hr: Int) {
+    hr_enable(hr)
+}
+
+func hr_stop(hr: Int) {
+    hr_disable(hr)
+}
+
+func hr_poll(hr: Int) -> Int {
+    let changed = check_changes(hr)
+    let reloaded = 0
+    let i = 0
+    while i < vec_len(changed) {
+        let path = vec_get(changed, i)
+        if reload_module(hr, path) == 1 {
+            reloaded = reloaded + 1
+        }
+        i = i + 1
+    }
+    reloaded
+}

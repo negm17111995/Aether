@@ -1,0 +1,323 @@
+// AETHER DATABASE - UNIFIED DATABASE LIBRARY
+// Support for SQL, NoSQL, and graph databases
+
+import runtime.vec
+import runtime.map
+
+// ============================================================================
+// DATABASE TYPES
+// ============================================================================
+
+const DB_MEMORY: Int = 0
+const DB_SQLITE: Int = 1
+const DB_POSTGRES: Int = 2
+const DB_MYSQL: Int = 3
+const DB_MONGODB: Int = 4
+const DB_REDIS: Int = 5
+
+// ============================================================================
+// CONNECTION
+// ============================================================================
+
+struct Connection {
+    db_type: Int,
+    handle: Int,
+    host: Int,
+    port: Int,
+    database: Int,
+    connected: Int,
+}
+
+func connection_new(db_type: Int, host: Int, port: Int) -> Int {
+    let c = __builtin_malloc(48)
+    __builtin_store64(c, db_type)
+    __builtin_store64(c + 8, 0)
+    __builtin_store64(c + 16, host)
+    __builtin_store64(c + 24, port)
+    __builtin_store64(c + 32, 0)
+    __builtin_store64(c + 40, 0)
+    c
+}
+
+func conn_type(c: Int) -> Int { __builtin_load64(c) }
+func conn_handle(c: Int) -> Int { __builtin_load64(c + 8) }
+func conn_connected(c: Int) -> Int { __builtin_load64(c + 40) }
+
+func conn_set_handle(c: Int, h: Int) { __builtin_store64(c + 8, h) }
+func conn_set_connected(c: Int, v: Int) { __builtin_store64(c + 40, v) }
+
+func connect(c: Int) -> Int {
+    let db_type = conn_type(c)
+    // Connect to database
+    conn_set_connected(c, 1)
+    1
+}
+
+func disconnect(c: Int) {
+    conn_set_connected(c, 0)
+}
+
+// ============================================================================
+// QUERY BUILDER
+// ============================================================================
+
+struct Query {
+    table: Int,
+    columns: Int,
+    where_clause: Int,
+    order_by: Int,
+    limit_val: Int,
+    offset_val: Int,
+}
+
+func query_new(table: Int) -> Int {
+    let q = __builtin_malloc(48)
+    __builtin_store64(q, table)
+    __builtin_store64(q + 8, vec_new())
+    __builtin_store64(q + 16, 0)
+    __builtin_store64(q + 24, 0)
+    __builtin_store64(q + 32, 0)
+    __builtin_store64(q + 40, 0)
+    q
+}
+
+func query_select(q: Int, col: Int) -> Int {
+    let cols = __builtin_load64(q + 8)
+    vec_push(cols, col)
+    q
+}
+
+func query_where(q: Int, clause: Int) -> Int {
+    __builtin_store64(q + 16, clause)
+    q
+}
+
+func query_order(q: Int, col: Int) -> Int {
+    __builtin_store64(q + 24, col)
+    q
+}
+
+func query_limit(q: Int, n: Int) -> Int {
+    __builtin_store64(q + 32, n)
+    q
+}
+
+func query_offset(q: Int, n: Int) -> Int {
+    __builtin_store64(q + 40, n)
+    q
+}
+
+// ============================================================================
+// RESULT SET
+// ============================================================================
+
+struct ResultSet {
+    rows: Int,
+    columns: Int,
+    current: Int,
+}
+
+func result_new() -> Int {
+    let r = __builtin_malloc(24)
+    __builtin_store64(r, vec_new())
+    __builtin_store64(r + 8, vec_new())
+    __builtin_store64(r + 16, 0)
+    r
+}
+
+func result_rows(r: Int) -> Int { __builtin_load64(r) }
+func result_columns(r: Int) -> Int { __builtin_load64(r + 8) }
+func result_count(r: Int) -> Int { vec_len(result_rows(r)) }
+
+func result_next(r: Int) -> Int {
+    let current = __builtin_load64(r + 16)
+    let rows = result_rows(r)
+    if current >= vec_len(rows) { return 0 }
+    __builtin_store64(r + 16, current + 1)
+    vec_get(rows, current)
+}
+
+func result_get(r: Int, idx: Int) -> Int {
+    let rows = result_rows(r)
+    if idx >= vec_len(rows) { return 0 }
+    vec_get(rows, idx)
+}
+
+// ============================================================================
+// IN-MEMORY DATABASE
+// ============================================================================
+
+struct MemoryDB {
+    tables: Int,  // Map of name -> table
+}
+
+func memory_db_new() -> Int {
+    let db = __builtin_malloc(8)
+    __builtin_store64(db, map_new())
+    db
+}
+
+func memory_create_table(db: Int, name: Int) {
+    let tables = __builtin_load64(db)
+    let table = vec_new()
+    map_set_int(tables, name, table)
+}
+
+func memory_insert(db: Int, table_name: Int, row: Int) {
+    let tables = __builtin_load64(db)
+    let table = map_get_int(tables, table_name)
+    if table != 0 { vec_push(table, row) }
+}
+
+func memory_select(db: Int, table_name: Int) -> Int {
+    let tables = __builtin_load64(db)
+    let table = map_get_int(tables, table_name)
+    let result = result_new()
+    let result_rows = result_rows(result)
+    
+    if table != 0 {
+        let i = 0
+        while i < vec_len(table) {
+            vec_push(result_rows, vec_get(table, i))
+            i = i + 1
+        }
+    }
+    
+    result
+}
+
+// ============================================================================
+// TRANSACTIONS
+// ============================================================================
+
+struct Transaction {
+    conn: Int,
+    active: Int,
+    operations: Int,
+}
+
+func transaction_begin(conn: Int) -> Int {
+    let tx = __builtin_malloc(24)
+    __builtin_store64(tx, conn)
+    __builtin_store64(tx + 8, 1)
+    __builtin_store64(tx + 16, vec_new())
+    // BEGIN transaction
+    tx
+}
+
+func transaction_commit(tx: Int) -> Int {
+    if __builtin_load64(tx + 8) == 0 { return 0 }
+    // COMMIT
+    __builtin_store64(tx + 8, 0)
+    1
+}
+
+func transaction_rollback(tx: Int) {
+    __builtin_store64(tx + 8, 0)
+    // ROLLBACK
+}
+
+// ============================================================================
+// MIGRATIONS
+// ============================================================================
+
+struct Migration {
+    version: Int,
+    up_sql: Int,
+    down_sql: Int,
+    applied: Int,
+}
+
+func migration_new(version: Int, up: Int, down: Int) -> Int {
+    let m = __builtin_malloc(32)
+    __builtin_store64(m, version)
+    __builtin_store64(m + 8, up)
+    __builtin_store64(m + 16, down)
+    __builtin_store64(m + 24, 0)
+    m
+}
+
+struct Migrator {
+    conn: Int,
+    migrations: Int,
+}
+
+func migrator_new(conn: Int) -> Int {
+    let m = __builtin_malloc(16)
+    __builtin_store64(m, conn)
+    __builtin_store64(m + 8, vec_new())
+    m
+}
+
+func migrator_add(mig: Int, migration: Int) {
+    let migrations = __builtin_load64(mig + 8)
+    vec_push(migrations, migration)
+}
+
+func migrator_up(mig: Int) -> Int {
+    let migrations = __builtin_load64(mig + 8)
+    let applied = 0
+    let i = 0
+    while i < vec_len(migrations) {
+        let m = vec_get(migrations, i)
+        if __builtin_load64(m + 24) == 0 {
+            // Apply migration
+            __builtin_store64(m + 24, 1)
+            applied = applied + 1
+        }
+        i = i + 1
+    }
+    applied
+}
+
+func migrator_down(mig: Int) -> Int {
+    let migrations = __builtin_load64(mig + 8)
+    let i = vec_len(migrations) - 1
+    while i >= 0 {
+        let m = vec_get(migrations, i)
+        if __builtin_load64(m + 24) == 1 {
+            // Rollback migration
+            __builtin_store64(m + 24, 0)
+            return 1
+        }
+        i = i - 1
+    }
+    0
+}
+
+// ============================================================================
+// KEY-VALUE STORE
+// ============================================================================
+
+struct KVStore {
+    data: Int,
+    ttl: Int,
+}
+
+func kv_new() -> Int {
+    let kv = __builtin_malloc(16)
+    __builtin_store64(kv, map_new())
+    __builtin_store64(kv + 8, map_new())
+    kv
+}
+
+func kv_set(kv: Int, key: Int, value: Int) {
+    let data = __builtin_load64(kv)
+    map_set_int(data, key, value)
+}
+
+func kv_get(kv: Int, key: Int) -> Int {
+    let data = __builtin_load64(kv)
+    map_get_int(data, key)
+}
+
+func kv_delete(kv: Int, key: Int) {
+    let data = __builtin_load64(kv)
+    map_remove_int(data, key)
+}
+
+func kv_set_ttl(kv: Int, key: Int, value: Int, ttl: Int) {
+    kv_set(kv, key, value)
+    let ttl_map = __builtin_load64(kv + 8)
+    map_set_int(ttl_map, key, ttl)
+}

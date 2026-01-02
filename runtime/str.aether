@@ -1,0 +1,192 @@
+// AETHER STRING - STRING UTILITIES
+// String operations and manipulation
+
+// ============================================================================
+// STRING LENGTH AND COMPARISON
+// ============================================================================
+
+func str_len(s: Int) -> Int {
+    let i = 0
+    while __builtin_load8(s + i) != 0 { i = i + 1 }
+    i
+}
+
+func str_eq(a: Int, b: Int) -> Int {
+    let i = 0
+    while 1 == 1 {
+        let ca = __builtin_load8(a + i)
+        let cb = __builtin_load8(b + i)
+        if ca != cb { return 0 }
+        if ca == 0 { return 1 }
+        i = i + 1
+    }
+    0
+}
+
+func str_cmp(a: Int, b: Int) -> Int {
+    let i = 0
+    while 1 == 1 {
+        let ca = __builtin_load8(a + i)
+        let cb = __builtin_load8(b + i)
+        if ca < cb { return 0 - 1 }
+        if ca > cb { return 1 }
+        if ca == 0 { return 0 }
+        i = i + 1
+    }
+    0
+}
+
+// ============================================================================
+// STRING MANIPULATION
+// ============================================================================
+
+func str_copy(dst: Int, src: Int) -> Int {
+    let i = 0
+    while 1 == 1 {
+        let c = __builtin_load8(src + i)
+        __builtin_store8(dst + i, c)
+        if c == 0 { break }
+        i = i + 1
+    }
+    dst
+}
+
+func str_cat(dst: Int, src: Int) -> Int {
+    let len = str_len(dst)
+    str_copy(dst + len, src)
+    dst
+}
+
+func str_dup(s: Int) -> Int {
+    let len = str_len(s)
+    let d = __builtin_malloc(len + 1)
+    str_copy(d, s)
+    d
+}
+
+func str_slice(s: Int, start: Int, end: Int) -> Int {
+    let len = end - start
+    let d = __builtin_malloc(len + 1)
+    let i = 0
+    while i < len {
+        __builtin_store8(d + i, __builtin_load8(s + start + i))
+        i = i + 1
+    }
+    __builtin_store8(d + len, 0)
+    d
+}
+
+// ============================================================================
+// STRING SEARCH
+// ============================================================================
+
+func str_find(haystack: Int, needle: Int) -> Int {
+    let hlen = str_len(haystack)
+    let nlen = str_len(needle)
+    if nlen > hlen { return 0 - 1 }
+    
+    let i = 0
+    while i <= hlen - nlen {
+        let match = 1
+        let j = 0
+        while j < nlen {
+            if __builtin_load8(haystack + i + j) != __builtin_load8(needle + j) {
+                match = 0
+                break
+            }
+            j = j + 1
+        }
+        if match == 1 { return i }
+        i = i + 1
+    }
+    0 - 1
+}
+
+func str_contains(haystack: Int, needle: Int) -> Int {
+    if str_find(haystack, needle) >= 0 { return 1 }
+    0
+}
+
+func str_starts_with(s: Int, prefix: Int) -> Int {
+    let plen = str_len(prefix)
+    let i = 0
+    while i < plen {
+        if __builtin_load8(s + i) != __builtin_load8(prefix + i) { return 0 }
+        i = i + 1
+    }
+    1
+}
+
+func str_ends_with(s: Int, suffix: Int) -> Int {
+    let slen = str_len(s)
+    let xlen = str_len(suffix)
+    if xlen > slen { return 0 }
+    let i = 0
+    while i < xlen {
+        if __builtin_load8(s + slen - xlen + i) != __builtin_load8(suffix + i) { return 0 }
+        i = i + 1
+    }
+    1
+}
+
+// ============================================================================
+// STRING CONVERSION
+// ============================================================================
+
+func str_to_int(s: Int) -> Int {
+    let result = 0
+    let neg = 0
+    let i = 0
+    if __builtin_load8(s) == 45 { neg = 1 i = 1 }
+    while __builtin_load8(s + i) >= 48 && __builtin_load8(s + i) <= 57 {
+        result = result * 10 + __builtin_load8(s + i) - 48
+        i = i + 1
+    }
+    if neg == 1 { return 0 - result }
+    result
+}
+
+func int_to_str(n: Int) -> Int {
+    let buf = __builtin_malloc(32)
+    let i = 0
+    let neg = 0
+    if n < 0 { neg = 1 n = 0 - n }
+    if n == 0 {
+        __builtin_store8(buf, 48)
+        __builtin_store8(buf + 1, 0)
+        return buf
+    }
+    while n > 0 {
+        __builtin_store8(buf + i, 48 + n % 10)
+        n = n / 10
+        i = i + 1
+    }
+    if neg == 1 { __builtin_store8(buf + i, 45) i = i + 1 }
+    __builtin_store8(buf + i, 0)
+    // Reverse
+    let j = 0
+    let k = i - 1
+    while j < k {
+        let tmp = __builtin_load8(buf + j)
+        __builtin_store8(buf + j, __builtin_load8(buf + k))
+        __builtin_store8(buf + k, tmp)
+        j = j + 1
+        k = k - 1
+    }
+    buf
+}
+
+// ============================================================================
+// HASH
+// ============================================================================
+
+func str_hash(s: Int) -> Int {
+    let h = 5381
+    let i = 0
+    while __builtin_load8(s + i) != 0 {
+        h = h * 33 + __builtin_load8(s + i)
+        i = i + 1
+    }
+    if h < 0 { h = 0 - h }
+    h
+}

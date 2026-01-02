@@ -1,0 +1,246 @@
+// AETHER EFFECTS SYSTEM
+// Algebraic effects and handlers for pure functional control flow
+
+import runtime.vec
+
+// ============================================================================
+// EFFECT TYPES
+// ============================================================================
+
+const EFFECT_NONE: Int = 0
+const EFFECT_IO: Int = 1
+const EFFECT_STATE: Int = 2
+const EFFECT_EXCEPTION: Int = 3
+const EFFECT_ASYNC: Int = 4
+const EFFECT_NONDETERMINISM: Int = 5
+const EFFECT_LOGGING: Int = 6
+
+// ============================================================================
+// EFFECT CONTEXT
+// Tracks active effects and handlers
+// ============================================================================
+
+struct EffectContext {
+    handlers: Int,    // Stack of handlers
+    effects: Int,     // Set of active effects
+    continuation: Int, // Current continuation
+}
+
+func effect_ctx_new() -> Int {
+    let ctx = __builtin_malloc(24)
+    __builtin_store64(ctx, vec_new())   // handlers
+    __builtin_store64(ctx + 8, 0)       // effects bitmap
+    __builtin_store64(ctx + 16, 0)      // continuation
+    ctx
+}
+
+func effect_ctx_handlers(ctx: Int) -> Int { __builtin_load64(ctx) }
+func effect_ctx_effects(ctx: Int) -> Int { __builtin_load64(ctx + 8) }
+func effect_ctx_cont(ctx: Int) -> Int { __builtin_load64(ctx + 16) }
+
+func effect_ctx_set_cont(ctx: Int, k: Int) { __builtin_store64(ctx + 16, k) }
+
+// ============================================================================
+// EFFECT HANDLER
+// Intercepts and handles effects
+// ============================================================================
+
+struct Handler {
+    effect_type: Int,
+    handle_fn: Int,   // Function pointer
+    return_fn: Int,   // Return handler
+    parent: Int,      // Parent handler
+}
+
+func handler_new(eff_type: Int, handle: Int, ret: Int) -> Int {
+    let h = __builtin_malloc(32)
+    __builtin_store64(h, eff_type)
+    __builtin_store64(h + 8, handle)
+    __builtin_store64(h + 16, ret)
+    __builtin_store64(h + 24, 0)
+    h
+}
+
+func handler_effect(h: Int) -> Int { __builtin_load64(h) }
+func handler_handle(h: Int) -> Int { __builtin_load64(h + 8) }
+func handler_return(h: Int) -> Int { __builtin_load64(h + 16) }
+func handler_parent(h: Int) -> Int { __builtin_load64(h + 24) }
+
+func handler_set_parent(h: Int, p: Int) { __builtin_store64(h + 24, p) }
+
+// ============================================================================
+// CONTINUATION
+// Captured continuation for resumable effects
+// ============================================================================
+
+struct Continuation {
+    stack: Int,       // Saved stack
+    pc: Int,          // Program counter
+    handler: Int,     // Associated handler
+    resumed: Int,     // Has been resumed?
+}
+
+func continuation_new(stack: Int, pc: Int, handler: Int) -> Int {
+    let k = __builtin_malloc(32)
+    __builtin_store64(k, stack)
+    __builtin_store64(k + 8, pc)
+    __builtin_store64(k + 16, handler)
+    __builtin_store64(k + 24, 0)
+    k
+}
+
+func continuation_resume(k: Int, value: Int) -> Int {
+    let resumed = __builtin_load64(k + 24)
+    if resumed == 1 { return 0 }  // Already resumed
+    __builtin_store64(k + 24, 1)
+    // Restore stack and continue with value
+    value
+}
+
+// ============================================================================
+// EFFECT OPERATIONS
+// ============================================================================
+
+// Perform an effect operation
+func perform(ctx: Int, effect_type: Int, args: Int) -> Int {
+    let handlers = effect_ctx_handlers(ctx)
+    let i = vec_len(handlers) - 1
+    
+    while i >= 0 {
+        let h = vec_get(handlers, i)
+        if handler_effect(h) == effect_type {
+            // Found matching handler
+            let handle_fn = handler_handle(h)
+            // Call handler with args and continuation
+            return args  // Simplified
+        }
+        i = i - 1
+    }
+    
+    // No handler found
+    0
+}
+
+// Install a handler
+func with_handler(ctx: Int, handler: Int, body: Int) -> Int {
+    let handlers = effect_ctx_handlers(ctx)
+    vec_push(handlers, handler)
+    
+    // Execute body
+    let result = body
+    
+    // Remove handler
+    vec_pop(handlers)
+    
+    // Call return handler
+    let ret_fn = handler_return(handler)
+    result
+}
+
+// ============================================================================
+// STANDARD EFFECTS
+// ============================================================================
+
+// IO Effect
+func io_print(ctx: Int, msg: Int) -> Int {
+    perform(ctx, EFFECT_IO, msg)
+}
+
+func io_read(ctx: Int) -> Int {
+    perform(ctx, EFFECT_IO, 0)
+}
+
+// State Effect
+struct StateOp {
+    op_type: Int,  // 0=get, 1=put
+    value: Int,
+}
+
+func state_get(ctx: Int) -> Int {
+    let op = __builtin_malloc(16)
+    __builtin_store64(op, 0)
+    __builtin_store64(op + 8, 0)
+    perform(ctx, EFFECT_STATE, op)
+}
+
+func state_put(ctx: Int, val: Int) {
+    let op = __builtin_malloc(16)
+    __builtin_store64(op, 1)
+    __builtin_store64(op + 8, val)
+    perform(ctx, EFFECT_STATE, op)
+}
+
+// Exception Effect
+func throw_effect(ctx: Int, exn: Int) -> Int {
+    perform(ctx, EFFECT_EXCEPTION, exn)
+}
+
+func catch_effect(ctx: Int, body: Int, handler: Int) -> Int {
+    let h = handler_new(EFFECT_EXCEPTION, handler, 0)
+    with_handler(ctx, h, body)
+}
+
+// Async Effect
+func async_spawn(ctx: Int, task: Int) -> Int {
+    perform(ctx, EFFECT_ASYNC, task)
+}
+
+func async_await(ctx: Int, future: Int) -> Int {
+    perform(ctx, EFFECT_ASYNC, future)
+}
+
+// ============================================================================
+// EFFECT COMPOSITION
+// ============================================================================
+
+// Combine multiple effects
+func compose_effects(e1: Int, e2: Int) -> Int {
+    e1 + e2 * 256
+}
+
+// Check if an effect is in a composition
+func has_effect(composition: Int, effect: Int) -> Int {
+    let mask = 1
+    let i = 0
+    while i < effect {
+        mask = mask * 2
+        i = i + 1
+    }
+    if composition / mask % 2 == 1 { return 1 }
+    0
+}
+
+// ============================================================================
+// LOGGING EFFECT
+// ============================================================================
+
+const LOG_DEBUG: Int = 0
+const LOG_INFO: Int = 1
+const LOG_WARN: Int = 2
+const LOG_ERROR: Int = 3
+
+struct LogOp {
+    level: Int,
+    message: Int,
+}
+
+func log_debug(ctx: Int, msg: Int) {
+    let op = __builtin_malloc(16)
+    __builtin_store64(op, LOG_DEBUG)
+    __builtin_store64(op + 8, msg)
+    perform(ctx, EFFECT_LOGGING, op)
+}
+
+func log_info(ctx: Int, msg: Int) {
+    let op = __builtin_malloc(16)
+    __builtin_store64(op, LOG_INFO)
+    __builtin_store64(op + 8, msg)
+    perform(ctx, EFFECT_LOGGING, op)
+}
+
+func log_error(ctx: Int, msg: Int) {
+    let op = __builtin_malloc(16)
+    __builtin_store64(op, LOG_ERROR)
+    __builtin_store64(op + 8, msg)
+    perform(ctx, EFFECT_LOGGING, op)
+}

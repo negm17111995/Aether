@@ -1,143 +1,110 @@
-// AETHER PRELUDE - MASTER MODULE CONNECTOR
-// Connects ALL Aether modules into a unified standard library
-// Auto-imported by all Aether programs
+// AETHER STANDARD LIBRARY - PRELUDE
+// Automatically imported into every Aether program
 
-import std
-
-// ============================================================================
-// CORE RUNTIME
-// ============================================================================
-
-// Memory & Data Structures
-import std.runtime.vec
-import std.runtime.arena
-import std.runtime.alloc
-import std.runtime.map
-import std.runtime.str
-
-// Safety & Security
-import std.runtime.safety
-import std.runtime.security
-import std.runtime.neverstuck
-import std.runtime.indestructible
-
-// Concurrency
-import std.runtime.async
-import std.runtime.parallel
-import std.runtime.concurrency
-
-// Performance
-import std.runtime.simd
-import std.runtime.simd_x64
-import std.runtime.ultrafast
-import std.runtime.zerocopy
-import std.runtime.temporal
-
-// Deployment
-import std.runtime.deploy
+// Core types are built-in:
+// Int, Float, Bool, Char, String
 
 // ============================================================================
-// I/O & NETWORKING
+// OPTION TYPE
 // ============================================================================
 
-import std.io
-import std.io.fs
-import std.net
+enum Option<T> {
+    Some(T),
+    None,
+}
+
+func some<T>(val: T) -> Option<T> {
+    Option::Some(val)
+}
+
+func none<T>() -> Option<T> {
+    Option::None
+}
 
 // ============================================================================
-// TYPES & CORE UTILITIES
+// RESULT TYPE
 // ============================================================================
 
-import std.core
-import std.core.args
-import std.core.result
-import std.types.bounded
-import std.collections
-import std.liquid
+enum Result<T, E> {
+    Ok(T),
+    Err(E),
+}
+
+func ok<T, E>(val: T) -> Result<T, E> {
+    Result::Ok(val)
+}
+
+func err<T, E>(e: E) -> Result<T, E> {
+    Result::Err(e)
+}
 
 // ============================================================================
-// VERITAS FEATURES
+// BASIC I/O
 // ============================================================================
 
-// Compile-time & Hardware
-import std.comptime.hw
-import std.hw.detect
-import std.energy.budget
+func print(c: Int) {
+    __builtin_print(c)
+}
 
-// Actors & Effects
-import std.actor.actor
-import std.effects.effects
+func println() {
+    print(10)
+}
 
-// FFI & Hot Reload
-import std.ffi.ffi
-import std.hotreload.hotreload
+func print_int(n: Int) {
+    if n < 0 {
+        print(45)
+        n = 0 - n
+    }
+    if n == 0 {
+        print(48)
+        return
+    }
+    let digits = vec_new()
+    while n > 0 {
+        vec_push(digits, 48 + n % 10)
+        n = n / 10
+    }
+    let i = vec_len(digits) - 1
+    while i >= 0 {
+        print(vec_get(digits, i))
+        i = i - 1
+    }
+}
 
-// Build System
-import std.build.query
-import std.linker.prune
-import std.morphic.ir
-import std.pkg.registry
-
-// ============================================================================
-// WEB
-// ============================================================================
-
-import std.web.frontend
-import std.web.backend
-import std.web.ui
-
-// ============================================================================
-// CLOUD & DATABASE
-// ============================================================================
-
-import std.cloud.cloud
-import std.db.anc_decoder
-import std.time.time
-import std.time.datetime
-
-// ============================================================================
-// CRYPTO
-// ============================================================================
-
-import std.crypto.crypto
+func print_str(s: Int) {
+    let i = 0
+    while __builtin_load8(s + i) != 0 {
+        print(__builtin_load8(s + i))
+        i = i + 1
+    }
+}
 
 // ============================================================================
-// AGI
+// ASSERTIONS
 // ============================================================================
 
-import std.agi
+func assert(cond: Bool) {
+    if cond == false {
+        print(65) print(83) print(83) print(69) print(82) print(84) print(10)
+        __builtin_exit(1)
+    }
+}
+
+func assert_eq(a: Int, b: Int) {
+    if a != b {
+        print(65) print(83) print(83) print(69) print(82) print(84) print(10)
+        __builtin_exit(1)
+    }
+}
 
 // ============================================================================
-// RE-EXPORTS (make all functions globally available)
+// MEMORY
 // ============================================================================
 
-// -- Core Functions --
-func min(a: Int, b: Int) -> Int { ae_min(a, b) }
-func max(a: Int, b: Int) -> Int { ae_max(a, b) }
-func abs(x: Int) -> Int { ae_abs(x) }
-func clamp(x: Int, lo: Int, hi: Int) -> Int { ae_clamp(x, lo, hi) }
+func malloc(size: Int) -> Int {
+    __builtin_malloc(size)
+}
 
-// -- Memory --
-func malloc(size: Int) -> Int { ae_malloc(size) }
-func load64(addr: Int) -> Int { ae_load64(addr) }
-func store64(addr: Int, val: Int) { ae_store64(addr, val) }
-func load8(addr: Int) -> Int { ae_load8(addr) }
-func store8(addr: Int, val: Int) { ae_store8(addr, val) }
-func peek(addr: Int) -> Int { ae_load64(addr) }
-func poke(addr: Int, val: Int) { ae_store64(addr, val) }
-
-// -- I/O --
-func read_file(path: Int) -> Int { io_read_file(path) }
-func write_file(path: Int, content: Int) -> Int { io_write_file(path, content) }
-
-// -- Console --
-func println(val: Int) { print(val) }
-func input() -> Int { io_input() }
-
-// ============================================================================
-// VERSION INFO
-// ============================================================================
-
-const AETHER_VERSION: Int = 100  // 1.0.0
-const AETHER_MODULES: Int = 83
-const AETHER_LINES: Int = 15700
+func free(ptr: Int) {
+    __builtin_free(ptr)
+}

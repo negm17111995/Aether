@@ -1,0 +1,37 @@
+// TEST 2: Arithmetic Operations
+// Tests: binary expressions, integer literals, operators
+
+func main() -> Int {
+    let a = 10
+    let b = 5
+    
+    // Addition
+    let sum = a + b
+    if sum != 15 { return 1 }
+    
+    // Subtraction
+    let diff = a - b
+    if diff != 5 { return 2 }
+    
+    // Multiplication
+    let prod = a * b
+    if prod != 50 { return 3 }
+    
+    // Division
+    let quot = a / b
+    if quot != 2 { return 4 }
+    
+    // Modulo
+    let rem = a % 3
+    if rem != 1 { return 5 }
+    
+    // Print "OK"
+    print(79)
+    print(75)
+    print(10)
+    0
+}
+
+func print(c: Int) {
+    __builtin_print(c)
+}
