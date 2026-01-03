@@ -1,0 +1,31 @@
+[package]
+name = "aether-compiler"
+version = "1.0.0"
+edition = "2021"
+description = "World-class Aether programming language compiler"
+license = "MIT"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# PostgreSQL
+tokio-postgres = "0.7"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Error handling
+anyhow = "1"
+thiserror = "1"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
