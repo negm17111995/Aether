@@ -1,0 +1,33 @@
+// Arithmetic Test - Aether
+// Tests: +, -, *, /, comparison, if
+
+func main() -> Int {
+    let a = 10
+    let b = 5
+    
+    // Test addition: 10 + 5 = 15
+    let sum = a + b
+    
+    // Test subtraction: 10 - 5 = 5
+    let diff = a - b
+    
+    // Test multiplication: 10 * 5 = 50
+    let prod = a * b
+    
+    // Test division: 10 / 5 = 2
+    let quot = a / b
+    
+    // Print "OK" if all tests pass (O=79, K=75)
+    if sum == 15 {
+        if diff == 5 {
+            if prod == 50 {
+                if quot == 2 {
+                    __builtin_print(79)
+                    __builtin_print(75)
+                    __builtin_print(10)
+                }
+            }
+        }
+    }
+    0
+}

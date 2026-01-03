@@ -1,0 +1,13 @@
+// Simple Aether test program
+// Stage 0 bootstrap test
+
+func main() -> Int {
+    // Print "Hello" (H=72, e=101, l=108, l=108, o=111)
+    __builtin_print(72)
+    __builtin_print(101)
+    __builtin_print(108)
+    __builtin_print(108)
+    __builtin_print(111)
+    __builtin_print(10)  // newline
+    0
+}

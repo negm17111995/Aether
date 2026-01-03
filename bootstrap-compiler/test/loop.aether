@@ -1,0 +1,14 @@
+// Loop Test - Aether
+// Tests: while loop, counter
+
+func main() -> Int {
+    let i = 0
+    
+    // Print digits 0-9
+    while i < 10 {
+        __builtin_print(48 + i)  // ASCII '0' = 48
+        i = i + 1
+    }
+    __builtin_print(10)  // newline
+    0
+}
