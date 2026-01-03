@@ -1,6 +1,0 @@
-// TEST: String methods
-func main() -> Int {
-    let s = "Hello"
-    print(5)
-    0
-}

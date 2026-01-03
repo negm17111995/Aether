@@ -1,8 +1,0 @@
-// TEST: Real Import
-import std
-
-func main() -> Int {
-    let x = ae_abs(0 - 42)
-    print(x)
-    0
-}

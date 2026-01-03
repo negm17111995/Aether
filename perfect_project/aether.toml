@@ -1,7 +1,0 @@
-[project]
-name = "perfect_project"
-version = "0.1.0"
-authors = ["negm"]
-
-[dependencies]
-std = { version = "1.0", path = "/Users/negm/Desktop/Aether/aether-core/stdlib" }
