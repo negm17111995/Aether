@@ -1,6 +1,6 @@
 // AETHER BOOTSTRAP COMPILER - STAGE 0
-// A Rust compiler that compiles Aether source to native or LLVM IR
-// This is the "host" compiler used to bootstrap the self-hosted Aether compiler
+// Cross-platform compiler: Aether source → Native ARM64 or LLVM IR
+// Supports: macOS, Linux, Windows on x86_64 and ARM64
 
 mod lexer;
 mod parser;
@@ -13,19 +13,32 @@ use std::fs;
 use std::process;
 use std::process::Command;
 
+use llvm_codegen::Target;
+
 fn print_usage() {
     eprintln!("Aether Bootstrap Compiler (Stage 0)");
     eprintln!("");
     eprintln!("Usage: aether_bootstrap [OPTIONS] <source.aether> [output]");
     eprintln!("");
     eprintln!("Options:");
-    eprintln!("  --emit-llvm    Output LLVM IR instead of native binary");
-    eprintln!("  --version      Show version information");
-    eprintln!("  --help         Show this help message");
+    eprintln!("  --emit-llvm         Output LLVM IR instead of native binary");
+    eprintln!("  --target <TARGET>   Cross-compile for specific target");
+    eprintln!("  --list-targets      List all supported targets");
+    eprintln!("  --version           Show version information");
+    eprintln!("  --help              Show this help message");
+    eprintln!("");
+    eprintln!("Supported Targets:");
+    eprintln!("  macos-arm64     macOS ARM64 (Apple Silicon)");
+    eprintln!("  macos-x64       macOS x86_64 (Intel)");
+    eprintln!("  linux-arm64     Linux ARM64");
+    eprintln!("  linux-x64       Linux x86_64");
+    eprintln!("  windows-x64     Windows x86_64");
+    eprintln!("  wasm32          WebAssembly");
     eprintln!("");
     eprintln!("Examples:");
-    eprintln!("  aether_bootstrap hello.aether hello       # Compile to native");
-    eprintln!("  aether_bootstrap --emit-llvm hello.aether hello.ll  # Output LLVM IR");
+    eprintln!("  aether_bootstrap hello.aether hello                    # Native");
+    eprintln!("  aether_bootstrap --emit-llvm hello.aether hello.ll     # LLVM IR");
+    eprintln!("  aether_bootstrap --emit-llvm --target linux-x64 hello.aether hello.ll");
 }
 
 fn main() {
@@ -39,8 +52,9 @@ fn main() {
     if args[1] == "--version" || args[1] == "-v" {
         println!("Aether Bootstrap Compiler (Stage 0)");
         println!("Version: 1.0.0");
-        println!("Targets: ARM64 (native), LLVM IR");
-        println!("Written in Rust for bootstrapping purposes only");
+        println!("Host: {:?}", Target::detect());
+        println!("Targets: macos-arm64, macos-x64, linux-arm64, linux-x64, windows-x64, wasm32");
+        println!("Backends: Native ARM64, LLVM IR");
         return;
     }
     
@@ -49,23 +63,52 @@ fn main() {
         return;
     }
     
-    // Parse options
-    let mut emit_llvm = false;
-    let mut source_idx = 1;
-    
-    if args[1] == "--emit-llvm" {
-        emit_llvm = true;
-        source_idx = 2;
+    if args[1] == "--list-targets" {
+        println!("Supported targets:");
+        for target in Target::all() {
+            println!("  {:?} -> {}", target, target.triple());
+        }
+        return;
     }
     
-    if source_idx >= args.len() {
+    // Parse options
+    let mut emit_llvm = false;
+    let mut target: Option<Target> = None;
+    let mut arg_idx = 1;
+    
+    while arg_idx < args.len() && args[arg_idx].starts_with("--") {
+        match args[arg_idx].as_str() {
+            "--emit-llvm" => {
+                emit_llvm = true;
+                arg_idx += 1;
+            }
+            "--target" => {
+                if arg_idx + 1 >= args.len() {
+                    eprintln!("Error: --target requires a target name");
+                    process::exit(1);
+                }
+                target = Target::from_str(&args[arg_idx + 1]);
+                if target.is_none() {
+                    eprintln!("Error: Unknown target '{}'. Use --list-targets to see options.", args[arg_idx + 1]);
+                    process::exit(1);
+                }
+                arg_idx += 2;
+            }
+            _ => {
+                eprintln!("Error: Unknown option '{}'", args[arg_idx]);
+                process::exit(1);
+            }
+        }
+    }
+    
+    if arg_idx >= args.len() {
         eprintln!("Error: No source file specified");
         process::exit(1);
     }
     
-    let source_path = &args[source_idx];
-    let output_path = if args.len() > source_idx + 1 { 
-        args[source_idx + 1].clone() 
+    let source_path = &args[arg_idx];
+    let output_path = if args.len() > arg_idx + 1 { 
+        args[arg_idx + 1].clone() 
     } else if emit_llvm {
         source_path.replace(".aether", ".ll")
     } else { 
@@ -90,15 +133,20 @@ fn main() {
     println!("      {} declarations", ast.decls.len());
     
     if emit_llvm {
-        println!("[3/4] Generating LLVM IR...");
-        let llvm_ir = llvm_codegen::generate_llvm(&ast);
+        let actual_target = target.unwrap_or_else(Target::detect);
+        println!("[3/4] Generating LLVM IR for {}...", actual_target.triple());
+        let llvm_ir = llvm_codegen::generate_llvm_for_target(&ast, actual_target);
         println!("      {} bytes of LLVM IR", llvm_ir.len());
         
         println!("[4/4] Writing {}...", output_path);
         fs::write(&output_path, &llvm_ir).expect("Failed to write LLVM IR");
-        println!("Done! Compile with: clang {} -o output", output_path);
+        println!("Done!");
+        println!("");
+        println!("To compile LLVM IR to native:");
+        println!("  clang {} -o output", output_path);
+        println!("  clang {} -o output --target={}", output_path, actual_target.triple());
         
-        // Optionally compile to native using clang/llc
+        // Auto-compile if clang available
         if output_path.ends_with(".ll") {
             let native_path = output_path.replace(".ll", "");
             let clang_result = Command::new("clang")
@@ -107,7 +155,7 @@ fn main() {
             
             if let Ok(output) = clang_result {
                 if output.status.success() {
-                    println!("      Also compiled to native: {}", native_path);
+                    println!("      Auto-compiled to: {}", native_path);
                 }
             }
         }
