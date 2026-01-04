@@ -38,6 +38,8 @@ pub enum TokenKind {
     Import,
     Pub,
     Self_,
+    Match,
+    Parallel,
     
     // Operators
     Plus,
@@ -147,6 +149,8 @@ impl<'a> Lexer<'a> {
         keywords.insert("self", TokenKind::Self_);
         keywords.insert("true", TokenKind::True);
         keywords.insert("false", TokenKind::False);
+        keywords.insert("match", TokenKind::Match);
+        keywords.insert("parallel", TokenKind::Parallel);
         
         Lexer {
             source,
@@ -228,6 +232,18 @@ impl<'a> Lexer<'a> {
     }
     
     fn number(&mut self) -> Token {
+        // Check for hex literal (0x...)
+        if self.lexeme() == "0" && self.peek() == Some('x') {
+            self.advance(); // consume 'x'
+            while self.peek().map_or(false, |c| c.is_ascii_hexdigit()) {
+                self.advance();
+            }
+            let mut tok = self.make_token(TokenKind::Int);
+            let hex_str = &self.lexeme()[2..]; // skip "0x"
+            tok.int_value = i64::from_str_radix(hex_str, 16).ok();
+            return tok;
+        }
+        
         while self.peek().map_or(false, |c| c.is_ascii_digit()) {
             self.advance();
         }

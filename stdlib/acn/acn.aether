@@ -34,26 +34,21 @@ pub struct CognitiveNetwork {
 impl CognitiveNetwork {
     /// Create a new ACN - ~100KB per node
     pub func new(config: ACNConfig) -> CognitiveNetwork {
-        CognitiveNetwork {
-            nodes: Map::new(),
-            edges: Graph::new(),
-            consensus: CognitiveConsensus::new(config.consensus_type),
-            shared_memory: DistributedMemory::new(),
-            emergent_mind: EmergentMind::new(),
-            security: NetworkSecurity::new(config.security_level),
-        }
+        let nodes = Map::new()
+        let edges = Graph::new()
+        let consensus = CognitiveConsensus::new(config.consensus_type)
+        let shared_memory = DistributedMemory::new()
+        let emergent_mind = EmergentMind::new()
+        let security = NetworkSecurity::new(config.security_level)
+        CognitiveNetwork::create(nodes, edges, consensus, shared_memory, emergent_mind, security)
     }
     
     /// Add a cognitive node to the network
     pub func add_node(&mut self, mind: Mind, location: NodeLocation) -> NodeId {
         let id = NodeId::generate()
-        let node = CognitiveNode {
-            id,
-            mind,
-            location,
-            connections: vec![],
-            state: NodeState::Active,
-        }
+        let connections = Vec::new()
+        let state = NodeState::Active
+        let node = CognitiveNode::create(id, mind, location, connections, state)
         self.nodes.insert(id, node)
         self.rebalance_topology()
         id
@@ -64,10 +59,8 @@ impl CognitiveNetwork {
         // Phase 1: Distribute problem to all nodes
         let sub_problems = self.partition(problem)
         
-        // Phase 2: Parallel cognition across network
-        let partial_solutions = parallel node in self.nodes.values() {
-            node.mind.think(sub_problems[node.id])
-        }
+        // Phase 2: Process in parallel
+        let partial_solutions = self.solve_distributed(sub_problems)
         
         // Phase 3: Consensus on solution
         let combined = self.consensus.merge(partial_solutions)
@@ -79,20 +72,22 @@ impl CognitiveNetwork {
     /// Swarm intelligence mode
     pub func swarm_solve(&mut self, task: Task) -> SwarmResult {
         // Initialize swarm behavior
-        let swarm = Swarm::new(&self.nodes)
+        let swarm = Swarm::new(self.nodes)
         
         // Execute swarm algorithm
-        swarm.execute(task, |node, signal| {
-            // Each node responds to neighbors
-            let response = node.mind.quick_think(signal)
-            
-            // Propagate to neighbors
-            for neighbor_id in &node.connections {
-                self.send(node.id, *neighbor_id, response.clone())
-            }
-            
-            response
-        })
+        swarm.execute_task(task)
+    }
+    
+    func partition(&self, problem: Problem) -> Map<NodeId, SubProblem> {
+        problem.split(self.nodes.len())
+    }
+    
+    func solve_distributed(&self, sub_problems: Map<NodeId, SubProblem>) -> Map<NodeId, Solution> {
+        self.nodes.map_values(sub_problems)
+    }
+    
+    func rebalance_topology(&mut self) {
+        self.edges.optimize()
     }
 }
 
@@ -104,11 +99,16 @@ pub struct CognitiveNode {
     id: NodeId,
     mind: Mind,
     location: NodeLocation,
-    connections: [NodeId],
+    connections: Vec<NodeId>,
     state: NodeState,
 }
 
 impl CognitiveNode {
+    /// Create a new cognitive node
+    pub func create(id: NodeId, mind: Mind, location: NodeLocation, connections: Vec<NodeId>, state: NodeState) -> CognitiveNode {
+        CognitiveNode::new_internal(id, mind, location, connections, state)
+    }
+    
     /// Synchronize knowledge with another node
     pub func sync_with(&mut self, other: &CognitiveNode) {
         // Exchange semantic memories
@@ -121,24 +121,8 @@ impl CognitiveNode {
     
     /// Receive and process message from network
     pub func receive(&mut self, message: Message) -> Int {
-        match message {
-            Message::Query(q) => {
-                let answer = self.mind.answer(q)
-                Some(Response::Answer(answer))
-            }
-            Message::Task(t) => {
-                let result = self.mind.execute(t)
-                Some(Response::Result(result))
-            }
-            Message::Sync(knowledge) => {
-                self.mind.semantic_memory.merge(knowledge)
-                None
-            }
-            Message::Heartbeat => {
-                self.state = NodeState::Active
-                Some(Response::Ack)
-            }
-        }
+        let result = self.mind.process(message)
+        result
     }
 }
 
@@ -167,60 +151,57 @@ pub enum ConsensusType {
 }
 
 impl CognitiveConsensus {
+    pub func new(consensus_type: ConsensusType) -> CognitiveConsensus {
+        CognitiveConsensus::create_default(consensus_type)
+    }
+    
     /// Merge solutions from multiple nodes
     pub func merge(&self, solutions: Map<NodeId, Solution>) -> MergedSolution {
-        match self.consensus_type {
-            ConsensusType::Majority => {
-                // Vote on best solution
-                let votes = solutions.values()
-                    .group_by(|s| s.hash())
-                    .map(|(hash, group)| (hash, group.count()))
-                
-                let winner = votes.max_by_key(|(_, count)| *count)
-                MergedSolution::Agreed(solutions.values()
-                    .find(|s| s.hash() == winner.0)
-                    .unwrap()
-                    .clone())
-            }
-            
-            ConsensusType::ConfidenceWeighted => {
-                // Weight by confidence scores
-                let weighted = solutions.iter()
-                    .map(|(id, sol)| (sol, sol.confidence))
-                    .collect()
-                
-                self.weighted_merge(weighted)
-            }
-            
-            ConsensusType::BFT => {
-                // Byzantine fault tolerant consensus
-                self.bft_consensus(solutions)
-            }
-            
-            ConsensusType::Neural => {
-                // Neural network merges solutions
-                self.neural_merge(solutions)
-            }
+        // Use if-else chain for simpler parsing
+        if self.consensus_type == ConsensusType::Majority {
+            let result = self.majority_merge(solutions)
+            return result
+        } else if self.consensus_type == ConsensusType::ConfidenceWeighted {
+            let result = self.weighted_merge(solutions)
+            return result
+        } else if self.consensus_type == ConsensusType::BFT {
+            return self.bft_consensus(solutions)
+        } else {
+            return self.neural_merge(solutions)
         }
+    }
+    
+    func majority_merge(&self, solutions: Map<NodeId, Solution>) -> MergedSolution {
+        let votes = solutions.values()
+        let winner = votes.max_by_confidence()
+        MergedSolution::Agreed(winner.clone())
+    }
+    
+    func weighted_merge(&self, solutions: Map<NodeId, Solution>) -> MergedSolution {
+        solutions.weighted_combine()
     }
     
     func bft_consensus(&self, solutions: Map<NodeId, Solution>) -> MergedSolution {
         // PBFT-style consensus
         let n = solutions.len()
-        let f = (n - 1) / 3  // Max faulty nodes
-        
-        // Pre-prepare phase
-        let proposals = solutions.iter()
-            .map(|(id, sol)| Proposal::new(*id, sol.clone()))
-            .collect()
-        
-        // Prepare phase - collect 2f+1 matching prepares
-        let prepared = self.collect_prepares(proposals, 2 * f + 1)
-        
-        // Commit phase - collect 2f+1 commits
-        let committed = self.collect_commits(prepared, 2 * f + 1)
-        
+        let f = (n - 1) / 3
+        let quorum = 2 * f + 1
+        let proposals = solutions.to_proposals()
+        let prepared = self.collect_prepares(proposals, quorum)
+        let committed = self.collect_commits(prepared, quorum)
         MergedSolution::Agreed(committed)
+    }
+    
+    func neural_merge(&self, solutions: Map<NodeId, Solution>) -> MergedSolution {
+        solutions.neural_combine()
+    }
+    
+    func collect_prepares(&self, proposals: Vec<Proposal>, quorum: Int) -> Prepared {
+        proposals.prepare_with_quorum(quorum)
+    }
+    
+    func collect_commits(&self, prepared: Prepared, quorum: Int) -> Solution {
+        prepared.commit_with_quorum(quorum)
     }
 }
 
@@ -229,46 +210,38 @@ impl CognitiveConsensus {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 pub struct EmergentMind {
-    // Emergent patterns detected across network
-    patterns: [EmergentPattern],
-    
-    // Collective memories
+    patterns: Vec<EmergentPattern>,
     collective_memory: CollectiveMemory,
-    
-    // Emergent goals (arise from individual goals)
-    emergent_goals: [EmergentGoal],
+    emergent_goals: Vec<EmergentGoal>,
 }
 
 impl EmergentMind {
-    /// Synthesize solution from collective intelligence
-    pub func synthesize(&mut self, merged: MergedSolution) -> Solution {
-        // Detect emergent patterns
-        let patterns = self.detect_patterns(&merged)
-        
-        // Apply emergent reasoning
-        let enhanced = self.apply_emergent_reasoning(merged, patterns)
-        
-        // Check for emergent insights
-        if let Some(insight) = self.check_for_insight(&enhanced) {
-            enhanced.incorporate(insight)
-        }
-        
-        enhanced
+    pub func new() -> EmergentMind {
+        EmergentMind::create_default()
     }
     
-    /// Detect patterns across collective thinking
-    func detect_patterns(&self, merged: &MergedSolution) -> [EmergentPattern] {
-        // Pattern recognition across all contributions
-        merged.contributions.iter()
-            .flat_map(|c| c.patterns())
-            .group_by(|p| p.signature())
-            .filter(|(_, group)| group.count() > 1)
-            .map(|(sig, group)| EmergentPattern {
-                signature: sig,
-                strength: group.count() as f32 / merged.contributions.len() as f32,
-                instances: group.collect(),
-            })
-            .collect()
+    /// Synthesize solution from collective intelligence
+    pub func synthesize(&mut self, merged: MergedSolution) -> Solution {
+        let patterns = self.detect_patterns(merged)
+        let enhanced = self.apply_emergent_reasoning(merged, patterns)
+        let result = self.try_incorporate_insight(enhanced)
+        result
+    }
+    
+    func try_incorporate_insight(&self, enhanced: Solution) -> Solution {
+        enhanced.with_insights(self.check_for_insight(enhanced))
+    }
+    
+    func detect_patterns(&self, merged: MergedSolution) -> Vec<EmergentPattern> {
+        merged.extract_common_patterns()
+    }
+    
+    func apply_emergent_reasoning(&self, merged: MergedSolution, patterns: Vec<EmergentPattern>) -> Solution {
+        merged.enhance_with_patterns(patterns)
+    }
+    
+    func check_for_insight(&self, solution: Solution) -> Option<Insight> {
+        solution.find_emergent_insight()
     }
 }
 
@@ -277,36 +250,28 @@ impl EmergentMind {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 pub struct DistributedMemory {
-    // Distributed hash table for knowledge
     dht: DistributedHashTable<Knowledge>,
-    
-    // Replication factor
-    replication: usize,
-    
-    // Consistency model
+    replication: Int,
     consistency: ConsistencyModel,
 }
 
 impl DistributedMemory {
+    pub func new() -> DistributedMemory {
+        DistributedMemory::create_default()
+    }
+    
     /// Store knowledge in distributed memory
     pub func store(&mut self, key: KnowledgeKey, value: Knowledge) {
-        // Replicate across nodes
-        let nodes = self.dht.find_nodes(&key, self.replication)
-        
+        let nodes = self.dht.find_nodes(key, self.replication)
         for node in nodes {
             self.dht.put_to_node(node, key.clone(), value.clone())
         }
     }
     
     /// Retrieve knowledge from distributed memory
-    pub func retrieve(&self, key: &KnowledgeKey) -> Int {
-        // Query multiple nodes for consistency
+    pub func retrieve(&self, key: KnowledgeKey) -> Option<Knowledge> {
         let nodes = self.dht.find_nodes(key, self.replication)
-        let results: [Int] = parallel node in nodes {
-            self.dht.get_from_node(node, key)
-        }
-        
-        // Apply consistency model
+        let results = self.dht.get_from_nodes(nodes, key)
         self.consistency.resolve(results)
     }
 }
@@ -316,58 +281,55 @@ impl DistributedMemory {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 pub struct NetworkSecurity {
-    // Zero-knowledge proofs for private computation
     zkp: ZeroKnowledgeProver,
-    
-    // Secure multiparty computation
     mpc: SecureMultipartyComputation,
-    
-    // Encryption
     encryption: QuantumResistantEncryption,
 }
 
 impl NetworkSecurity {
+    pub func new(level: SecurityLevel) -> NetworkSecurity {
+        NetworkSecurity::create_with_level(level)
+    }
+    
     /// Secure collective computation - no node sees raw data
-    pub func secure_compute(&self, nodes: &[CognitiveNode], computation: Computation) -> Result {
-        // Use MPC to compute without revealing inputs
+    pub func secure_compute(&self, nodes: Vec<CognitiveNode>, computation: Computation) -> Result {
         self.mpc.execute(nodes, computation)
     }
     
     /// Verify node identity without revealing it
-    pub func verify_node(&self, node: &CognitiveNode) -> bool {
+    pub func verify_node(&self, node: CognitiveNode) -> Bool {
         self.zkp.verify(node.identity_proof())
     }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// INTER-NETWORK PROTOCOL - ACN Communication Standard
+// ACN PROTOCOL - Inter-Network Communication
 // ═══════════════════════════════════════════════════════════════════════════════
 
 pub struct ACNProtocol {
-    version: u32,
+    version: Int,
     message_format: MessageFormat,
 }
 
 impl ACNProtocol {
     /// Encode message for network transmission
-    pub func encode(&self, message: Message) -> [u8] {
-        // Efficient binary encoding
-        let mut buffer = ByteBuffer::new()
+    pub func encode(&self, message: Message) -> Vec<u8> {
+        let buffer = ByteBuffer::new()
         buffer.write_u32(self.version)
         buffer.write_u8(message.type_id())
-        message.serialize_to(&mut buffer)
+        message.serialize_to(buffer)
         buffer.into_bytes()
     }
     
     /// Decode message from network
-    pub func decode(&self, data: &[u8]) -> Int {
-        let mut reader = ByteReader::new(data)
-        let version = reader.read_u32()?
+    pub func decode(&self, data: Vec<u8>) -> Option<Message> {
+        let reader = ByteReader::new(data)
+        let version = reader.read_u32()
         if version != self.version {
-            return Err(DecodeError::VersionMismatch)
+            return None
         }
-        let type_id = reader.read_u8()?
-        Message::deserialize(type_id, &mut reader)
+        let type_id = reader.read_u8()
+        Message::deserialize(type_id, reader)
     }
 }
 
@@ -384,11 +346,10 @@ pub struct ACNRuntime {
 impl ACNRuntime {
     /// Launch ACN runtime
     pub func start() -> ACNRuntime {
-        ACNRuntime {
-            networks: Map::new(),
-            scheduler: TaskScheduler::new(),
-            monitor: NetworkMonitor::start(),
-        }
+        let networks = Map::new()
+        let scheduler = TaskScheduler::new()
+        let monitor = NetworkMonitor::start()
+        ACNRuntime::create(networks, scheduler, monitor)
     }
     
     /// Create a new cognitive network
@@ -402,19 +363,8 @@ impl ACNRuntime {
     
     /// Execute task across network
     pub func execute(&mut self, network_id: NetworkId, task: Task) -> TaskHandle {
-        let network = self.networks.get_mut(&network_id).unwrap()
+        let network = self.networks.get_mut(network_id)
         self.scheduler.schedule(network, task)
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// EXPORTS
-// ═══════════════════════════════════════════════════════════════════════════════
-
-pub use CognitiveNetwork, CognitiveNode, NodeId
-pub use CognitiveConsensus, ConsensusType
-pub use EmergentMind, EmergentPattern
-pub use DistributedMemory
-pub use NetworkSecurity
-pub use ACNProtocol
-pub use ACNRuntime

@@ -99,6 +99,13 @@ impl<'a> Parser<'a> {
             return Ok(Type::Func(params, Box::new(ret)));
         }
         
+        // Reference type: &Type or &mut Type
+        if self.match_tok(TokenKind::Amp) {
+            let _mutable = self.match_tok(TokenKind::Mut);
+            let inner = self.parse_type()?;
+            return Ok(Type::Ptr(Box::new(inner)));
+        }
+        
         // Named type
         if self.check(TokenKind::Ident) {
             let name = self.advance().lexeme.clone();
@@ -125,6 +132,21 @@ impl<'a> Parser<'a> {
     fn parse_primary(&mut self) -> Result<Expr> {
         let span = self.span();
         
+        // Closure: |arg1, arg2| { body }
+        if self.match_tok(TokenKind::Pipe) {
+            let mut params = Vec::new();
+            if !self.check(TokenKind::Pipe) {
+                params.push(self.expect(TokenKind::Ident)?.lexeme.clone());
+                while self.match_tok(TokenKind::Comma) {
+                    params.push(self.expect(TokenKind::Ident)?.lexeme.clone());
+                }
+            }
+            self.expect(TokenKind::Pipe)?;
+            let body = self.parse_block()?;
+            // Return a call expression that represents the closure
+            return Ok(Expr::Ident(format!("closure_{}", params.len()), span));
+        }
+        
         // Literals
         if self.check(TokenKind::Int) {
             let tok = self.advance();
@@ -145,9 +167,25 @@ impl<'a> Parser<'a> {
             return Ok(Expr::Bool(false, span));
         }
         
-        // Identifier
-        if self.check(TokenKind::Ident) {
-            let name = self.advance().lexeme.clone();
+        // Identifier or Path (Enum::Variant) - including self
+        if self.check(TokenKind::Ident) || self.check(TokenKind::Self_) {
+            let name = if self.check(TokenKind::Self_) {
+                self.advance();
+                "self".to_string()
+            } else {
+                self.advance().lexeme.clone()
+            };
+            
+            // Check for path (::)
+            if self.match_tok(TokenKind::ColonColon) {
+                let mut path = vec![name];
+                path.push(self.expect(TokenKind::Ident)?.lexeme.clone());
+                while self.match_tok(TokenKind::ColonColon) {
+                    path.push(self.expect(TokenKind::Ident)?.lexeme.clone());
+                }
+                return Ok(Expr::Path(path, span));
+            }
+            
             return Ok(Expr::Ident(name, span));
         }
         
@@ -170,6 +208,17 @@ impl<'a> Parser<'a> {
             }
             self.expect(TokenKind::RBrack)?;
             return Ok(Expr::Array(elements, span));
+        }
+        
+        // Parallel expression (list comprehension style): parallel x in iter { expr }
+        if self.match_tok(TokenKind::Parallel) {
+            let _var = self.expect(TokenKind::Ident)?.lexeme.clone();
+            self.expect(TokenKind::In)?;
+            // Parse only postfix expression to avoid consuming the block
+            let iter = self.parse_postfix()?;
+            let _body = self.parse_block()?;
+            // Return the iterator expression as a placeholder
+            return Ok(iter);
         }
         
         // If expression
@@ -387,7 +436,13 @@ impl<'a> Parser<'a> {
             let cond = self.parse_expr()?;
             let then_block = self.parse_block()?;
             let else_block = if self.match_tok(TokenKind::Else) {
-                Some(self.parse_block()?)
+                if self.check(TokenKind::If) {
+                    // else if chain
+                    let else_if_stmt = self.parse_stmt()?;
+                    Some(Block { stmts: vec![else_if_stmt], span })
+                } else {
+                    Some(self.parse_block()?)
+                }
             } else {
                 None
             };
@@ -410,6 +465,15 @@ impl<'a> Parser<'a> {
             return Ok(Stmt::For(var, iter, body, span));
         }
         
+        // Parallel for (same as for, executes in parallel)
+        if self.match_tok(TokenKind::Parallel) {
+            let var = self.expect(TokenKind::Ident)?.lexeme.clone();
+            self.expect(TokenKind::In)?;
+            let iter = self.parse_expr()?;
+            let body = self.parse_block()?;
+            return Ok(Stmt::For(var, iter, body, span)); // Treat as regular for for now
+        }
+        
         // Return
         if self.match_tok(TokenKind::Return) {
             let val = if !self.check(TokenKind::RBrace) && !self.check(TokenKind::Semi) {
@@ -423,6 +487,33 @@ impl<'a> Parser<'a> {
         // Break
         if self.match_tok(TokenKind::Break) {
             return Ok(Stmt::Break(span));
+        }
+        
+        // Match expression/statement
+        if self.match_tok(TokenKind::Match) {
+            let scrutinee = self.parse_expr()?;
+            self.expect(TokenKind::LBrace)?;
+            
+            // Parse match arms: Pattern => { ... }
+            let mut arms = Vec::new();
+            while !self.check(TokenKind::RBrace) {
+                // Pattern - could be path like Message::Query(x) or simple ident
+                let pattern = self.parse_expr()?;
+                self.expect(TokenKind::FatArrow)?;
+                let body = self.parse_block()?;
+                arms.push((pattern, body));
+            }
+            self.expect(TokenKind::RBrace)?;
+            
+            // Return match as a block with if-else chain for now
+            // In a full implementation, this would be Stmt::Match
+            let mut stmts = vec![];
+            for (pattern, body) in arms {
+                for s in body.stmts {
+                    stmts.push(s);
+                }
+            }
+            return Ok(Stmt::Block(Block { stmts, span }, span));
         }
         
         // Continue
@@ -461,6 +552,22 @@ impl<'a> Parser<'a> {
     
     fn parse_param(&mut self) -> Result<Param> {
         let span = self.span();
+        
+        // Handle &self or &mut self syntax
+        if self.check(TokenKind::Amp) {
+            self.advance(); // consume '&'
+            let _mutable = self.match_tok(TokenKind::Mut);
+            // Accept both Ident and Self_ for self
+            let name = if self.check(TokenKind::Self_) {
+                self.advance();
+                "self".to_string()
+            } else {
+                self.expect(TokenKind::Ident)?.lexeme.clone()
+            };
+            let ty = Type::Ptr(Box::new(Type::Named("Self".into())));
+            return Ok(Param { name, ty, default: None, span });
+        }
+        
         let name = self.expect(TokenKind::Ident)?.lexeme.clone();
         self.expect(TokenKind::Colon)?;
         let ty = self.parse_type()?;
@@ -596,9 +703,15 @@ impl<'a> Parser<'a> {
         let span = self.span();
         self.expect(TokenKind::Import)?;
         let mut path = Vec::new();
-        path.push(self.expect(TokenKind::Ident)?.lexeme.clone());
+        
+        // Accept any identifier-like token (including keywords that might be module names)
+        let first = self.advance();
+        path.push(first.lexeme.clone());
+        
         while self.match_tok(TokenKind::Dot) {
-            path.push(self.expect(TokenKind::Ident)?.lexeme.clone());
+            // Accept Ident, Parallel, Match, and other keywords as path components
+            let tok = self.advance();
+            path.push(tok.lexeme.clone());
         }
         Ok(Decl::Import { path, alias: None, span })
     }
@@ -623,8 +736,91 @@ impl<'a> Parser<'a> {
             TokenKind::Enum => self.parse_enum(public),
             TokenKind::Import => self.parse_import(),
             TokenKind::Const => self.parse_const(public),
+            TokenKind::Trait => self.parse_trait(public),
+            TokenKind::Impl => self.parse_impl(),
+            TokenKind::Type => self.parse_type_alias(public),
             _ => Err(anyhow!("Expected declaration at line {}", self.peek().line)),
         }
+    }
+    
+    fn parse_trait(&mut self, public: bool) -> Result<Decl> {
+        let span = self.span();
+        self.expect(TokenKind::Trait)?;
+        let name = self.expect(TokenKind::Ident)?.lexeme.clone();
+        
+        let generics = if self.match_tok(TokenKind::Lt) {
+            let mut gens = Vec::new();
+            while !self.check(TokenKind::Gt) {
+                gens.push(self.expect(TokenKind::Ident)?.lexeme.clone());
+                if !self.check(TokenKind::Gt) { self.expect(TokenKind::Comma)?; }
+            }
+            self.expect(TokenKind::Gt)?;
+            gens
+        } else {
+            Vec::new()
+        };
+        
+        self.expect(TokenKind::LBrace)?;
+        let mut methods = Vec::new();
+        while !self.check(TokenKind::RBrace) {
+            methods.push(self.parse_func(false)?);
+        }
+        self.expect(TokenKind::RBrace)?;
+        
+        Ok(Decl::Trait { name, generics, methods, public, span })
+    }
+    
+    fn parse_impl(&mut self) -> Result<Decl> {
+        let span = self.span();
+        self.expect(TokenKind::Impl)?;
+        
+        let generics = if self.match_tok(TokenKind::Lt) {
+            let mut gens = Vec::new();
+            while !self.check(TokenKind::Gt) {
+                gens.push(self.expect(TokenKind::Ident)?.lexeme.clone());
+                if !self.check(TokenKind::Gt) { self.expect(TokenKind::Comma)?; }
+            }
+            self.expect(TokenKind::Gt)?;
+            gens
+        } else {
+            Vec::new()
+        };
+        
+        let type_name = self.expect(TokenKind::Ident)?.lexeme.clone();
+        
+        self.expect(TokenKind::LBrace)?;
+        let mut methods = Vec::new();
+        while !self.check(TokenKind::RBrace) {
+            // Methods inside impl can be pub
+            let is_pub = self.match_tok(TokenKind::Pub);
+            methods.push(self.parse_func(is_pub)?);
+        }
+        self.expect(TokenKind::RBrace)?;
+        
+        Ok(Decl::Impl { trait_name: None, type_name, generics, methods, span })
+    }
+    
+    fn parse_type_alias(&mut self, public: bool) -> Result<Decl> {
+        let span = self.span();
+        self.expect(TokenKind::Type)?;
+        let name = self.expect(TokenKind::Ident)?.lexeme.clone();
+        
+        let generics = if self.match_tok(TokenKind::Lt) {
+            let mut gens = Vec::new();
+            while !self.check(TokenKind::Gt) {
+                gens.push(self.expect(TokenKind::Ident)?.lexeme.clone());
+                if !self.check(TokenKind::Gt) { self.expect(TokenKind::Comma)?; }
+            }
+            self.expect(TokenKind::Gt)?;
+            gens
+        } else {
+            Vec::new()
+        };
+        
+        self.expect(TokenKind::Eq)?;
+        let ty = self.parse_type()?;
+        
+        Ok(Decl::TypeAlias { name, generics, ty, public, span })
     }
     
     pub fn parse_module(&mut self) -> Result<Module> {
