@@ -310,28 +310,88 @@ impl CodeGen {
         match name {
             "__builtin_print" => {
                 if self.is_arm64() {
-                    // write(1, buf, 1)
-                    self.emit_asm("    str x0, [sp, #-16]!");
-                    self.emit_asm("    mov x2, #1");
-                    self.emit_asm("    mov x1, sp");
-                    self.emit_asm("    mov x0, #1");
-                    self.emit_asm("    mov x16, #4");
-                    self.emit_asm("    svc #0x80");
-                    self.emit_asm("    ldr x0, [sp], #16");
+                    // Call external _print function
+                    self.emit_asm("    bl _print");
                 } else {
-                    self.emit_asm("    mov rdi, 1");
-                    self.emit_asm("    lea rsi, [rsp]");
-                    self.emit_asm("    mov rdx, 1");
-                    self.emit_asm("    mov rax, 1");
-                    self.emit_asm("    syscall");
+                    self.emit_asm("    mov rdi, rax");
+                    self.emit_asm("    call _print");
                 }
             }
             "__builtin_malloc" => {
                 if self.is_arm64() {
-                    // Simple bump allocator simulation
-                    self.emit_asm("    // malloc");
+                    self.emit_asm("    bl ___builtin_malloc");
                 } else {
-                    self.emit_asm("    // malloc stub");
+                    self.emit_asm("    call ___builtin_malloc");
+                }
+            }
+            "__builtin_free" => {
+                if self.is_arm64() {
+                    self.emit_asm("    bl ___builtin_free");
+                } else {
+                    self.emit_asm("    call ___builtin_free");
+                }
+            }
+            "__builtin_open" => {
+                if self.is_arm64() {
+                    self.emit_asm("    bl ___builtin_open");
+                } else {
+                    self.emit_asm("    call ___builtin_open");
+                }
+            }
+            "__builtin_close" => {
+                if self.is_arm64() {
+                    self.emit_asm("    bl ___builtin_close");
+                } else {
+                    self.emit_asm("    call ___builtin_close");
+                }
+            }
+            "__builtin_read" => {
+                if self.is_arm64() {
+                    self.emit_asm("    bl ___builtin_read");
+                } else {
+                    self.emit_asm("    call ___builtin_read");
+                }
+            }
+            "__builtin_write" => {
+                if self.is_arm64() {
+                    self.emit_asm("    bl ___builtin_write");
+                } else {
+                    self.emit_asm("    call ___builtin_write");
+                }
+            }
+            "__builtin_seek" => {
+                if self.is_arm64() {
+                    self.emit_asm("    bl ___builtin_seek");
+                } else {
+                    self.emit_asm("    call ___builtin_seek");
+                }
+            }
+            "__builtin_load8" => {
+                if self.is_arm64() {
+                    self.emit_asm("    bl ___builtin_load8");
+                } else {
+                    self.emit_asm("    call ___builtin_load8");
+                }
+            }
+            "__builtin_load64" => {
+                if self.is_arm64() {
+                    self.emit_asm("    bl ___builtin_load64");
+                } else {
+                    self.emit_asm("    call ___builtin_load64");
+                }
+            }
+            "__builtin_store8" => {
+                if self.is_arm64() {
+                    self.emit_asm("    bl ___builtin_store8");
+                } else {
+                    self.emit_asm("    call ___builtin_store8");
+                }
+            }
+            "__builtin_store64" => {
+                if self.is_arm64() {
+                    self.emit_asm("    bl ___builtin_store64");
+                } else {
+                    self.emit_asm("    call ___builtin_store64");
                 }
             }
             "__builtin_exit" => {
@@ -344,7 +404,14 @@ impl CodeGen {
                     self.emit_asm("    syscall");
                 }
             }
-            _ => {}
+            _ => {
+                // Unknown builtin - emit as external call
+                if self.is_arm64() {
+                    self.emit_asm(&format!("    bl _{}", name));
+                } else {
+                    self.emit_asm(&format!("    call {}", name));
+                }
+            }
         }
     }
     
@@ -496,12 +563,10 @@ impl CodeGen {
                 self.gen_stmt(stmt);
             }
             
-            // Default return
+            // Epilogue (return value should already be in x0/rax from expression)
             if self.is_arm64() {
-                self.emit_asm("    mov x0, #0");
                 arm64::emit_epilogue(&mut self.asm, self.stack_offset);
             } else {
-                self.emit_asm("    xor rax, rax");
                 x86_64::emit_epilogue(&mut self.asm, self.stack_offset);
             }
         }

@@ -188,6 +188,11 @@ func arm_mvn_reg(buf: Int, rd: Int, rm: Int) {
     arm_emit32(buf, inst)
 }
 
+// MOV Xd, Xm (alias for ORR Xd, XZR, Xm)
+func arm_mov_rr(buf: Int, rd: Int, rm: Int) {
+    arm_orr_reg(buf, rd, ARM_XZR, rm)
+}
+
 // CMP Xn, Xm (alias for SUBS XZR, Xn, Xm)
 func arm_cmp_reg(buf: Int, rn: Int, rm: Int) {
     let inst = 3925868544 + ARM_XZR + (rn * 32) + (rm * 65536)
