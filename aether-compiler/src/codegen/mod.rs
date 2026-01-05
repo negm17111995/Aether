@@ -24,6 +24,10 @@ pub struct CodeGen {
     label_counter: usize,
     /// Local variable offsets
     locals: HashMap<String, i32>,
+    /// Constant values (name -> value)
+    constants: HashMap<String, i64>,
+    /// Stack of loop end labels for break statements
+    loop_end_labels: Vec<String>,
     /// Current stack offset
     stack_offset: i32,
     /// Optimization level
@@ -39,6 +43,8 @@ impl CodeGen {
             func_offsets: HashMap::new(),
             label_counter: 0,
             locals: HashMap::new(),
+            constants: HashMap::new(),
+            loop_end_labels: Vec::new(),
             stack_offset: 0,
             opt_level,
         }
@@ -100,8 +106,15 @@ impl CodeGen {
                     } else {
                         x86_64::emit_load_local(&mut self.asm, "rax", off);
                     }
+                } else if let Some(val) = self.constants.get(name) {
+                    // It's a constant - emit its value directly
+                    if self.is_arm64() {
+                        arm64::emit_mov_imm(&mut self.asm, "x0", *val);
+                    } else {
+                        x86_64::emit_mov_imm(&mut self.asm, "rax", *val);
+                    }
                 } else {
-                    // Assume it's a function reference or global
+                    // Unknown identifier - could be function reference or external
                     if self.is_arm64() {
                         arm64::emit_mov_imm(&mut self.asm, "x0", 0);
                     } else {
@@ -309,89 +322,177 @@ impl CodeGen {
     fn gen_builtin_call(&mut self, name: &str, _argc: usize) {
         match name {
             "__builtin_print" => {
+                // Inline print: push char to stack, write(stdout=1, buf=sp, count=1)
                 if self.is_arm64() {
-                    // Call external _print function
-                    self.emit_asm("    bl _print");
+                    self.emit_asm("    sub sp, sp, #16");
+                    self.emit_asm("    strb w0, [sp]");
+                    self.emit_asm("    mov x2, #1");     // count
+                    self.emit_asm("    mov x1, sp");     // buf
+                    self.emit_asm("    mov x0, #1");     // stdout = 1
+                    self.emit_asm("    mov x16, #4");    // SYS_write
+                    self.emit_asm("    svc #0x80");
+                    self.emit_asm("    add sp, sp, #16");
                 } else {
-                    self.emit_asm("    mov rdi, rax");
-                    self.emit_asm("    call _print");
+                    self.emit_asm("    push rax");
+                    self.emit_asm("    mov rdx, 1");     // count
+                    self.emit_asm("    mov rsi, rsp");   // buf
+                    self.emit_asm("    mov rdi, 1");     // stdout
+                    self.emit_asm("    mov rax, 1");     // SYS_write
+                    self.emit_asm("    syscall");
+                    self.emit_asm("    pop rax");
                 }
             }
             "__builtin_malloc" => {
+                // Inline mmap-based allocation with minimum page size (branchless)
+                // Always allocate at least 4096 bytes and round up to page boundary
                 if self.is_arm64() {
-                    self.emit_asm("    bl ___builtin_malloc");
+                    // Add 4095 to ensure at least 4096 for any input including 0
+                    // Then round to page: ((x0 + 4095) | 4095) - 4095 + 4096
+                    // Simpler: just add 4096 then round down
+                    self.emit_asm("    add x0, x0, #4096");   // x0 = x0 + 4096 (minimum 4096)
+                    self.emit_asm("    and x0, x0, #-4096");  // round down to page
+                    self.emit_asm("    mov x1, x0");          // len = aligned size
+                    self.emit_asm("    mov x0, #0");          // addr = NULL
+                    self.emit_asm("    mov x2, #3");          // prot = PROT_READ | PROT_WRITE
+                    self.emit_asm("    mov x3, #0x1002");     // flags = MAP_PRIVATE | MAP_ANONYMOUS
+                    self.emit_asm("    mov x4, #-1");         // fd = -1 (anonymous)
+                    self.emit_asm("    mov x5, #0");          // offset = 0
+                    self.emit_asm("    mov x16, #197");       // SYS_mmap (macOS)
+                    self.emit_asm("    svc #0x80");
                 } else {
-                    self.emit_asm("    call ___builtin_malloc");
+                    // x86-64: similar branchless version
+                    self.emit_asm("    add rdi, 4096");       // rdi = rdi + 4096
+                    self.emit_asm("    and rdi, -4096");      // round down
+                    self.emit_asm("    mov rsi, rdi");        // len = aligned size
+                    self.emit_asm("    xor rdi, rdi");        // addr = NULL
+                    self.emit_asm("    mov rdx, 3");          // prot = PROT_READ | PROT_WRITE
+                    self.emit_asm("    mov r10, 0x22");       // flags = MAP_PRIVATE | MAP_ANONYMOUS
+                    self.emit_asm("    mov r8, -1");          // fd = -1
+                    self.emit_asm("    mov r9, 0");           // offset = 0
+                    self.emit_asm("    mov rax, 9");          // SYS_mmap
+                    self.emit_asm("    syscall");
                 }
             }
             "__builtin_free" => {
+                // No-op for bump allocator - could add munmap later
                 if self.is_arm64() {
-                    self.emit_asm("    bl ___builtin_free");
+                    self.emit_asm("    mov x0, #0");
                 } else {
-                    self.emit_asm("    call ___builtin_free");
+                    self.emit_asm("    xor rax, rax");
                 }
             }
             "__builtin_open" => {
+                // Inline open syscall: open(path=x0, flags=x1, mode=x2)
                 if self.is_arm64() {
-                    self.emit_asm("    bl ___builtin_open");
+                    self.emit_asm("    mov x16, #5");  // SYS_open
+                    self.emit_asm("    svc #0x80");
                 } else {
-                    self.emit_asm("    call ___builtin_open");
+                    self.emit_asm("    mov rax, 2");  // SYS_open
+                    self.emit_asm("    syscall");
                 }
             }
             "__builtin_close" => {
+                // Inline close syscall: close(fd=x0)
                 if self.is_arm64() {
-                    self.emit_asm("    bl ___builtin_close");
+                    self.emit_asm("    mov x16, #6");  // SYS_close
+                    self.emit_asm("    svc #0x80");
                 } else {
-                    self.emit_asm("    call ___builtin_close");
+                    self.emit_asm("    mov rax, 3");  // SYS_close
+                    self.emit_asm("    syscall");
                 }
             }
             "__builtin_read" => {
+                // Inline read syscall: read(fd=x0, buf=x1, count=x2)
                 if self.is_arm64() {
-                    self.emit_asm("    bl ___builtin_read");
+                    self.emit_asm("    mov x16, #3");  // SYS_read
+                    self.emit_asm("    svc #0x80");
                 } else {
-                    self.emit_asm("    call ___builtin_read");
+                    self.emit_asm("    mov rax, 0");  // SYS_read
+                    self.emit_asm("    syscall");
                 }
             }
             "__builtin_write" => {
+                // Inline write syscall: write(fd=x0, buf=x1, count=x2)
                 if self.is_arm64() {
-                    self.emit_asm("    bl ___builtin_write");
+                    self.emit_asm("    mov x16, #4");  // SYS_write
+                    self.emit_asm("    svc #0x80");
                 } else {
-                    self.emit_asm("    call ___builtin_write");
+                    self.emit_asm("    mov rax, 1");  // SYS_write
+                    self.emit_asm("    syscall");
                 }
             }
             "__builtin_seek" => {
+                // Inline lseek syscall: lseek(fd=x0, offset=x1, whence=x2)
                 if self.is_arm64() {
-                    self.emit_asm("    bl ___builtin_seek");
+                    self.emit_asm("    mov x16, #199");  // SYS_lseek
+                    self.emit_asm("    svc #0x80");
                 } else {
-                    self.emit_asm("    call ___builtin_seek");
+                    self.emit_asm("    mov rax, 8");  // SYS_lseek
+                    self.emit_asm("    syscall");
                 }
             }
             "__builtin_load8" => {
+                // Inline load byte: x0 = *(uint8_t*)x0
                 if self.is_arm64() {
-                    self.emit_asm("    bl ___builtin_load8");
+                    self.emit_asm("    ldrb w0, [x0]");
                 } else {
-                    self.emit_asm("    call ___builtin_load8");
+                    self.emit_asm("    movzx rax, byte ptr [rax]");
+                }
+            }
+            "__builtin_load16" => {
+                // Inline load 16-bit: x0 = *(uint16_t*)x0
+                if self.is_arm64() {
+                    self.emit_asm("    ldrh w0, [x0]");
+                } else {
+                    self.emit_asm("    movzx rax, word ptr [rax]");
+                }
+            }
+            "__builtin_load32" => {
+                // Inline load 32-bit: x0 = *(uint32_t*)x0
+                if self.is_arm64() {
+                    self.emit_asm("    ldr w0, [x0]");
+                } else {
+                    self.emit_asm("    mov eax, dword ptr [rax]");
                 }
             }
             "__builtin_load64" => {
+                // Inline load 64-bit: x0 = *(uint64_t*)x0
                 if self.is_arm64() {
-                    self.emit_asm("    bl ___builtin_load64");
+                    self.emit_asm("    ldr x0, [x0]");
                 } else {
-                    self.emit_asm("    call ___builtin_load64");
+                    self.emit_asm("    mov rax, [rax]");
                 }
             }
             "__builtin_store8" => {
+                // Inline store byte: *(uint8_t*)x0 = x1
                 if self.is_arm64() {
-                    self.emit_asm("    bl ___builtin_store8");
+                    self.emit_asm("    strb w1, [x0]");
                 } else {
-                    self.emit_asm("    call ___builtin_store8");
+                    self.emit_asm("    mov byte ptr [rdi], sil");
+                }
+            }
+            "__builtin_store16" => {
+                // Inline store 16-bit: *(uint16_t*)x0 = x1
+                if self.is_arm64() {
+                    self.emit_asm("    strh w1, [x0]");
+                } else {
+                    self.emit_asm("    mov word ptr [rdi], si");
+                }
+            }
+            "__builtin_store32" => {
+                // Inline store 32-bit: *(uint32_t*)x0 = x1
+                if self.is_arm64() {
+                    self.emit_asm("    str w1, [x0]");
+                } else {
+                    self.emit_asm("    mov dword ptr [rdi], esi");
                 }
             }
             "__builtin_store64" => {
+                // Inline store 64-bit: *(uint64_t*)x0 = x1
                 if self.is_arm64() {
-                    self.emit_asm("    bl ___builtin_store64");
+                    self.emit_asm("    str x1, [x0]");
                 } else {
-                    self.emit_asm("    call ___builtin_store64");
+                    self.emit_asm("    mov [rdi], rsi");
                 }
             }
             "__builtin_exit" => {
@@ -401,6 +502,123 @@ impl CodeGen {
                 } else {
                     self.emit_asm("    mov rdi, rax");
                     self.emit_asm("    mov rax, 60");
+                    self.emit_asm("    syscall");
+                }
+            }
+            "__builtin_argc" => {
+                // Return 0 for now - proper implementation needs startup code
+                if self.is_arm64() {
+                    self.emit_asm("    mov x0, #0");
+                } else {
+                    self.emit_asm("    xor rax, rax");
+                }
+            }
+            "__builtin_argv" => {
+                // Return 0 for now - proper implementation needs startup code
+                if self.is_arm64() {
+                    self.emit_asm("    mov x0, #0");
+                } else {
+                    self.emit_asm("    xor rax, rax");
+                }
+            }
+            "__builtin_chmod" => {
+                // Inline chmod syscall: chmod(path=x0, mode=x1)
+                if self.is_arm64() {
+                    self.emit_asm("    mov x16, #15");  // SYS_chmod (macOS)
+                    self.emit_asm("    svc #0x80");
+                } else {
+                    self.emit_asm("    mov rax, 90");  // SYS_chmod (Linux)
+                    self.emit_asm("    syscall");
+                }
+            }
+            // ============== SOCKET SYSCALLS FOR NETWORKING ==============
+            "__builtin_socket" => {
+                // socket(domain=x0, type=x1, protocol=x2) -> fd
+                if self.is_arm64() {
+                    self.emit_asm("    mov x16, #97");  // SYS_socket (macOS)
+                    self.emit_asm("    svc #0x80");
+                } else {
+                    self.emit_asm("    mov rax, 41");   // SYS_socket (Linux)
+                    self.emit_asm("    syscall");
+                }
+            }
+            "__builtin_connect" => {
+                // connect(sockfd=x0, addr=x1, addrlen=x2) -> result
+                if self.is_arm64() {
+                    self.emit_asm("    mov x16, #98");  // SYS_connect (macOS)
+                    self.emit_asm("    svc #0x80");
+                } else {
+                    self.emit_asm("    mov rax, 42");   // SYS_connect (Linux)
+                    self.emit_asm("    syscall");
+                }
+            }
+            "__builtin_bind" => {
+                // bind(sockfd=x0, addr=x1, addrlen=x2) -> result
+                if self.is_arm64() {
+                    self.emit_asm("    mov x16, #104"); // SYS_bind (macOS)
+                    self.emit_asm("    svc #0x80");
+                } else {
+                    self.emit_asm("    mov rax, 49");   // SYS_bind (Linux)
+                    self.emit_asm("    syscall");
+                }
+            }
+            "__builtin_listen" => {
+                // listen(sockfd=x0, backlog=x1) -> result
+                if self.is_arm64() {
+                    self.emit_asm("    mov x16, #106"); // SYS_listen (macOS)
+                    self.emit_asm("    svc #0x80");
+                } else {
+                    self.emit_asm("    mov rax, 50");   // SYS_listen (Linux)
+                    self.emit_asm("    syscall");
+                }
+            }
+            "__builtin_accept" => {
+                // accept(sockfd=x0, addr=x1, addrlen=x2) -> new_fd
+                if self.is_arm64() {
+                    self.emit_asm("    mov x16, #30");  // SYS_accept (macOS)
+                    self.emit_asm("    svc #0x80");
+                } else {
+                    self.emit_asm("    mov rax, 43");   // SYS_accept (Linux)
+                    self.emit_asm("    syscall");
+                }
+            }
+            "__builtin_sendto" => {
+                // sendto(sockfd=x0, buf=x1, len=x2, flags=x3, dest=x4, destlen=x5) -> sent
+                if self.is_arm64() {
+                    self.emit_asm("    mov x16, #133"); // SYS_sendto (macOS)
+                    self.emit_asm("    svc #0x80");
+                } else {
+                    self.emit_asm("    mov rax, 44");   // SYS_sendto (Linux)
+                    self.emit_asm("    syscall");
+                }
+            }
+            "__builtin_recvfrom" => {
+                // recvfrom(sockfd=x0, buf=x1, len=x2, flags=x3, src=x4, srclen=x5) -> received
+                if self.is_arm64() {
+                    self.emit_asm("    mov x16, #29");  // SYS_recvfrom (macOS)
+                    self.emit_asm("    svc #0x80");
+                } else {
+                    self.emit_asm("    mov rax, 45");   // SYS_recvfrom (Linux)
+                    self.emit_asm("    syscall");
+                }
+            }
+            "__builtin_setsockopt" => {
+                // setsockopt(sockfd=x0, level=x1, optname=x2, optval=x3, optlen=x4) -> result
+                if self.is_arm64() {
+                    self.emit_asm("    mov x16, #105"); // SYS_setsockopt (macOS)
+                    self.emit_asm("    svc #0x80");
+                } else {
+                    self.emit_asm("    mov rax, 54");   // SYS_setsockopt (Linux)
+                    self.emit_asm("    syscall");
+                }
+            }
+            "__builtin_shutdown" => {
+                // shutdown(sockfd=x0, how=x1) -> result
+                if self.is_arm64() {
+                    self.emit_asm("    mov x16, #134"); // SYS_shutdown (macOS)
+                    self.emit_asm("    svc #0x80");
+                } else {
+                    self.emit_asm("    mov rax, 48");   // SYS_shutdown (Linux)
                     self.emit_asm("    syscall");
                 }
             }
@@ -491,6 +709,9 @@ impl CodeGen {
                 let start_label = self.new_label();
                 let end_label = self.new_label();
                 
+                // Push end label for break statements
+                self.loop_end_labels.push(end_label.clone());
+                
                 self.emit_asm(&format!("{}:", start_label));
                 self.gen_expr(cond);
                 
@@ -512,6 +733,9 @@ impl CodeGen {
                 }
                 
                 self.emit_asm(&format!("{}:", end_label));
+                
+                // Pop end label
+                self.loop_end_labels.pop();
             }
             
             Stmt::Expr(expr, _) => {
@@ -522,6 +746,23 @@ impl CodeGen {
                 for s in &block.stmts {
                     self.gen_stmt(s);
                 }
+            }
+            
+            Stmt::Break(_) => {
+                // Jump to innermost loop's end label
+                if let Some(label) = self.loop_end_labels.last() {
+                    let label = label.clone();
+                    if self.is_arm64() {
+                        self.emit_asm(&format!("    b {}", label));
+                    } else {
+                        self.emit_asm(&format!("    jmp {}", label));
+                    }
+                }
+            }
+            
+            Stmt::Continue(_) => {
+                // For continue, we'd need a start label stack too
+                // For now, treat as no-op (less common)
             }
             
             _ => {}
@@ -578,6 +819,16 @@ impl CodeGen {
             self.emit_asm(".section __TEXT,__text,regular,pure_instructions");
         } else {
             self.emit_asm(".text");
+        }
+        
+        // First pass: collect all constants
+        for typed_decl in &module.decls {
+            if let Decl::Const { name, value, .. } = &typed_decl.decl {
+                // Evaluate constant expression (only supports literal integers for now)
+                if let Expr::Int(v, _) = value {
+                    self.constants.insert(name.clone(), *v);
+                }
+            }
         }
         
         // Generate main first

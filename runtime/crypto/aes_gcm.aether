@@ -1,0 +1,439 @@
+// AETHER AES-GCM - Pure Aether Implementation
+// AES-128/256-GCM authenticated encryption for TLS
+// No external dependencies - 100% Pure Aether
+
+// ============================================================================
+// AES S-BOX (Substitution box)
+// ============================================================================
+
+func aes_sbox(b: Int) -> Int {
+    // Simplified S-box lookup using calculation
+    // In production, use full 256-byte lookup table
+    let inv = aes_gf_inv(b)
+    let s = inv ^ aes_rotl8(inv, 1) ^ aes_rotl8(inv, 2) ^ aes_rotl8(inv, 3) ^ aes_rotl8(inv, 4) ^ 0x63
+    s & 0xFF
+}
+
+func aes_rotl8(x: Int, n: Int) -> Int {
+    ((x << n) | (x >> (8 - n))) & 0xFF
+}
+
+func aes_gf_inv(a: Int) -> Int {
+    if a == 0 { return 0 }
+    // Extended Euclidean algorithm in GF(2^8)
+    let p = a
+    let i = 1
+    while i < 254 {
+        p = aes_gf_mul(p, a)
+        i = i + 1
+    }
+    p
+}
+
+func aes_gf_mul(a: Int, b: Int) -> Int {
+    let p = 0
+    let i = 0
+    while i < 8 {
+        if (b & 1) != 0 {
+            p = p ^ a
+        }
+        let hi = a & 0x80
+        a = (a << 1) & 0xFF
+        if hi != 0 {
+            a = a ^ 0x1B  // AES irreducible polynomial
+        }
+        b = b >> 1
+        i = i + 1
+    }
+    p & 0xFF
+}
+
+// ============================================================================
+// AES KEY EXPANSION
+// ============================================================================
+
+func aes_key_expand(key: Int, key_len: Int, round_keys: Int) {
+    let nk = key_len / 4  // 4 for AES-128, 8 for AES-256
+    let nr = nk + 6       // 10 for AES-128, 14 for AES-256
+    let nb = 4
+    
+    // Copy key to first nk words
+    let i = 0
+    while i < nk {
+        __builtin_store64(round_keys + i * 8, 
+            __builtin_load8(key + i * 4) * 16777216 +
+            __builtin_load8(key + i * 4 + 1) * 65536 +
+            __builtin_load8(key + i * 4 + 2) * 256 +
+            __builtin_load8(key + i * 4 + 3))
+        i = i + 1
+    }
+    
+    // Expand remaining words
+    while i < nb * (nr + 1) {
+        let temp = __builtin_load64(round_keys + (i - 1) * 8)
+        
+        if (i % nk) == 0 {
+            temp = aes_sub_word(aes_rot_word(temp)) ^ aes_rcon(i / nk)
+        }
+        if nk > 6 && (i % nk) == 4 {
+            temp = aes_sub_word(temp)
+        }
+        
+        __builtin_store64(round_keys + i * 8, 
+            __builtin_load64(round_keys + (i - nk) * 8) ^ temp)
+        i = i + 1
+    }
+}
+
+func aes_rot_word(w: Int) -> Int {
+    ((w << 8) | (w >> 24)) & 0xFFFFFFFF
+}
+
+func aes_sub_word(w: Int) -> Int {
+    aes_sbox((w >> 24) & 0xFF) * 16777216 +
+    aes_sbox((w >> 16) & 0xFF) * 65536 +
+    aes_sbox((w >> 8) & 0xFF) * 256 +
+    aes_sbox(w & 0xFF)
+}
+
+func aes_rcon(i: Int) -> Int {
+    let rc = 1
+    let j = 1
+    while j < i {
+        rc = aes_gf_mul(rc, 2)
+        j = j + 1
+    }
+    rc * 16777216
+}
+
+// ============================================================================
+// AES CIPHER
+// ============================================================================
+
+func aes_cipher(input: Int, output: Int, round_keys: Int, nr: Int) {
+    // Copy input to state
+    let state = __builtin_malloc(16)
+    let i = 0
+    while i < 16 {
+        __builtin_store8(state + i, __builtin_load8(input + i))
+        i = i + 1
+    }
+    
+    // Initial round key
+    aes_add_round_key(state, round_keys, 0)
+    
+    // Main rounds
+    let round = 1
+    while round < nr {
+        aes_sub_bytes(state)
+        aes_shift_rows(state)
+        aes_mix_columns(state)
+        aes_add_round_key(state, round_keys, round)
+        round = round + 1
+    }
+    
+    // Final round (no MixColumns)
+    aes_sub_bytes(state)
+    aes_shift_rows(state)
+    aes_add_round_key(state, round_keys, nr)
+    
+    // Copy state to output
+    i = 0
+    while i < 16 {
+        __builtin_store8(output + i, __builtin_load8(state + i))
+        i = i + 1
+    }
+}
+
+func aes_sub_bytes(state: Int) {
+    let i = 0
+    while i < 16 {
+        __builtin_store8(state + i, aes_sbox(__builtin_load8(state + i)))
+        i = i + 1
+    }
+}
+
+func aes_shift_rows(state: Int) {
+    // Row 1: shift left 1
+    let t = __builtin_load8(state + 1)
+    __builtin_store8(state + 1, __builtin_load8(state + 5))
+    __builtin_store8(state + 5, __builtin_load8(state + 9))
+    __builtin_store8(state + 9, __builtin_load8(state + 13))
+    __builtin_store8(state + 13, t)
+    
+    // Row 2: shift left 2
+    t = __builtin_load8(state + 2)
+    let t2 = __builtin_load8(state + 6)
+    __builtin_store8(state + 2, __builtin_load8(state + 10))
+    __builtin_store8(state + 6, __builtin_load8(state + 14))
+    __builtin_store8(state + 10, t)
+    __builtin_store8(state + 14, t2)
+    
+    // Row 3: shift left 3 (= right 1)
+    t = __builtin_load8(state + 15)
+    __builtin_store8(state + 15, __builtin_load8(state + 11))
+    __builtin_store8(state + 11, __builtin_load8(state + 7))
+    __builtin_store8(state + 7, __builtin_load8(state + 3))
+    __builtin_store8(state + 3, t)
+}
+
+func aes_mix_columns(state: Int) {
+    let col = 0
+    while col < 4 {
+        let c = col * 4
+        let a0 = __builtin_load8(state + c)
+        let a1 = __builtin_load8(state + c + 1)
+        let a2 = __builtin_load8(state + c + 2)
+        let a3 = __builtin_load8(state + c + 3)
+        
+        __builtin_store8(state + c, aes_gf_mul(2, a0) ^ aes_gf_mul(3, a1) ^ a2 ^ a3)
+        __builtin_store8(state + c + 1, a0 ^ aes_gf_mul(2, a1) ^ aes_gf_mul(3, a2) ^ a3)
+        __builtin_store8(state + c + 2, a0 ^ a1 ^ aes_gf_mul(2, a2) ^ aes_gf_mul(3, a3))
+        __builtin_store8(state + c + 3, aes_gf_mul(3, a0) ^ a1 ^ a2 ^ aes_gf_mul(2, a3))
+        col = col + 1
+    }
+}
+
+func aes_add_round_key(state: Int, round_keys: Int, round: Int) {
+    let i = 0
+    while i < 4 {
+        let rk = __builtin_load64(round_keys + (round * 4 + i) * 8)
+        __builtin_store8(state + i * 4, __builtin_load8(state + i * 4) ^ ((rk >> 24) & 0xFF))
+        __builtin_store8(state + i * 4 + 1, __builtin_load8(state + i * 4 + 1) ^ ((rk >> 16) & 0xFF))
+        __builtin_store8(state + i * 4 + 2, __builtin_load8(state + i * 4 + 2) ^ ((rk >> 8) & 0xFF))
+        __builtin_store8(state + i * 4 + 3, __builtin_load8(state + i * 4 + 3) ^ (rk & 0xFF))
+        i = i + 1
+    }
+}
+
+// ============================================================================
+// GCM MODE
+// ============================================================================
+
+func gcm_new(key: Int, key_len: Int) -> Int {
+    let gcm = __builtin_malloc(512)
+    let nr = 10
+    if key_len == 32 { nr = 14 }
+    
+    __builtin_store64(gcm, key_len)
+    __builtin_store64(gcm + 8, nr)
+    
+    // Expand key
+    let round_keys = gcm + 16
+    aes_key_expand(key, key_len, round_keys)
+    
+    // Compute H = AES(K, 0^128)
+    let zero = __builtin_malloc(16)
+    let i = 0
+    while i < 16 {
+        __builtin_store8(zero + i, 0)
+        i = i + 1
+    }
+    let h = gcm + 400
+    aes_cipher(zero, h, round_keys, nr)
+    
+    gcm
+}
+
+func gcm_encrypt(gcm: Int, iv: Int, iv_len: Int, aad: Int, aad_len: Int, 
+                 plaintext: Int, pt_len: Int, ciphertext: Int, tag: Int) {
+    let nr = __builtin_load64(gcm + 8)
+    let round_keys = gcm + 16
+    let h = gcm + 400
+    
+    // Compute J0 (initial counter)
+    let j0 = __builtin_malloc(16)
+    if iv_len == 12 {
+        let i = 0
+        while i < 12 {
+            __builtin_store8(j0 + i, __builtin_load8(iv + i))
+            i = i + 1
+        }
+        __builtin_store8(j0 + 12, 0)
+        __builtin_store8(j0 + 13, 0)
+        __builtin_store8(j0 + 14, 0)
+        __builtin_store8(j0 + 15, 1)
+    }
+    
+    // CTR mode encryption
+    let counter = __builtin_malloc(16)
+    let i = 0
+    while i < 16 {
+        __builtin_store8(counter + i, __builtin_load8(j0 + i))
+        i = i + 1
+    }
+    gcm_inc32(counter)
+    
+    let block = 0
+    while block * 16 < pt_len {
+        let keystream = __builtin_malloc(16)
+        aes_cipher(counter, keystream, round_keys, nr)
+        
+        let offset = block * 16
+        let remaining = pt_len - offset
+        if remaining > 16 { remaining = 16 }
+        
+        i = 0
+        while i < remaining {
+            __builtin_store8(ciphertext + offset + i, 
+                __builtin_load8(plaintext + offset + i) ^ __builtin_load8(keystream + i))
+            i = i + 1
+        }
+        
+        gcm_inc32(counter)
+        block = block + 1
+    }
+    
+    // Compute authentication tag
+    let ghash = __builtin_malloc(16)
+    i = 0
+    while i < 16 {
+        __builtin_store8(ghash + i, 0)
+        i = i + 1
+    }
+    
+    // GHASH(H, A || C || len)
+    gcm_ghash_update(ghash, h, aad, aad_len)
+    gcm_ghash_update(ghash, h, ciphertext, pt_len)
+    
+    // Append lengths
+    let lens = __builtin_malloc(16)
+    let aad_bits = aad_len * 8
+    let ct_bits = pt_len * 8
+    __builtin_store8(lens, (aad_bits >> 56) & 0xFF)
+    __builtin_store8(lens + 1, (aad_bits >> 48) & 0xFF)
+    __builtin_store8(lens + 2, (aad_bits >> 40) & 0xFF)
+    __builtin_store8(lens + 3, (aad_bits >> 32) & 0xFF)
+    __builtin_store8(lens + 4, (aad_bits >> 24) & 0xFF)
+    __builtin_store8(lens + 5, (aad_bits >> 16) & 0xFF)
+    __builtin_store8(lens + 6, (aad_bits >> 8) & 0xFF)
+    __builtin_store8(lens + 7, aad_bits & 0xFF)
+    __builtin_store8(lens + 8, (ct_bits >> 56) & 0xFF)
+    __builtin_store8(lens + 9, (ct_bits >> 48) & 0xFF)
+    __builtin_store8(lens + 10, (ct_bits >> 40) & 0xFF)
+    __builtin_store8(lens + 11, (ct_bits >> 32) & 0xFF)
+    __builtin_store8(lens + 12, (ct_bits >> 24) & 0xFF)
+    __builtin_store8(lens + 13, (ct_bits >> 16) & 0xFF)
+    __builtin_store8(lens + 14, (ct_bits >> 8) & 0xFF)
+    __builtin_store8(lens + 15, ct_bits & 0xFF)
+    gcm_ghash_block(ghash, h, lens)
+    
+    // Tag = GHASH XOR AES(K, J0)
+    let j0_enc = __builtin_malloc(16)
+    aes_cipher(j0, j0_enc, round_keys, nr)
+    i = 0
+    while i < 16 {
+        __builtin_store8(tag + i, __builtin_load8(ghash + i) ^ __builtin_load8(j0_enc + i))
+        i = i + 1
+    }
+}
+
+func gcm_inc32(counter: Int) {
+    let c = __builtin_load8(counter + 15) + 1
+    __builtin_store8(counter + 15, c & 0xFF)
+    if c > 255 {
+        c = __builtin_load8(counter + 14) + 1
+        __builtin_store8(counter + 14, c & 0xFF)
+        if c > 255 {
+            c = __builtin_load8(counter + 13) + 1
+            __builtin_store8(counter + 13, c & 0xFF)
+            if c > 255 {
+                c = __builtin_load8(counter + 12) + 1
+                __builtin_store8(counter + 12, c & 0xFF)
+            }
+        }
+    }
+}
+
+func gcm_ghash_update(ghash: Int, h: Int, data: Int, len: Int) {
+    let block = 0
+    while block * 16 < len {
+        let offset = block * 16
+        let remaining = len - offset
+        if remaining > 16 { remaining = 16 }
+        
+        let padded = __builtin_malloc(16)
+        let i = 0
+        while i < 16 {
+            if i < remaining {
+                __builtin_store8(padded + i, __builtin_load8(data + offset + i))
+            } else {
+                __builtin_store8(padded + i, 0)
+            }
+            i = i + 1
+        }
+        
+        gcm_ghash_block(ghash, h, padded)
+        block = block + 1
+    }
+}
+
+func gcm_ghash_block(ghash: Int, h: Int, block: Int) {
+    // XOR with block
+    let i = 0
+    while i < 16 {
+        __builtin_store8(ghash + i, __builtin_load8(ghash + i) ^ __builtin_load8(block + i))
+        i = i + 1
+    }
+    
+    // Multiply by H in GF(2^128)
+    gcm_gf128_mul(ghash, h)
+}
+
+func gcm_gf128_mul(x: Int, y: Int) -> Int {
+    let z = __builtin_malloc(16)
+    let v = __builtin_malloc(16)
+    
+    let i = 0
+    while i < 16 {
+        __builtin_store8(z + i, 0)
+        __builtin_store8(v + i, __builtin_load8(y + i))
+        i = i + 1
+    }
+    
+    i = 0
+    while i < 128 {
+        let byte_idx = i / 8
+        let bit_idx = 7 - (i % 8)
+        
+        if (__builtin_load8(x + byte_idx) >> bit_idx) & 1 != 0 {
+            let j = 0
+            while j < 16 {
+                __builtin_store8(z + j, __builtin_load8(z + j) ^ __builtin_load8(v + j))
+                j = j + 1
+            }
+        }
+        
+        // v = v >> 1, if LSB was 1, XOR with R
+        let lsb = __builtin_load8(v + 15) & 1
+        let j = 15
+        while j > 0 {
+            __builtin_store8(v + j, (__builtin_load8(v + j) >> 1) | ((__builtin_load8(v + j - 1) & 1) << 7))
+            j = j - 1
+        }
+        __builtin_store8(v, __builtin_load8(v) >> 1)
+        
+        if lsb != 0 {
+            __builtin_store8(v, __builtin_load8(v) ^ 0xE1)
+        }
+        
+        i = i + 1
+    }
+    
+    i = 0
+    while i < 16 {
+        __builtin_store8(x + i, __builtin_load8(z + i))
+        i = i + 1
+    }
+    0
+}
+
+// ============================================================================
+// HIGH-LEVEL API
+// ============================================================================
+
+func aes_gcm_encrypt(key: Int, key_len: Int, iv: Int, plaintext: Int, pt_len: Int, 
+                     ciphertext: Int, tag: Int) {
+    let gcm = gcm_new(key, key_len)
+    gcm_encrypt(gcm, iv, 12, 0, 0, plaintext, pt_len, ciphertext, tag)
+}

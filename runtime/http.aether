@@ -1,0 +1,495 @@
+// AETHER HTTP CLIENT - Pure Aether Implementation
+// Real HTTP/1.1 client using TCP sockets
+// No external dependencies - 100% Pure Aether
+
+// ============================================================================
+// CONSTANTS
+// ============================================================================
+
+const AF_INET: Int = 2
+const SOCK_STREAM: Int = 1
+const HTTP_PORT: Int = 80
+const HTTPS_PORT: Int = 443
+
+// HTTP Methods
+const HTTP_GET: Int = 1
+const HTTP_POST: Int = 2
+const HTTP_PUT: Int = 3
+const HTTP_DELETE: Int = 4
+const HTTP_PATCH: Int = 5
+
+// ============================================================================
+// HTTP REQUEST STRUCTURE
+// [method, host, path, body, headers_count, headers, content_type]
+// ============================================================================
+
+func http_request_new(method: Int, host: Int, path: Int) -> Int {
+    let req = __builtin_malloc(56)
+    __builtin_store64(req, method)
+    __builtin_store64(req + 8, host)
+    __builtin_store64(req + 16, path)
+    __builtin_store64(req + 24, 0)   // body
+    __builtin_store64(req + 32, 0)   // headers_count
+    __builtin_store64(req + 40, 0)   // headers
+    __builtin_store64(req + 48, 0)   // content_type
+    req
+}
+
+func http_request_set_body(req: Int, body: Int) {
+    __builtin_store64(req + 24, body)
+}
+
+func http_request_set_content_type(req: Int, ct: Int) {
+    __builtin_store64(req + 48, ct)
+}
+
+// ============================================================================
+// HTTP RESPONSE STRUCTURE
+// [status_code, body, body_len, headers]
+// ============================================================================
+
+func http_response_new() -> Int {
+    let res = __builtin_malloc(32)
+    __builtin_store64(res, 0)      // status_code
+    __builtin_store64(res + 8, 0)  // body
+    __builtin_store64(res + 16, 0) // body_len
+    __builtin_store64(res + 24, 0) // headers
+    res
+}
+
+func http_response_status(res: Int) -> Int { __builtin_load64(res) }
+func http_response_body(res: Int) -> Int { __builtin_load64(res + 8) }
+func http_response_body_len(res: Int) -> Int { __builtin_load64(res + 16) }
+
+// ============================================================================
+// TCP HELPERS
+// ============================================================================
+
+func sockaddr_build(ip_a: Int, ip_b: Int, ip_c: Int, ip_d: Int, port: Int) -> Int {
+    let addr = __builtin_malloc(16)
+    __builtin_store8(addr, 16)       // sin_len (macOS)
+    __builtin_store8(addr + 1, 2)    // sin_family = AF_INET
+    __builtin_store8(addr + 2, port / 256)
+    __builtin_store8(addr + 3, port % 256)
+    __builtin_store8(addr + 4, ip_a)
+    __builtin_store8(addr + 5, ip_b)
+    __builtin_store8(addr + 6, ip_c)
+    __builtin_store8(addr + 7, ip_d)
+    __builtin_store64(addr + 8, 0)
+    addr
+}
+
+func http_tcp_connect(ip_a: Int, ip_b: Int, ip_c: Int, ip_d: Int, port: Int) -> Int {
+    let fd = __builtin_socket(AF_INET, SOCK_STREAM, 0)
+    if fd < 0 { return fd }
+    
+    let addr = sockaddr_build(ip_a, ip_b, ip_c, ip_d, port)
+    let result = __builtin_connect(fd, addr, 16)
+    
+    if result < 0 {
+        __builtin_close(fd)
+        return 0 - 1
+    }
+    fd
+}
+
+// ============================================================================
+// STRING HELPERS
+// ============================================================================
+
+func http_strlen(s: Int) -> Int {
+    let i = 0
+    while __builtin_load8(s + i) != 0 { i = i + 1 }
+    i
+}
+
+func http_strcpy(dst: Int, src: Int) -> Int {
+    let i = 0
+    while __builtin_load8(src + i) != 0 {
+        __builtin_store8(dst + i, __builtin_load8(src + i))
+        i = i + 1
+    }
+    i
+}
+
+func http_append_crlf(buf: Int, pos: Int) -> Int {
+    __builtin_store8(buf + pos, 13)     // CR
+    __builtin_store8(buf + pos + 1, 10) // LF
+    pos + 2
+}
+
+// ============================================================================
+// REQUEST BUILDING
+// ============================================================================
+
+func http_build_request(req: Int, buf: Int) -> Int {
+    let pos = 0
+    let method = __builtin_load64(req)
+    let host = __builtin_load64(req + 8)
+    let path = __builtin_load64(req + 16)
+    let body = __builtin_load64(req + 24)
+    let content_type = __builtin_load64(req + 48)
+    
+    // Method
+    if method == HTTP_GET {
+        __builtin_store8(buf, 71)      // G
+        __builtin_store8(buf + 1, 69)  // E
+        __builtin_store8(buf + 2, 84)  // T
+        pos = 3
+    }
+    if method == HTTP_POST {
+        __builtin_store8(buf, 80)      // P
+        __builtin_store8(buf + 1, 79)  // O
+        __builtin_store8(buf + 2, 83)  // S
+        __builtin_store8(buf + 3, 84)  // T
+        pos = 4
+    }
+    if method == HTTP_PUT {
+        __builtin_store8(buf, 80)      // P
+        __builtin_store8(buf + 1, 85)  // U
+        __builtin_store8(buf + 2, 84)  // T
+        pos = 3
+    }
+    if method == HTTP_DELETE {
+        __builtin_store8(buf, 68)      // D
+        __builtin_store8(buf + 1, 69)  // E
+        __builtin_store8(buf + 2, 76)  // L
+        __builtin_store8(buf + 3, 69)  // E
+        __builtin_store8(buf + 4, 84)  // T
+        __builtin_store8(buf + 5, 69)  // E
+        pos = 6
+    }
+    
+    // Space
+    __builtin_store8(buf + pos, 32)
+    pos = pos + 1
+    
+    // Path
+    pos = pos + http_strcpy(buf + pos, path)
+    
+    // HTTP/1.1
+    __builtin_store8(buf + pos, 32)       // space
+    pos = pos + 1
+    __builtin_store8(buf + pos, 72)       // H
+    pos = pos + 1
+    __builtin_store8(buf + pos, 84)       // T
+    pos = pos + 1
+    __builtin_store8(buf + pos, 84)       // T
+    pos = pos + 1
+    __builtin_store8(buf + pos, 80)       // P
+    pos = pos + 1
+    __builtin_store8(buf + pos, 47)       // /
+    pos = pos + 1
+    __builtin_store8(buf + pos, 49)       // 1
+    pos = pos + 1
+    __builtin_store8(buf + pos, 46)       // .
+    pos = pos + 1
+    __builtin_store8(buf + pos, 49)       // 1
+    pos = pos + 1
+    pos = http_append_crlf(buf, pos)
+    
+    // Host header
+    __builtin_store8(buf + pos, 72)       // H
+    pos = pos + 1
+    __builtin_store8(buf + pos, 111)      // o
+    pos = pos + 1
+    __builtin_store8(buf + pos, 115)      // s
+    pos = pos + 1
+    __builtin_store8(buf + pos, 116)      // t
+    pos = pos + 1
+    __builtin_store8(buf + pos, 58)       // :
+    pos = pos + 1
+    __builtin_store8(buf + pos, 32)       // space
+    pos = pos + 1
+    pos = pos + http_strcpy(buf + pos, host)
+    pos = http_append_crlf(buf, pos)
+    
+    // Content-Type if body present
+    if body != 0 {
+        if content_type != 0 {
+            // Content-Type:
+            pos = pos + http_strcpy(buf + pos, content_type)
+            pos = http_append_crlf(buf, pos)
+        }
+        
+        // Content-Length
+        let body_len = http_strlen(body)
+        __builtin_store8(buf + pos, 67)   // C
+        pos = pos + 1
+        __builtin_store8(buf + pos, 111)  // o
+        pos = pos + 1
+        __builtin_store8(buf + pos, 110)  // n
+        pos = pos + 1
+        __builtin_store8(buf + pos, 116)  // t
+        pos = pos + 1
+        __builtin_store8(buf + pos, 101)  // e
+        pos = pos + 1
+        __builtin_store8(buf + pos, 110)  // n
+        pos = pos + 1
+        __builtin_store8(buf + pos, 116)  // t
+        pos = pos + 1
+        __builtin_store8(buf + pos, 45)   // -
+        pos = pos + 1
+        __builtin_store8(buf + pos, 76)   // L
+        pos = pos + 1
+        __builtin_store8(buf + pos, 101)  // e
+        pos = pos + 1
+        __builtin_store8(buf + pos, 110)  // n
+        pos = pos + 1
+        __builtin_store8(buf + pos, 103)  // g
+        pos = pos + 1
+        __builtin_store8(buf + pos, 116)  // t
+        pos = pos + 1
+        __builtin_store8(buf + pos, 104)  // h
+        pos = pos + 1
+        __builtin_store8(buf + pos, 58)   // :
+        pos = pos + 1
+        __builtin_store8(buf + pos, 32)   // space
+        pos = pos + 1
+        
+        // Convert length to string
+        pos = pos + int_to_str(body_len, buf + pos)
+        pos = http_append_crlf(buf, pos)
+    }
+    
+    // Connection: close
+    __builtin_store8(buf + pos, 67)   // C
+    pos = pos + 1
+    __builtin_store8(buf + pos, 111)  // o
+    pos = pos + 1
+    __builtin_store8(buf + pos, 110)  // n
+    pos = pos + 1
+    __builtin_store8(buf + pos, 110)  // n
+    pos = pos + 1
+    __builtin_store8(buf + pos, 101)  // e
+    pos = pos + 1
+    __builtin_store8(buf + pos, 99)   // c
+    pos = pos + 1
+    __builtin_store8(buf + pos, 116)  // t
+    pos = pos + 1
+    __builtin_store8(buf + pos, 105)  // i
+    pos = pos + 1
+    __builtin_store8(buf + pos, 111)  // o
+    pos = pos + 1
+    __builtin_store8(buf + pos, 110)  // n
+    pos = pos + 1
+    __builtin_store8(buf + pos, 58)   // :
+    pos = pos + 1
+    __builtin_store8(buf + pos, 32)   // space
+    pos = pos + 1
+    __builtin_store8(buf + pos, 99)   // c
+    pos = pos + 1
+    __builtin_store8(buf + pos, 108)  // l
+    pos = pos + 1
+    __builtin_store8(buf + pos, 111)  // o
+    pos = pos + 1
+    __builtin_store8(buf + pos, 115)  // s
+    pos = pos + 1
+    __builtin_store8(buf + pos, 101)  // e
+    pos = pos + 1
+    pos = http_append_crlf(buf, pos)
+    
+    // End of headers
+    pos = http_append_crlf(buf, pos)
+    
+    // Body
+    if body != 0 {
+        pos = pos + http_strcpy(buf + pos, body)
+    }
+    
+    __builtin_store8(buf + pos, 0)
+    pos
+}
+
+// Convert integer to string, return length
+func int_to_str(n: Int, buf: Int) -> Int {
+    if n == 0 {
+        __builtin_store8(buf, 48)
+        return 1
+    }
+    
+    let temp = __builtin_malloc(20)
+    let i = 0
+    let num = n
+    
+    while num > 0 {
+        __builtin_store8(temp + i, 48 + num % 10)
+        num = num / 10
+        i = i + 1
+    }
+    
+    // Reverse
+    let j = 0
+    while j < i {
+        __builtin_store8(buf + j, __builtin_load8(temp + i - 1 - j))
+        j = j + 1
+    }
+    
+    i
+}
+
+// ============================================================================
+// RESPONSE PARSING
+// ============================================================================
+
+func http_parse_response(data: Int, len: Int, res: Int) {
+    // Parse "HTTP/1.1 XXX"
+    let pos = 9  // Skip "HTTP/1.1 "
+    
+    // Parse status code (3 digits)
+    let status = 0
+    status = (__builtin_load8(data + pos) - 48) * 100
+    status = status + (__builtin_load8(data + pos + 1) - 48) * 10
+    status = status + (__builtin_load8(data + pos + 2) - 48)
+    __builtin_store64(res, status)
+    
+    // Find body (after \r\n\r\n)
+    let i = 0
+    while i < len - 3 {
+        if __builtin_load8(data + i) == 13 {
+            if __builtin_load8(data + i + 1) == 10 {
+                if __builtin_load8(data + i + 2) == 13 {
+                    if __builtin_load8(data + i + 3) == 10 {
+                        // Found body start
+                        let body_start = i + 4
+                        let body_len = len - body_start
+                        let body = __builtin_malloc(body_len + 1)
+                        let j = 0
+                        while j < body_len {
+                            __builtin_store8(body + j, __builtin_load8(data + body_start + j))
+                            j = j + 1
+                        }
+                        __builtin_store8(body + body_len, 0)
+                        __builtin_store64(res + 8, body)
+                        __builtin_store64(res + 16, body_len)
+                        return
+                    }
+                }
+            }
+        }
+        i = i + 1
+    }
+}
+
+// ============================================================================
+// HTTP REQUEST EXECUTION
+// ============================================================================
+
+// Execute HTTP request to IP address, return response
+func http_execute_ip(req: Int, ip_a: Int, ip_b: Int, ip_c: Int, ip_d: Int, port: Int) -> Int {
+    // Connect
+    let fd = http_tcp_connect(ip_a, ip_b, ip_c, ip_d, port)
+    if fd < 0 { return 0 }
+    
+    // Build request
+    let buf = __builtin_malloc(8192)
+    let req_len = http_build_request(req, buf)
+    
+    // Send
+    __builtin_write(fd, buf, req_len)
+    
+    // Receive response
+    let resp_buf = __builtin_malloc(65536)
+    let total = 0
+    let done = 0
+    
+    while done == 0 {
+        let n = __builtin_read(fd, resp_buf + total, 65536 - total)
+        if n <= 0 { done = 1 }
+        else { total = total + n }
+    }
+    
+    __builtin_close(fd)
+    
+    // Parse response
+    let res = http_response_new()
+    if total > 0 {
+        http_parse_response(resp_buf, total, res)
+    }
+    
+    res
+}
+
+// ============================================================================
+// HIGH-LEVEL API
+// ============================================================================
+
+// HTTP GET request
+func http_get(host: Int, path: Int, ip_a: Int, ip_b: Int, ip_c: Int, ip_d: Int) -> Int {
+    let req = http_request_new(HTTP_GET, host, path)
+    http_execute_ip(req, ip_a, ip_b, ip_c, ip_d, HTTP_PORT)
+}
+
+// HTTP POST with JSON body
+func http_post_json(host: Int, path: Int, body: Int, ip_a: Int, ip_b: Int, ip_c: Int, ip_d: Int) -> Int {
+    let req = http_request_new(HTTP_POST, host, path)
+    http_request_set_body(req, body)
+    
+    // Set Content-Type: application/json
+    let ct = __builtin_malloc(50)
+    let pos = 0
+    __builtin_store8(ct + pos, 67)   // C
+    pos = pos + 1
+    __builtin_store8(ct + pos, 111)  // o
+    pos = pos + 1
+    __builtin_store8(ct + pos, 110)  // n
+    pos = pos + 1
+    __builtin_store8(ct + pos, 116)  // t
+    pos = pos + 1
+    __builtin_store8(ct + pos, 101)  // e
+    pos = pos + 1
+    __builtin_store8(ct + pos, 110)  // n
+    pos = pos + 1
+    __builtin_store8(ct + pos, 116)  // t
+    pos = pos + 1
+    __builtin_store8(ct + pos, 45)   // -
+    pos = pos + 1
+    __builtin_store8(ct + pos, 84)   // T
+    pos = pos + 1
+    __builtin_store8(ct + pos, 121)  // y
+    pos = pos + 1
+    __builtin_store8(ct + pos, 112)  // p
+    pos = pos + 1
+    __builtin_store8(ct + pos, 101)  // e
+    pos = pos + 1
+    __builtin_store8(ct + pos, 58)   // :
+    pos = pos + 1
+    __builtin_store8(ct + pos, 32)   // space
+    pos = pos + 1
+    __builtin_store8(ct + pos, 97)   // a
+    pos = pos + 1
+    __builtin_store8(ct + pos, 112)  // p
+    pos = pos + 1
+    __builtin_store8(ct + pos, 112)  // p
+    pos = pos + 1
+    __builtin_store8(ct + pos, 108)  // l
+    pos = pos + 1
+    __builtin_store8(ct + pos, 105)  // i
+    pos = pos + 1
+    __builtin_store8(ct + pos, 99)   // c
+    pos = pos + 1
+    __builtin_store8(ct + pos, 97)   // a
+    pos = pos + 1
+    __builtin_store8(ct + pos, 116)  // t
+    pos = pos + 1
+    __builtin_store8(ct + pos, 105)  // i
+    pos = pos + 1
+    __builtin_store8(ct + pos, 111)  // o
+    pos = pos + 1
+    __builtin_store8(ct + pos, 110)  // n
+    pos = pos + 1
+    __builtin_store8(ct + pos, 47)   // /
+    pos = pos + 1
+    __builtin_store8(ct + pos, 106)  // j
+    pos = pos + 1
+    __builtin_store8(ct + pos, 115)  // s
+    pos = pos + 1
+    __builtin_store8(ct + pos, 111)  // o
+    pos = pos + 1
+    __builtin_store8(ct + pos, 110)  // n
+    pos = pos + 1
+    __builtin_store8(ct + pos, 0)
+    
+    http_request_set_content_type(req, ct)
+    http_execute_ip(req, ip_a, ip_b, ip_c, ip_d, HTTP_PORT)
+}

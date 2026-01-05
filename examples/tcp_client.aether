@@ -1,0 +1,86 @@
+// AETHER EXAMPLE - TCP Client
+// Demonstrates pure Aether networking
+// Compile with: ./aetherc_native tcp_client.aether -o tcp_client
+
+const AF_INET: Int = 2
+const SOCK_STREAM: Int = 1
+
+func main(argc: Int, argv: Int) -> Int {
+    print_str("Connecting to server...")
+    
+    // Create TCP socket
+    let fd = __builtin_socket(AF_INET, SOCK_STREAM, 0)
+    if fd < 0 {
+        print_str("Error: socket creation failed")
+        return 1
+    }
+    
+    print_str("Socket created!")
+    
+    // Build sockaddr_in for localhost:8080
+    let addr = __builtin_malloc(16)
+    __builtin_store8(addr, 16)       // sin_len
+    __builtin_store8(addr + 1, 2)    // sin_family = AF_INET
+    __builtin_store8(addr + 2, 31)   // port 8080 high byte
+    __builtin_store8(addr + 3, 144)  // port 8080 low byte
+    __builtin_store8(addr + 4, 127)  // 127.0.0.1
+    __builtin_store8(addr + 5, 0)
+    __builtin_store8(addr + 6, 0)
+    __builtin_store8(addr + 7, 1)
+    __builtin_store64(addr + 8, 0)
+    
+    // Connect
+    let result = __builtin_connect(fd, addr, 16)
+    if result < 0 {
+        print_str("Error: connection failed")
+        __builtin_close(fd)
+        return 1
+    }
+    
+    print_str("Connected!")
+    
+    // Send HTTP request
+    let request = "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+    let req_ptr = str_to_ptr(request)
+    __builtin_write(fd, req_ptr, str_len(req_ptr))
+    
+    // Receive response
+    let buffer = __builtin_malloc(4096)
+    let n = __builtin_read(fd, buffer, 4096)
+    
+    print_str("Response received:")
+    print_buffer(buffer, n)
+    
+    __builtin_close(fd)
+    print_str("Connection closed.")
+    
+    0
+}
+
+func print_str(s: Int) {
+    let i = 0
+    while __builtin_load8(s + i) != 0 {
+        print(__builtin_load8(s + i))
+        i = i + 1
+    }
+    print(10)
+}
+
+func str_len(s: Int) -> Int {
+    let i = 0
+    while __builtin_load8(s + i) != 0 { i = i + 1 }
+    i
+}
+
+func str_to_ptr(s: Int) -> Int {
+    s
+}
+
+func print_buffer(buf: Int, len: Int) {
+    let i = 0
+    while i < len {
+        print(__builtin_load8(buf + i))
+        i = i + 1
+    }
+    print(10)
+}

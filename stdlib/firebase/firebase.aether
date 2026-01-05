@@ -575,11 +575,92 @@ func str_const_database() -> Int {
     __builtin_store8(s + 8, 0)
     s
 }
+// ============================================================================
+// REAL TCP NETWORKING
+// ============================================================================
 
+const AF_INET: Int = 2
+const SOCK_STREAM: Int = 1
+
+// Build sockaddr_in structure for IPv4
+// Layout: [sin_len(1), sin_family(1), sin_port(2), sin_addr(4), sin_zero(8)]
+func sockaddr_in_build(ip_a: Int, ip_b: Int, ip_c: Int, ip_d: Int, port: Int) -> Int {
+    let addr = __builtin_malloc(16)
+    __builtin_store8(addr, 16)       // sin_len (macOS)
+    __builtin_store8(addr + 1, 2)    // sin_family = AF_INET
+    __builtin_store8(addr + 2, port / 256)   // port high byte
+    __builtin_store8(addr + 3, port % 256)   // port low byte
+    __builtin_store8(addr + 4, ip_a)
+    __builtin_store8(addr + 5, ip_b)
+    __builtin_store8(addr + 6, ip_c)
+    __builtin_store8(addr + 7, ip_d)
+    __builtin_store64(addr + 8, 0)   // sin_zero
+    addr
+}
+
+// Real TCP connect using syscalls
+// Returns socket fd on success, -1 on error
+func tcp_connect_ip(ip_a: Int, ip_b: Int, ip_c: Int, ip_d: Int, port: Int) -> Int {
+    // Create TCP socket
+    let fd = __builtin_socket(AF_INET, SOCK_STREAM, 0)
+    if fd < 0 { return fd }
+    
+    // Build sockaddr_in
+    let addr = sockaddr_in_build(ip_a, ip_b, ip_c, ip_d, port)
+    
+    // Connect
+    let result = __builtin_connect(fd, addr, 16)
+    if result < 0 {
+        __builtin_close(fd)
+        return 0 - 1
+    }
+    
+    fd
+}
+
+// TCP connect by hostname - for now uses hardcoded IPs for known hosts
+// In production, would need DNS resolution
 func tcp_connect(host: Int, port: Int) -> Int {
-    // Socket syscall to connect
-    // For now, return -1 (would need actual socket implementation)
-    0 - 1
+    // Check for common Firebase/Google hosts
+    // firebaseio.com -> 142.250.185.110 (Google IP)
+    // googleapis.com -> 142.250.185.110
+    // For local testing: localhost -> 127.0.0.1
+    
+    // Simple hostname check by first char
+    let c = __builtin_load8(host)
+    
+    // 'l' = localhost (127.0.0.1)
+    if c == 108 {
+        return tcp_connect_ip(127, 0, 0, 1, port)
+    }
+    
+    // 'f' = firebase (Google: 142.250.185.110)
+    if c == 102 {
+        return tcp_connect_ip(142, 250, 185, 110, port)
+    }
+    
+    // 'g' = googleapis (142.250.185.110)
+    if c == 103 {
+        return tcp_connect_ip(142, 250, 185, 110, port)
+    }
+    
+    // Default: try localhost
+    tcp_connect_ip(127, 0, 0, 1, port)
+}
+
+// TCP send data
+func tcp_send(fd: Int, data: Int, len: Int) -> Int {
+    __builtin_write(fd, data, len)
+}
+
+// TCP receive data
+func tcp_recv(fd: Int, buf: Int, max_len: Int) -> Int {
+    __builtin_read(fd, buf, max_len)
+}
+
+// TCP close
+func tcp_close(fd: Int) {
+    __builtin_close(fd)
 }
 
 func str_len(s: Int) -> Int {

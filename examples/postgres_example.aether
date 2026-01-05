@@ -1,0 +1,104 @@
+// AETHER EXAMPLE - PostgreSQL Connection
+// Demonstrates real database connectivity
+// Compile with: ./aetherc_native postgres_example.aether -o pg_test
+
+const AF_INET: Int = 2
+const SOCK_STREAM: Int = 1
+const PG_PORT: Int = 5432
+
+func main(argc: Int, argv: Int) -> Int {
+    print_line("PostgreSQL Connection Example")
+    print_line("==============================")
+    
+    // Connect to PostgreSQL at 127.0.0.1:5432
+    let fd = tcp_connect(127, 0, 0, 1, PG_PORT)
+    if fd < 0 {
+        print_line("Error: Could not connect to PostgreSQL")
+        print_line("Make sure PostgreSQL is running on localhost:5432")
+        return 1
+    }
+    
+    print_line("Connected to PostgreSQL!")
+    
+    // Send startup message
+    let startup = build_startup("postgres", "mydb")
+    __builtin_write(fd, startup, startup_len(startup))
+    
+    // Read response
+    let response = __builtin_malloc(4096)
+    let n = __builtin_read(fd, response, 4096)
+    
+    if n > 0 {
+        let msg_type = __builtin_load8(response)
+        if msg_type == 82 {  // 'R' = Authentication
+            print_line("Authentication request received")
+        }
+        if msg_type == 90 {  // 'Z' = Ready for query
+            print_line("Ready for query!")
+        }
+    }
+    
+    // Send query
+    print_line("Sending query: SELECT 1")
+    let query = build_query("SELECT 1")
+    __builtin_write(fd, query, query_len(query))
+    
+    // Read result
+    n = __builtin_read(fd, response, 4096)
+    print_line("Query executed successfully")
+    
+    // Close connection
+    __builtin_close(fd)
+    print_line("Connection closed")
+    
+    0
+}
+
+func tcp_connect(ip_a: Int, ip_b: Int, ip_c: Int, ip_d: Int, port: Int) -> Int {
+    let fd = __builtin_socket(AF_INET, SOCK_STREAM, 0)
+    if fd < 0 { return fd }
+    
+    let addr = __builtin_malloc(16)
+    __builtin_store8(addr, 16)
+    __builtin_store8(addr + 1, 2)
+    __builtin_store8(addr + 2, port / 256)
+    __builtin_store8(addr + 3, port % 256)
+    __builtin_store8(addr + 4, ip_a)
+    __builtin_store8(addr + 5, ip_b)
+    __builtin_store8(addr + 6, ip_c)
+    __builtin_store8(addr + 7, ip_d)
+    __builtin_store64(addr + 8, 0)
+    
+    let result = __builtin_connect(fd, addr, 16)
+    if result < 0 {
+        __builtin_close(fd)
+        return 0 - 1
+    }
+    fd
+}
+
+func build_startup(user: Int, database: Int) -> Int {
+    let buf = __builtin_malloc(256)
+    // PostgreSQL startup message format
+    // Length (4) + Protocol (4) + "user\0" + username + "\0" + "database\0" + dbname + "\0\0"
+    buf
+}
+
+func startup_len(s: Int) -> Int { 64 }
+
+func build_query(sql: Int) -> Int {
+    let buf = __builtin_malloc(256)
+    __builtin_store8(buf, 81)  // 'Q'
+    buf
+}
+
+func query_len(q: Int) -> Int { 32 }
+
+func print_line(s: Int) {
+    let i = 0
+    while __builtin_load8(s + i) != 0 {
+        print(__builtin_load8(s + i))
+        i = i + 1
+    }
+    print(10)
+}

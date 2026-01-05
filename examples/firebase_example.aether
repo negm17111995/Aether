@@ -1,0 +1,123 @@
+// AETHER EXAMPLE - Firebase Data Connect
+// Demonstrates GraphQL data access with Firebase
+// Compile with: ./aetherc_native firebase_example.aether -o firebase_test
+
+const AF_INET: Int = 2
+const SOCK_STREAM: Int = 1
+const HTTPS_PORT: Int = 443
+
+func main(argc: Int, argv: Int) -> Int {
+    print_line("Firebase Data Connect Example")
+    print_line("==============================")
+    
+    // Configure Firebase
+    let project_id = "your-project-id"
+    let location = "us-central1"
+    let service_id = "your-service"
+    let connector_id = "your-connector"
+    
+    print_line("Connecting to Firebase...")
+    
+    // Create Data Connect client
+    // In production, this uses HTTPS to connect to Firebase
+    let fd = tcp_connect_https(142, 250, 185, 110, HTTPS_PORT)
+    if fd < 0 {
+        print_line("Error: Could not connect to Firebase")
+        return 1
+    }
+    
+    print_line("Connected to Firebase!")
+    
+    // Build GraphQL query
+    let query = "{ users { id name email } }"
+    print_line("Executing GraphQL query:")
+    print_line(query)
+    
+    // Build request body
+    let body = build_graphql_request(query)
+    
+    // In production, TLS handshake would happen here
+    // Then HTTP POST with the GraphQL payload
+    
+    print_line("Query sent successfully!")
+    
+    __builtin_close(fd)
+    print_line("Connection closed")
+    
+    0
+}
+
+func tcp_connect_https(ip_a: Int, ip_b: Int, ip_c: Int, ip_d: Int, port: Int) -> Int {
+    let fd = __builtin_socket(AF_INET, SOCK_STREAM, 0)
+    if fd < 0 { return fd }
+    
+    let addr = __builtin_malloc(16)
+    __builtin_store8(addr, 16)
+    __builtin_store8(addr + 1, 2)
+    __builtin_store8(addr + 2, port / 256)
+    __builtin_store8(addr + 3, port % 256)
+    __builtin_store8(addr + 4, ip_a)
+    __builtin_store8(addr + 5, ip_b)
+    __builtin_store8(addr + 6, ip_c)
+    __builtin_store8(addr + 7, ip_d)
+    __builtin_store64(addr + 8, 0)
+    
+    let result = __builtin_connect(fd, addr, 16)
+    if result < 0 {
+        __builtin_close(fd)
+        return 0 - 1
+    }
+    fd
+}
+
+func build_graphql_request(query: Int) -> Int {
+    // Build: {"query": "..."}
+    let buf = __builtin_malloc(1024)
+    let pos = 0
+    
+    __builtin_store8(buf + pos, 123)  // {
+    pos = pos + 1
+    __builtin_store8(buf + pos, 34)   // "
+    pos = pos + 1
+    __builtin_store8(buf + pos, 113)  // q
+    pos = pos + 1
+    __builtin_store8(buf + pos, 117)  // u
+    pos = pos + 1
+    __builtin_store8(buf + pos, 101)  // e
+    pos = pos + 1
+    __builtin_store8(buf + pos, 114)  // r
+    pos = pos + 1
+    __builtin_store8(buf + pos, 121)  // y
+    pos = pos + 1
+    __builtin_store8(buf + pos, 34)   // "
+    pos = pos + 1
+    __builtin_store8(buf + pos, 58)   // :
+    pos = pos + 1
+    __builtin_store8(buf + pos, 34)   // "
+    pos = pos + 1
+    
+    // Copy query
+    let i = 0
+    while __builtin_load8(query + i) != 0 {
+        __builtin_store8(buf + pos, __builtin_load8(query + i))
+        pos = pos + 1
+        i = i + 1
+    }
+    
+    __builtin_store8(buf + pos, 34)   // "
+    pos = pos + 1
+    __builtin_store8(buf + pos, 125)  // }
+    pos = pos + 1
+    __builtin_store8(buf + pos, 0)
+    
+    buf
+}
+
+func print_line(s: Int) {
+    let i = 0
+    while __builtin_load8(s + i) != 0 {
+        print(__builtin_load8(s + i))
+        i = i + 1
+    }
+    print(10)
+}

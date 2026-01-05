@@ -1,13 +1,32 @@
 //! ARM64 code generation helpers
 
 pub fn emit_prologue(asm: &mut String) {
+    // Save frame pointer (x29), link register (x30)
     asm.push_str("    stp x29, x30, [sp, #-16]!\n");
-    asm.push_str("    mov x29, sp\n");
+    // Save callee-saved registers x19-x28 (we use x19-x21 extensively)
+    // Save them in pairs for efficiency
+    asm.push_str("    stp x19, x20, [sp, #-16]!\n");
+    asm.push_str("    stp x21, x22, [sp, #-16]!\n");
+    asm.push_str("    stp x23, x24, [sp, #-16]!\n");
+    asm.push_str("    stp x25, x26, [sp, #-16]!\n");
+    asm.push_str("    stp x27, x28, [sp, #-16]!\n");
+    // Allocate local variable space (256 bytes)
     asm.push_str("    sub sp, sp, #256\n");
+    // Set frame pointer AFTER all saves and local allocation
+    // This way [x29, #-8] etc point to actual local variable space
+    asm.push_str("    add x29, sp, #256\n");
 }
 
 pub fn emit_epilogue(asm: &mut String, _stack_size: i32) {
+    // Deallocate local variable space
     asm.push_str("    add sp, sp, #256\n");
+    // Restore callee-saved registers (in reverse order)
+    asm.push_str("    ldp x27, x28, [sp], #16\n");
+    asm.push_str("    ldp x25, x26, [sp], #16\n");
+    asm.push_str("    ldp x23, x24, [sp], #16\n");
+    asm.push_str("    ldp x21, x22, [sp], #16\n");
+    asm.push_str("    ldp x19, x20, [sp], #16\n");
+    // Restore frame pointer and link register
     asm.push_str("    ldp x29, x30, [sp], #16\n");
     asm.push_str("    ret\n");
 }

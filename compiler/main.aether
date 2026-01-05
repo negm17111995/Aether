@@ -18,29 +18,45 @@ const TARGET_LINUX_X64: Int = 3
 const TARGET_WINDOWS_X64: Int = 4
 
 func compile_source(source: Int, len: Int, target: Int, out: Int) -> Int {
+    print(84) print(48) print(10)  // T0 - entering
+    
     let tokens = tokenize(source, len)
+    print(84) print(49) print(10)  // T1 - after tokenize
+    
     if tokens == 0 { return 1 }
     
     let p = parser_new(tokens)
+    print(84) print(50) print(10)  // T2 - after parser_new
+    
     let ast = parse_module(p)
+    print(84) print(51) print(10)  // T3 - after parse
+    
     if ast == 0 { return 2 }
     
     let errors = typecheck(ast)
+    print(84) print(52) print(10)  // T4 - after typecheck
+    
     if errors > 0 { return 3 }
     
     let arch = 0
     if target == TARGET_MACOS_ARM64 || target == TARGET_LINUX_ARM64 { arch = 1 }
     
     let cg = codegen_new(arch)
+    print(84) print(53) print(10)  // T5 - after codegen_new
+    
     emit_module(cg, ast)
+    print(84) print(54) print(10)  // T6 - after emit_module
+    
     let code = codegen_get_code(cg)
     let size = codegen_get_size(cg)
+    print(84) print(55) print(10)  // T7 - after get code/size
     
     if target == TARGET_MACOS_ARM64 { macho_write_file(macho_build_exe(1, code, size), out) }
     if target == TARGET_MACOS_X64 { macho_write_file(macho_build_exe(0, code, size), out) }
     if target == TARGET_LINUX_ARM64 { elf_write_file(elf_build_exe(1, code, size), out) }
     if target == TARGET_LINUX_X64 { elf_write_file(elf_build_exe(0, code, size), out) }
     if target == TARGET_WINDOWS_X64 { pe_write_file(pe_build_exe(code, size), out) }
+    print(84) print(56) print(10)  // T8 - after write
     0
 }
 
@@ -56,11 +72,6 @@ func read_file(path: Int) -> Int {
     buf
 }
 
-func str_len(s: Int) -> Int {
-    let i = 0
-    while __builtin_load8(s + i) != 0 { i = i + 1 }
-    i
-}
 
 func get_argv(argv: Int, idx: Int) -> Int { __builtin_load64(argv + idx * 8) }
 
@@ -74,15 +85,25 @@ func main(argc: Int, argv: Int) -> Int {
     }
     
     let input = get_argv(argv, 1)
+    print(49) print(10)  // Debug: "1"
+    
     let source = read_file(input)
+    print(50) print(10)  // Debug: "2"
+    
     if source == 0 { print(69) print(114) print(114) print(10) return 1 }
+    print(51) print(10)  // Debug: "3"
     
     let out = __builtin_malloc(8)
+    print(52) print(10)  // Debug: "4"
+    
     __builtin_store8(out, 97) __builtin_store8(out + 1, 46) 
     __builtin_store8(out + 2, 111) __builtin_store8(out + 3, 117)
     __builtin_store8(out + 4, 116) __builtin_store8(out + 5, 0)
+    print(53) print(10)  // Debug: "5"
     
     let result = compile_source(source, str_len(source), TARGET_MACOS_ARM64, out)
+    print(54) print(10)  // Debug: "6"
+    
     if result == 0 { print(79) print(75) print(10) } 
     else { print(70) print(65) print(73) print(76) print(10) }
     result

@@ -1,0 +1,23 @@
+// AETHER EXAMPLE - Hello World
+// Compile with: ./aetherc_native hello.aether -o hello
+
+func main(argc: Int, argv: Int) -> Int {
+    // Print "Hello, Aether!"
+    print(72)   // H
+    print(101)  // e
+    print(108)  // l
+    print(108)  // l
+    print(111)  // o
+    print(44)   // ,
+    print(32)   // space
+    print(65)   // A
+    print(101)  // e
+    print(116)  // t
+    print(104)  // h
+    print(101)  // e
+    print(114)  // r
+    print(33)   // !
+    print(10)   // newline
+    
+    0
+}
