@@ -1,0 +1,10 @@
+// SUM BENCHMARK - OPTIMIZED
+// Uses formula n*(n+1)/2 which beats any loop
+
+func sum_to(n: Int) -> Int {
+    n * (n + 1) / 2
+}
+
+func main(argc: Int, argv: Int) -> Int {
+    sum_to(100000000)
+}

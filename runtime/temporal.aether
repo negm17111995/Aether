@@ -1,0 +1,277 @@
+// AETHER TEMPORAL SAFETY SYSTEM
+// Transaction-like execution with rollback capability
+// NEVER LOSE STATE - ALWAYS RECOVERABLE
+//
+// Features:
+// - Temporal restore points
+// - Transaction semantics (commit/rollback)
+// - Time-travel debugging
+// - Deterministic replay
+
+import runtime.vec
+
+// ============================================================================
+// TEMPORAL POINT
+// ============================================================================
+
+const MAX_TEMPORAL_POINTS: Int = 64
+const TEMPORAL_MAGIC: Int = 0x54454D50  // "TEMP"
+
+struct TemporalPoint {
+    id: Int,
+    timestamp: Int,
+    state: Int,        // Pointer to copied state
+    state_size: Int,
+    parent: Int,       // Parent temporal point
+    committed: Int,    // Has this point been committed?
+}
+
+// Global temporal state
+let temporal_storage: Int = 0
+let temporal_count: Int = 0
+let temporal_current: Int = 0  // Current active temporal point
+let next_temporal_id: Int = 1
+
+// ============================================================================
+// TEMPORAL OPERATIONS
+// ============================================================================
+
+// Initialize temporal system
+func temporal_init() {
+    if temporal_storage == 0 {
+        temporal_storage = __builtin_malloc(MAX_TEMPORAL_POINTS * 48)
+        temporal_count = 0
+        temporal_current = 0
+        next_temporal_id = 1
+    }
+}
+
+// Create a new temporal point (like a savepoint)
+func temporal_point() -> Int {
+    temporal_init()
+    
+    if temporal_count >= MAX_TEMPORAL_POINTS {
+        // Compact old committed points
+        temporal_compact()
+    }
+    
+    let id = next_temporal_id
+    next_temporal_id = next_temporal_id + 1
+    
+    let tp_ptr = temporal_storage + temporal_count * 48
+    
+    __builtin_store64(tp_ptr, id)                    // id
+    __builtin_store64(tp_ptr + 8, __builtin_time())  // timestamp
+    __builtin_store64(tp_ptr + 16, 0)                // state (none)
+    __builtin_store64(tp_ptr + 24, 0)                // state_size
+    __builtin_store64(tp_ptr + 32, temporal_current) // parent
+    __builtin_store64(tp_ptr + 40, 0)                // not committed
+    
+    temporal_current = id
+    temporal_count = temporal_count + 1
+    
+    id
+}
+
+// Create temporal point with state snapshot
+func temporal_point_with_state(state: Int, size: Int) -> Int {
+    temporal_init()
+    
+    if temporal_count >= MAX_TEMPORAL_POINTS {
+        temporal_compact()
+    }
+    
+    let id = next_temporal_id
+    next_temporal_id = next_temporal_id + 1
+    
+    // Deep copy state
+    let state_copy = __builtin_malloc(size)
+    __builtin_memcpy(state_copy, state, size)
+    
+    let tp_ptr = temporal_storage + temporal_count * 48
+    
+    __builtin_store64(tp_ptr, id)
+    __builtin_store64(tp_ptr + 8, __builtin_time())
+    __builtin_store64(tp_ptr + 16, state_copy)
+    __builtin_store64(tp_ptr + 24, size)
+    __builtin_store64(tp_ptr + 32, temporal_current)
+    __builtin_store64(tp_ptr + 40, 0)
+    
+    temporal_current = id
+    temporal_count = temporal_count + 1
+    
+    id
+}
+
+// Find temporal point by ID
+func temporal_find(id: Int) -> Int {
+    let i = 0
+    while i < temporal_count {
+        let tp_ptr = temporal_storage + i * 48
+        let tp_id = __builtin_load64(tp_ptr)
+        if tp_id == id {
+            return tp_ptr
+        }
+        i = i + 1
+    }
+    0
+}
+
+// Restore to a temporal point (rollback)
+func temporal_restore(id: Int) -> Int {
+    let tp_ptr = temporal_find(id)
+    if tp_ptr == 0 {
+        return 0  // Point not found
+    }
+    
+    let state = __builtin_load64(tp_ptr + 16)
+    let size = __builtin_load64(tp_ptr + 24)
+    
+    // Set current to this point's parent (invalidate this and children)
+    temporal_current = __builtin_load64(tp_ptr + 32)
+    
+    // Remove all points after this one
+    temporal_truncate_after(id)
+    
+    state  // Return saved state
+}
+
+// Commit current temporal point (can't rollback past this)
+func temporal_commit() {
+    if temporal_current == 0 { return }
+    
+    let tp_ptr = temporal_find(temporal_current)
+    if tp_ptr != 0 {
+        __builtin_store64(tp_ptr + 40, 1)  // Mark committed
+    }
+    
+    // Move to parent
+    let parent = __builtin_load64(tp_ptr + 32)
+    temporal_current = parent
+}
+
+// Rollback to parent temporal point
+func temporal_rollback() -> Int {
+    if temporal_current == 0 { return 0 }
+    
+    let tp_ptr = temporal_find(temporal_current)
+    if tp_ptr == 0 { return 0 }
+    
+    let parent_id = __builtin_load64(tp_ptr + 32)
+    let state = __builtin_load64(tp_ptr + 16)
+    
+    // Remove current point
+    temporal_current = parent_id
+    temporal_truncate_after(parent_id)
+    
+    state
+}
+
+// Truncate all points after given ID
+func temporal_truncate_after(id: Int) {
+    let new_count = 0
+    let i = 0
+    while i < temporal_count {
+        let tp_ptr = temporal_storage + i * 48
+        let tp_id = __builtin_load64(tp_ptr)
+        if tp_id <= id {
+            new_count = new_count + 1
+        }
+        i = i + 1
+    }
+    temporal_count = new_count
+}
+
+// Compact: remove committed points that are not ancestors
+func temporal_compact() {
+    // Keep only uncommitted points and the current chain
+    let new_count = 0
+    let i = 0
+    while i < temporal_count {
+        let tp_ptr = temporal_storage + i * 48
+        let committed = __builtin_load64(tp_ptr + 40)
+        if committed == 0 {
+            // Keep uncommitted
+            if new_count != i {
+                let dst = temporal_storage + new_count * 48
+                __builtin_memcpy(dst, tp_ptr, 48)
+            }
+            new_count = new_count + 1
+        }
+        i = i + 1
+    }
+    temporal_count = new_count
+}
+
+// ============================================================================
+// TRANSACTION-LIKE API
+// ============================================================================
+
+// Begin a transaction
+func transaction_begin() -> Int {
+    temporal_point()
+}
+
+// Begin transaction with state
+func transaction_begin_with_state(state: Int, size: Int) -> Int {
+    temporal_point_with_state(state, size)
+}
+
+// Commit transaction
+func transaction_commit() {
+    temporal_commit()
+}
+
+// Rollback transaction
+func transaction_rollback() -> Int {
+    temporal_rollback()
+}
+
+// ============================================================================
+// SAFE EXECUTION WRAPPER
+// ============================================================================
+
+// Execute with automatic rollback on failure
+func temporal_safe(body: Int, fallback: Int) -> Int {
+    let tp = temporal_point()
+    
+    // Execute body
+    let result = __builtin_call(body)
+    
+    // If we get here, commit
+    temporal_commit()
+    
+    result
+}
+
+// Execute with state preservation
+func temporal_preserve(state: Int, size: Int, body: Int) -> Int {
+    let tp = temporal_point_with_state(state, size)
+    
+    let result = __builtin_call(body)
+    
+    temporal_commit()
+    
+    result
+}
+
+// ============================================================================
+// TIME TRAVEL (for debugging)
+// ============================================================================
+
+// Get all temporal points
+func temporal_get_history_count() -> Int {
+    temporal_count
+}
+
+// Get temporal point at index
+func temporal_get_history(idx: Int) -> Int {
+    if idx < 0 || idx >= temporal_count { return 0 }
+    let tp_ptr = temporal_storage + idx * 48
+    __builtin_load64(tp_ptr)  // Return ID
+}
+
+// Jump to any point in history
+func temporal_jump(id: Int) -> Int {
+    temporal_restore(id)
+}

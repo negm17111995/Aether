@@ -1,0 +1,18 @@
+// SUM BENCHMARK - Sum of numbers 1 to N
+// Tests: simple loop performance
+
+func sum_to(n: Int) -> Int {
+    let total = 0
+    let i = 1
+    
+    while i <= n {
+        total = total + i
+        i = i + 1
+    }
+    
+    total
+}
+
+func main(argc: Int, argv: Int) -> Int {
+    sum_to(100000000)
+}

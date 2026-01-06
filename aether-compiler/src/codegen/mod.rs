@@ -22,7 +22,7 @@ pub struct CodeGen {
     func_offsets: HashMap<String, usize>,
     /// Label counter
     label_counter: usize,
-    /// Local variable offsets
+    /// Local variable offsets (stack-based)
     locals: HashMap<String, i32>,
     /// Constant values (name -> value)
     constants: HashMap<String, i64>,
@@ -32,6 +32,15 @@ pub struct CodeGen {
     stack_offset: i32,
     /// Optimization level
     opt_level: u8,
+    /// Current function name
+    current_func: String,
+    /// Functions for inlining
+    inline_candidates: HashMap<String, usize>,
+    /// Register-allocated variables (name -> register like "x21")
+    /// Uses x21-x28 for hot loop variables
+    register_vars: HashMap<String, String>,
+    /// Next available register for allocation (starts at x21)
+    next_reg: usize,
 }
 
 impl CodeGen {
@@ -47,6 +56,10 @@ impl CodeGen {
             loop_end_labels: Vec::new(),
             stack_offset: 0,
             opt_level,
+            current_func: String::new(),
+            inline_candidates: HashMap::new(),
+            register_vars: HashMap::new(),
+            next_reg: 21,  // Start with x21, x19-x20 reserved for temps
         }
     }
     
@@ -71,6 +84,24 @@ impl CodeGen {
         self.locals.get(name).copied()
     }
     
+    /// Allocate a register for a hot variable (loop counter, accumulator)
+    /// Returns register name like "x21" or None if out of registers
+    fn alloc_register(&mut self, name: &str) -> Option<String> {
+        if self.next_reg <= 28 && self.is_arm64() {
+            let reg = format!("x{}", self.next_reg);
+            self.register_vars.insert(name.to_string(), reg.clone());
+            self.next_reg += 1;
+            Some(reg)
+        } else {
+            None
+        }
+    }
+    
+    /// Get register for a variable, if one was allocated
+    fn get_register(&self, name: &str) -> Option<&String> {
+        self.register_vars.get(name)
+    }
+    
     fn is_arm64(&self) -> bool {
         self.target.contains("aarch64") || self.target.contains("arm64")
     }
@@ -79,8 +110,51 @@ impl CodeGen {
         self.target.contains("x86_64") || self.target.contains("x86-64")
     }
     
+    /// Try to evaluate an expression at compile time (constant folding)
+    fn try_const_fold(&self, expr: &Expr) -> Option<i64> {
+        match expr {
+            Expr::Int(val, _) => Some(*val),
+            Expr::Bool(val, _) => Some(if *val { 1 } else { 0 }),
+            Expr::Ident(name, _) => self.constants.get(name).copied(),
+            Expr::Binary(op, left, right, _) => {
+                let l = self.try_const_fold(left)?;
+                let r = self.try_const_fold(right)?;
+                Some(match op {
+                    BinOp::Add => l + r,
+                    BinOp::Sub => l - r,
+                    BinOp::Mul => l * r,
+                    BinOp::Div if r != 0 => l / r,
+                    BinOp::Mod if r != 0 => l % r,
+                    BinOp::Eq => if l == r { 1 } else { 0 },
+                    BinOp::Ne => if l != r { 1 } else { 0 },
+                    BinOp::Lt => if l < r { 1 } else { 0 },
+                    BinOp::Le => if l <= r { 1 } else { 0 },
+                    BinOp::Gt => if l > r { 1 } else { 0 },
+                    BinOp::Ge => if l >= r { 1 } else { 0 },
+                    BinOp::And => if l != 0 && r != 0 { 1 } else { 0 },
+                    BinOp::Or => if l != 0 || r != 0 { 1 } else { 0 },
+                    BinOp::BitAnd => l & r,
+                    BinOp::BitOr => l | r,
+                    BinOp::BitXor => l ^ r,
+                    _ => return None,
+                })
+            }
+            _ => None,
+        }
+    }
+    
     /// Generate code for expression, result in r0/rax
     fn gen_expr(&mut self, expr: &Expr) {
+        // OPTIMIZATION: Try constant folding first
+        if let Some(val) = self.try_const_fold(expr) {
+            if self.is_arm64() {
+                arm64::emit_mov_imm(&mut self.asm, "x0", val);
+            } else {
+                x86_64::emit_mov_imm(&mut self.asm, "rax", val);
+            }
+            return;
+        }
+        
         match expr {
             Expr::Int(val, _) => {
                 if self.is_arm64() {
@@ -100,7 +174,12 @@ impl CodeGen {
             }
             
             Expr::Ident(name, _) => {
-                if let Some(off) = self.get_local(name) {
+                // OPTIMIZATION: Check if variable is in a register first (fastest)
+                if let Some(reg) = self.get_register(name) {
+                    if self.is_arm64() {
+                        self.emit_asm(&format!("    mov x0, {}", reg));
+                    }
+                } else if let Some(off) = self.get_local(name) {
                     if self.is_arm64() {
                         arm64::emit_load_local(&mut self.asm, "x0", off);
                     } else {
@@ -114,7 +193,7 @@ impl CodeGen {
                         x86_64::emit_mov_imm(&mut self.asm, "rax", *val);
                     }
                 } else {
-                    // Unknown identifier - could be function reference or external
+                    // Unknown identifier
                     if self.is_arm64() {
                         arm64::emit_mov_imm(&mut self.asm, "x0", 0);
                     } else {
@@ -124,12 +203,102 @@ impl CodeGen {
             }
             
             Expr::Binary(op, left, right, _) => {
+                // OPTIMIZATION: For comparisons with small constants, use immediate form
+                if self.is_arm64() {
+                    if let Some(rval) = self.try_const_fold(right) {
+                        if rval >= 0 && rval < 4096 {
+                            // Can use immediate comparison
+                            self.gen_expr(left);
+                            
+                            match op {
+                                BinOp::Lt => {
+                                    self.emit_asm(&format!("    cmp x0, #{}", rval));
+                                    self.emit_asm("    cset x0, lt");
+                                    return;
+                                }
+                                BinOp::Le => {
+                                    self.emit_asm(&format!("    cmp x0, #{}", rval));
+                                    self.emit_asm("    cset x0, le");
+                                    return;
+                                }
+                                BinOp::Gt => {
+                                    self.emit_asm(&format!("    cmp x0, #{}", rval));
+                                    self.emit_asm("    cset x0, gt");
+                                    return;
+                                }
+                                BinOp::Ge => {
+                                    self.emit_asm(&format!("    cmp x0, #{}", rval));
+                                    self.emit_asm("    cset x0, ge");
+                                    return;
+                                }
+                                BinOp::Eq => {
+                                    self.emit_asm(&format!("    cmp x0, #{}", rval));
+                                    self.emit_asm("    cset x0, eq");
+                                    return;
+                                }
+                                BinOp::Ne => {
+                                    self.emit_asm(&format!("    cmp x0, #{}", rval));
+                                    self.emit_asm("    cset x0, ne");
+                                    return;
+                                }
+                                BinOp::Sub => {
+                                    self.emit_asm(&format!("    sub x0, x0, #{}", rval));
+                                    return;
+                                }
+                                BinOp::Add => {
+                                    self.emit_asm(&format!("    add x0, x0, #{}", rval));
+                                    return;
+                                }
+                                // OPTIMIZATION: Use AND for modulo power-of-2
+                                BinOp::Mod if rval > 0 && (rval & (rval - 1)) == 0 => {
+                                    self.emit_asm(&format!("    and x0, x0, #{}", rval - 1));
+                                    return;
+                                }
+                                // OPTIMIZATION: Use LSR for division by power-of-2
+                                BinOp::Div if rval > 0 && (rval & (rval - 1)) == 0 => {
+                                    let shift = 63 - (rval as u64).leading_zeros();
+                                    self.emit_asm(&format!("    lsr x0, x0, #{}", shift));
+                                    return;
+                                }
+                                // OPTIMIZATION: Use LSL for multiply by power-of-2
+                                BinOp::Mul if rval > 0 && (rval & (rval - 1)) == 0 => {
+                                    let shift = 63 - (rval as u64).leading_zeros();
+                                    self.emit_asm(&format!("    lsl x0, x0, #{}", shift));
+                                    return;
+                                }
+                                // OPTIMIZATION: x*3 = x + x*2 = x + (x << 1)
+                                BinOp::Mul if rval == 3 => {
+                                    self.emit_asm("    add x0, x0, x0, lsl #1");
+                                    return;
+                                }
+                                // OPTIMIZATION: x*5 = x + x*4 = x + (x << 2)
+                                BinOp::Mul if rval == 5 => {
+                                    self.emit_asm("    add x0, x0, x0, lsl #2");
+                                    return;
+                                }
+                                // OPTIMIZATION: x*7 = x*8 - x
+                                BinOp::Mul if rval == 7 => {
+                                    self.emit_asm("    lsl x1, x0, #3");
+                                    self.emit_asm("    sub x0, x1, x0");
+                                    return;
+                                }
+                                // OPTIMIZATION: x*9 = x + x*8 = x + (x << 3)
+                                BinOp::Mul if rval == 9 => {
+                                    self.emit_asm("    add x0, x0, x0, lsl #3");
+                                    return;
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                
                 // Evaluate left
                 self.gen_expr(left);
                 
-                // Save left on stack
+                // Save left in x19 (callee-saved, already preserved in prologue)
                 if self.is_arm64() {
-                    self.emit_asm("    str x0, [sp, #-16]!");
+                    self.emit_asm("    mov x19, x0");
                 } else {
                     self.emit_asm("    push rax");
                 }
@@ -137,10 +306,11 @@ impl CodeGen {
                 // Evaluate right
                 self.gen_expr(right);
                 
-                // Pop left to x1/rcx
+                // Now x19=left, x0=right - operate directly
                 if self.is_arm64() {
                     self.emit_asm("    mov x1, x0");
-                    self.emit_asm("    ldr x0, [sp], #16");
+                    self.emit_asm("    mov x0, x19");
+
                     
                     match op {
                         BinOp::Add => self.emit_asm("    add x0, x0, x1"),
@@ -265,28 +435,44 @@ impl CodeGen {
             }
             
             Expr::Call(callee, args, _) => {
-                // Evaluate args
-                for (i, arg) in args.iter().enumerate() {
-                    self.gen_expr(arg);
-                    
-                    if self.is_arm64() {
-                        // Save to callee-saved register or stack
-                        let reg = format!("x{}", 19 + i);
-                        self.emit_asm(&format!("    mov {}, x0", reg));
-                    } else {
-                        self.emit_asm("    push rax");
+                // OPTIMIZATION: For 1-2 args, evaluate directly to target registers
+                if self.is_arm64() && args.len() <= 2 {
+                    // Direct register allocation for simple cases
+                    for (i, arg) in args.iter().enumerate() {
+                        if i > 0 {
+                            // Save previous in x19
+                            self.emit_asm("    mov x19, x0");
+                        }
+                        self.gen_expr(arg);
+                        if i == 0 && args.len() > 1 {
+                            // First arg: save to x19, will move to x0 later
+                            self.emit_asm("    mov x20, x0");
+                        }
                     }
-                }
-                
-                // Move args to proper registers
-                if self.is_arm64() {
+                    if args.len() == 2 {
+                        // x0 has arg2 (right = x1), x20 has arg1 (left = x0)
+                        self.emit_asm("    mov x1, x0");
+                        self.emit_asm("    mov x0, x20");
+                    }
+                    // For 1 arg, x0 already has the value!
+                } else if self.is_arm64() {
+                    // Multi-arg case: use temporary registers
+                    for (i, arg) in args.iter().enumerate() {
+                        self.gen_expr(arg);
+                        let reg = format!("x{}", 19 + i.min(1));
+                        self.emit_asm(&format!("    mov {}, x0", reg));
+                    }
                     for i in 0..args.len().min(8) {
-                        let src = format!("x{}", 19 + i);
+                        let src = format!("x{}", 19 + i.min(1));
                         let dst = format!("x{}", i);
                         self.emit_asm(&format!("    mov {}, {}", dst, src));
                     }
                 } else {
-                    // Pop args to registers (reverse order)
+                    // x86_64: push args to stack, pop to registers
+                    for arg in args.iter() {
+                        self.gen_expr(arg);
+                        self.emit_asm("    push rax");
+                    }
                     let regs = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"];
                     for i in (0..args.len().min(6)).rev() {
                         self.emit_asm(&format!("    pop {}", regs[i]));
@@ -296,7 +482,6 @@ impl CodeGen {
                 // Call function
                 if let Expr::Ident(name, _) = callee.as_ref() {
                     if name.starts_with("__builtin_") {
-                        // Built-in function call via syscall
                         self.gen_builtin_call(name, args.len());
                     } else {
                         if self.is_arm64() {
@@ -639,6 +824,15 @@ impl CodeGen {
                 if let Some(init) = init {
                     self.gen_expr(init);
                 }
+                // OPTIMIZATION: Try to allocate a register for this variable
+                if self.is_arm64() {
+                    if let Some(reg) = self.alloc_register(name) {
+                        // Store in register instead of memory - much faster!
+                        self.emit_asm(&format!("    mov {}, x0", reg));
+                        return; // Don't also store to memory
+                    }
+                }
+                // Fallback to memory
                 let off = self.alloc_local(name);
                 if self.is_arm64() {
                     arm64::emit_store_local(&mut self.asm, "x0", off);
@@ -650,6 +844,14 @@ impl CodeGen {
             Stmt::Assign(target, value, _) => {
                 self.gen_expr(value);
                 if let Expr::Ident(name, _) = target {
+                    // OPTIMIZATION: Check if variable is in a register
+                    if let Some(reg) = self.get_register(name) {
+                        if self.is_arm64() {
+                            self.emit_asm(&format!("    mov {}, x0", reg.clone()));
+                            return;
+                        }
+                    }
+                    // Fallback to memory
                     if let Some(off) = self.get_local(name) {
                         if self.is_arm64() {
                             arm64::emit_store_local(&mut self.asm, "x0", off);
@@ -675,13 +877,30 @@ impl CodeGen {
                 let else_label = self.new_label();
                 let end_label = self.new_label();
                 
-                self.gen_expr(cond);
-                
+                // OPTIMIZATION: Detect if(n%2==0) pattern and use tbnz
+                let mut used_tbnz = false;
                 if self.is_arm64() {
-                    self.emit_asm(&format!("    cbz x0, {}", else_label));
-                } else {
-                    self.emit_asm("    test rax, rax");
-                    self.emit_asm(&format!("    jz {}", else_label));
+                    if let Expr::Binary(BinOp::Eq, left, right, _) = cond {
+                        if let (Expr::Binary(BinOp::Mod, inner, two, _), Expr::Int(0, _)) = (left.as_ref(), right.as_ref()) {
+                            if let Expr::Int(2, _) = two.as_ref() {
+                                // Pattern: (x % 2) == 0  --> tbnz x, #0, else (if bit 0 is set, jump to else)
+                                self.gen_expr(inner);
+                                self.emit_asm(&format!("    tbnz x0, #0, {}", else_label));
+                                used_tbnz = true;
+                            }
+                        }
+                    }
+                }
+                
+                if !used_tbnz {
+                    self.gen_expr(cond);
+                    
+                    if self.is_arm64() {
+                        self.emit_asm(&format!("    cbz x0, {}", else_label));
+                    } else {
+                        self.emit_asm("    test rax, rax");
+                        self.emit_asm(&format!("    jz {}", else_label));
+                    }
                 }
                 
                 for s in &then_block.stmts {
@@ -773,6 +992,7 @@ impl CodeGen {
         if let Decl::Func { name, params, body, .. } = decl {
             self.locals.clear();
             self.stack_offset = 0;
+            self.current_func = name.clone();
             
             // Function label
             if self.is_arm64() {
@@ -780,13 +1000,19 @@ impl CodeGen {
                 self.emit_asm(".align 4");
                 self.emit_asm(&format!("_{}:", name));
                 arm64::emit_prologue(&mut self.asm);
+                
+                // OPTIMIZATION: Keep first param in x20 register 
+                // This avoids memory loads in hot loops/recursion
+                if !params.is_empty() {
+                    self.emit_asm("    mov x20, x0");  // Save first param in callee-saved register
+                }
             } else {
                 self.emit_asm(&format!(".global {}", name));
                 self.emit_asm(&format!("{}:", name));
                 x86_64::emit_prologue(&mut self.asm);
             }
             
-            // Store parameters
+            // Store parameters (for access by name)
             let param_regs_arm = ["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"];
             let param_regs_x86 = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"];
             

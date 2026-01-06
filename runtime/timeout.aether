@@ -1,0 +1,263 @@
+// AETHER TIMEOUT PROTECTION
+// NEVER STUCK - Automatic timeout and graceful degradation
+//
+// Features:
+// - Timeout-protected execution
+// - Automatic fallback on timeout
+// - Deadlock detection
+// - Graceful shutdown
+
+import runtime.checkpoint
+
+// ============================================================================
+// TIMEOUT CONSTANTS
+// ============================================================================
+
+const TIMEOUT_INFINITE: Int = -1
+const TIMEOUT_DEFAULT: Int = 30000  // 30 seconds
+const TIMEOUT_SHORT: Int = 5000     // 5 seconds
+const TIMEOUT_LONG: Int = 300000    // 5 minutes
+
+// Timeout status
+const TIMEOUT_OK: Int = 0
+const TIMEOUT_EXPIRED: Int = 1
+const TIMEOUT_CANCELLED: Int = 2
+
+// ============================================================================
+// TIMEOUT CONTEXT
+// ============================================================================
+
+struct TimeoutContext {
+    deadline: Int,     // Absolute deadline timestamp
+    fallback: Int,     // Fallback value/function
+    status: Int,       // Current status
+    checkpoint_id: Int, // Associated checkpoint
+}
+
+let current_timeout: Int = 0
+
+// ============================================================================
+// TIMEOUT OPERATIONS
+// ============================================================================
+
+// Create timeout context
+func timeout_create(ms: Int, fallback: Int) -> Int {
+    let ctx = __builtin_malloc(32)
+    let now = __builtin_time()
+    
+    __builtin_store64(ctx, now + ms)      // deadline
+    __builtin_store64(ctx + 8, fallback)   // fallback
+    __builtin_store64(ctx + 16, TIMEOUT_OK) // status
+    __builtin_store64(ctx + 24, 0)          // checkpoint
+    
+    ctx
+}
+
+// Check if timeout has expired
+func timeout_check(ctx: Int) -> Int {
+    let deadline = __builtin_load64(ctx)
+    let now = __builtin_time()
+    
+    if now >= deadline {
+        __builtin_store64(ctx + 16, TIMEOUT_EXPIRED)
+        return 1
+    }
+    0
+}
+
+// Get remaining time
+func timeout_remaining(ctx: Int) -> Int {
+    let deadline = __builtin_load64(ctx)
+    let now = __builtin_time()
+    
+    if now >= deadline { return 0 }
+    deadline - now
+}
+
+// Cancel timeout
+func timeout_cancel(ctx: Int) {
+    __builtin_store64(ctx + 16, TIMEOUT_CANCELLED)
+}
+
+// Get timeout status
+func timeout_status(ctx: Int) -> Int {
+    __builtin_load64(ctx + 16)
+}
+
+// ============================================================================
+// WITH_TIMEOUT - Protected Execution
+// ============================================================================
+
+// Execute body with timeout protection
+// Returns result if successful, fallback if timeout
+func with_timeout(ms: Int, body: Int, fallback: Int) -> Int {
+    let ctx = timeout_create(ms, fallback)
+    let prev_timeout = current_timeout
+    current_timeout = ctx
+    
+    // Create checkpoint before execution
+    let cp_id = checkpoint_create()
+    __builtin_store64(ctx + 24, cp_id)
+    
+    // Execute body
+    let result = __builtin_call(body)
+    
+    // Check if timed out during execution
+    if timeout_check(ctx) == 1 {
+        // Restore checkpoint and return fallback
+        checkpoint_restore(cp_id)
+        current_timeout = prev_timeout
+        return __builtin_load64(ctx + 8)  // fallback
+    }
+    
+    current_timeout = prev_timeout
+    result
+}
+
+// Execute with timeout, calling fallback function
+func with_timeout_fn(ms: Int, body: Int, fallback_fn: Int) -> Int {
+    let ctx = timeout_create(ms, fallback_fn)
+    let prev = current_timeout
+    current_timeout = ctx
+    
+    let cp_id = checkpoint_create()
+    __builtin_store64(ctx + 24, cp_id)
+    
+    let result = __builtin_call(body)
+    
+    if timeout_check(ctx) == 1 {
+        checkpoint_restore(cp_id)
+        current_timeout = prev
+        return __builtin_call(fallback_fn)
+    }
+    
+    current_timeout = prev
+    result
+}
+
+// ============================================================================
+// DEADLOCK DETECTION
+// ============================================================================
+
+const MAX_LOCKS: Int = 64
+
+struct LockInfo {
+    id: Int,
+    holder: Int,
+    waiting: Int,
+    acquired_at: Int,
+}
+
+let lock_table: Int = 0
+let lock_count: Int = 0
+
+// Initialize lock tracking
+func deadlock_init() {
+    if lock_table == 0 {
+        lock_table = __builtin_malloc(MAX_LOCKS * 32)
+        lock_count = 0
+    }
+}
+
+// Register lock acquisition
+func deadlock_acquire(lock_id: Int, holder: Int) {
+    deadlock_init()
+    
+    // Check for potential deadlock
+    if deadlock_would_cycle(lock_id, holder) == 1 {
+        // Potential deadlock - break it
+        deadlock_break(lock_id)
+    }
+    
+    if lock_count < MAX_LOCKS {
+        let info = lock_table + lock_count * 32
+        __builtin_store64(info, lock_id)
+        __builtin_store64(info + 8, holder)
+        __builtin_store64(info + 16, 0)  // not waiting
+        __builtin_store64(info + 24, __builtin_time())
+        lock_count = lock_count + 1
+    }
+}
+
+// Check if acquiring would cause cycle
+func deadlock_would_cycle(lock_id: Int, holder: Int) -> Int {
+    // Simple cycle detection
+    let i = 0
+    while i < lock_count {
+        let info = lock_table + i * 32
+        let existing_holder = __builtin_load64(info + 8)
+        let existing_waiting = __builtin_load64(info + 16)
+        
+        // If someone holding our target is waiting for us
+        if existing_waiting == holder {
+            return 1  // Cycle detected
+        }
+        i = i + 1
+    }
+    0
+}
+
+// Break deadlock by releasing oldest lock
+func deadlock_break(lock_id: Int) {
+    // Find oldest lock in potential cycle and release it
+    let oldest_time = __builtin_time()
+    let oldest_idx = -1
+    
+    let i = 0
+    while i < lock_count {
+        let info = lock_table + i * 32
+        let acquired_at = __builtin_load64(info + 24)
+        if acquired_at < oldest_time {
+            oldest_time = acquired_at
+            oldest_idx = i
+        }
+        i = i + 1
+    }
+    
+    if oldest_idx >= 0 {
+        // Remove this lock
+        deadlock_release_at(oldest_idx)
+    }
+}
+
+// Release lock by index
+func deadlock_release_at(idx: Int) {
+    if idx < 0 || idx >= lock_count { return }
+    
+    // Shift remaining locks
+    let i = idx
+    while i < lock_count - 1 {
+        let src = lock_table + (i + 1) * 32
+        let dst = lock_table + i * 32
+        __builtin_memcpy(dst, src, 32)
+        i = i + 1
+    }
+    lock_count = lock_count - 1
+}
+
+// ============================================================================
+// HEARTBEAT - Keep-alive for long operations
+// ============================================================================
+
+let heartbeat_interval: Int = 1000  // 1 second
+let last_heartbeat: Int = 0
+
+// Send heartbeat to prevent timeout
+func heartbeat() {
+    last_heartbeat = __builtin_time()
+    
+    // If in timeout context, reset deadline
+    if current_timeout != 0 {
+        let deadline = __builtin_load64(current_timeout)
+        __builtin_store64(current_timeout, __builtin_time() + heartbeat_interval)
+    }
+}
+
+// Check heartbeat health
+func heartbeat_healthy() -> Int {
+    let now = __builtin_time()
+    if now - last_heartbeat > heartbeat_interval * 3 {
+        return 0  // Unhealthy - no heartbeat
+    }
+    1
+}

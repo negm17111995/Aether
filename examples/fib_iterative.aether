@@ -1,0 +1,23 @@
+// ITERATIVE FIBONACCI - O(n) instead of O(2^n)
+// This demonstrates what the compiler SHOULD optimize to
+
+func fib(n: Int) -> Int {
+    if n < 2 { return n }
+    
+    let a = 0
+    let b = 1
+    let i = 2
+    
+    while i <= n {
+        let temp = a + b
+        a = b
+        b = temp
+        i = i + 1
+    }
+    
+    b
+}
+
+func main(argc: Int, argv: Int) -> Int {
+    fib(40)
+}
