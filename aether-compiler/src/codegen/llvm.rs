@@ -407,6 +407,46 @@ impl LLVMCodeGen {
                             let ptr = self.gen_expr(&args[0]);
                             self.emit_load8(&ptr)
                         }
+                        "__builtin_store16" => {
+                            let ptr = self.gen_expr(&args[0]);
+                            let val = self.gen_expr(&args[1]);
+                            let ptr_cast = self.new_var();
+                            self.emit(&format!("{} = inttoptr i64 {} to i16*", ptr_cast, ptr));
+                            let val_trunc = self.new_var();
+                            self.emit(&format!("{} = trunc i64 {} to i16", val_trunc, val));
+                            self.emit(&format!("store i16 {}, i16* {}", val_trunc, ptr_cast));
+                            "0".to_string()
+                        }
+                        "__builtin_load16" => {
+                            let ptr = self.gen_expr(&args[0]);
+                            let ptr_cast = self.new_var();
+                            self.emit(&format!("{} = inttoptr i64 {} to i16*", ptr_cast, ptr));
+                            let val = self.new_var();
+                            self.emit(&format!("{} = load i16, i16* {}", val, ptr_cast));
+                            let result = self.new_var();
+                            self.emit(&format!("{} = zext i16 {} to i64", result, val));
+                            result
+                        }
+                        "__builtin_store32" => {
+                            let ptr = self.gen_expr(&args[0]);
+                            let val = self.gen_expr(&args[1]);
+                            let ptr_cast = self.new_var();
+                            self.emit(&format!("{} = inttoptr i64 {} to i32*", ptr_cast, ptr));
+                            let val_trunc = self.new_var();
+                            self.emit(&format!("{} = trunc i64 {} to i32", val_trunc, val));
+                            self.emit(&format!("store i32 {}, i32* {}", val_trunc, ptr_cast));
+                            "0".to_string()
+                        }
+                        "__builtin_load32" => {
+                            let ptr = self.gen_expr(&args[0]);
+                            let ptr_cast = self.new_var();
+                            self.emit(&format!("{} = inttoptr i64 {} to i32*", ptr_cast, ptr));
+                            let val = self.new_var();
+                            self.emit(&format!("{} = load i32, i32* {}", val, ptr_cast));
+                            let result = self.new_var();
+                            self.emit(&format!("{} = zext i32 {} to i64", result, val));
+                            result
+                        }
                         "__builtin_store64" => {
                             let ptr = self.gen_expr(&args[0]);
                             let val = self.gen_expr(&args[1]);
@@ -416,6 +456,19 @@ impl LLVMCodeGen {
                         "__builtin_load64" => {
                             let ptr = self.gen_expr(&args[0]);
                             self.emit_load64(&ptr)
+                        }
+                        "__builtin_socket" | "__builtin_connect" | "__builtin_bind" |
+                        "__builtin_listen" | "__builtin_accept" | "__builtin_read" |
+                        "__builtin_write" | "__builtin_close" | "__builtin_setsockopt" => {
+                            // Syscall builtins - generate call to libc
+                            let func_name = name.trim_start_matches("__builtin_");
+                            let arg_vals: Vec<String> = args.iter()
+                                .map(|a| self.gen_expr(a))
+                                .collect();
+                            let arg_refs: Vec<&str> = arg_vals.iter()
+                                .map(|s| s.as_str())
+                                .collect();
+                            self.emit_call(func_name, &arg_refs, "i64")
                         }
                         _ => {
                             // Regular function call

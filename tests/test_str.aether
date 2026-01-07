@@ -1,0 +1,32 @@
+// TEST: String Module
+// Tests string operations
+
+func strlen(s: Int) -> Int {
+    let i = 0
+    while __builtin_load8(s + i) != 0 { i = i + 1 }
+    i
+}
+
+func test_str() -> Int {
+    // Create a string "Hello"
+    let s = __builtin_malloc(16)
+    __builtin_store8(s, 72)     // H
+    __builtin_store8(s + 1, 101) // e
+    __builtin_store8(s + 2, 108) // l
+    __builtin_store8(s + 3, 108) // l
+    __builtin_store8(s + 4, 111) // o
+    __builtin_store8(s + 5, 0)   // null
+    
+    let len = strlen(s)
+    if len != 5 { return 1 }
+    
+    // Test first char
+    let first = __builtin_load8(s)
+    if first != 72 { return 2 }
+    
+    0 // Success
+}
+
+func main() -> Int {
+    test_str()
+}

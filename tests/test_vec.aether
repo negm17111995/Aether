@@ -1,0 +1,37 @@
+// TEST: Vector Module
+// Tests dynamic array operations
+
+func test_vec() -> Int {
+    // Create vector
+    let v = __builtin_malloc(24)  // [data, len, cap]
+    let data = __builtin_malloc(64)
+    __builtin_store64(v, data)     // data ptr
+    __builtin_store64(v + 8, 0)    // len = 0
+    __builtin_store64(v + 16, 8)   // cap = 8
+    
+    // Push elements
+    let len = __builtin_load64(v + 8)
+    let d = __builtin_load64(v)
+    __builtin_store64(d + len * 8, 100)
+    __builtin_store64(v + 8, len + 1)
+    
+    len = __builtin_load64(v + 8)
+    __builtin_store64(d + len * 8, 200)
+    __builtin_store64(v + 8, len + 1)
+    
+    // Verify
+    let first = __builtin_load64(d)
+    let second = __builtin_load64(d + 8)
+    
+    if first != 100 { return 1 }
+    if second != 200 { return 2 }
+    
+    let final_len = __builtin_load64(v + 8)
+    if final_len != 2 { return 3 }
+    
+    0 // Success
+}
+
+func main() -> Int {
+    test_vec()
+}

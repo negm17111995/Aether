@@ -1,0 +1,42 @@
+// TEST: Crypto primitives
+// Tests operations used in SHA-256
+
+func power2(n: Int) -> Int {
+    let result = 1
+    let i = 0
+    while i < n {
+        result = result * 2
+        i = i + 1
+    }
+    result
+}
+
+func test_crypto() -> Int {
+    // Test malloc
+    let buf = __builtin_malloc(64)
+    if buf == 0 { return 1 }
+    
+    // Store some data
+    __builtin_store32(buf, 0x12345678)
+    let v = __builtin_load32(buf)
+    if v != 0x12345678 { return 2 }
+    
+    // Test bit operations
+    let x = 100
+    let y = x * 2
+    if y != 200 { return 3 }
+    
+    // Test power2
+    let p = power2(8)
+    if p != 256 { return 4 }
+    
+    // Test modulo
+    let m = 1000 % 256
+    if m != 232 { return 5 }
+    
+    0 // Success
+}
+
+func main() -> Int {
+    test_crypto()
+}
