@@ -40,6 +40,10 @@ struct Args {
     #[arg(long)]
     emit_asm: bool,
 
+    /// Emit LLVM IR and use LLVM opt/llc for maximum optimization
+    #[arg(long)]
+    emit_llvm: bool,
+
     /// Enable debug info
     #[arg(short = 'g', long)]
     debug: bool,
@@ -118,7 +122,56 @@ fn main() -> anyhow::Result<()> {
     }
     
     // Emit
-    if args.emit_asm {
+    if args.emit_llvm {
+        // LLVM OPTIMIZATION PIPELINE
+        // Step 1: Generate LLVM IR
+        let ll_path = args.output.with_extension("ll");
+        let mut llvm_gen = codegen::llvm::LLVMCodeGen::new();
+        llvm_gen.emit_header();
+        
+        // Generate IR for each function using full codegen
+        for typed_decl in &typed_ast.decls {
+            llvm_gen.gen_function(&typed_decl.decl);
+        }
+        
+        std::fs::write(&ll_path, llvm_gen.get_ir())?;
+        println!("✓ Generated LLVM IR: {}", ll_path.display());
+        
+        // Step 2: Run opt -O3
+        let opt_path = args.output.with_extension("opt.ll");
+        let opt_status = std::process::Command::new("opt")
+            .args([&ll_path.to_string_lossy().to_string(), "-O3", "-S", "-o", &opt_path.to_string_lossy().to_string()])
+            .status();
+        
+        if let Ok(status) = opt_status {
+            if status.success() {
+                println!("✓ Optimized with LLVM opt -O3: {}", opt_path.display());
+            }
+        }
+        
+        // Step 3: Run llc to generate native code
+        let obj_path = args.output.with_extension("o");
+        let llc_status = std::process::Command::new("llc")
+            .args([&opt_path.to_string_lossy().to_string(), "-filetype=obj", "-o", &obj_path.to_string_lossy().to_string()])
+            .status();
+        
+        if let Ok(status) = llc_status {
+            if status.success() {
+                println!("✓ Generated object file: {}", obj_path.display());
+                
+                // Step 4: Link with clang
+                let link_status = std::process::Command::new("clang")
+                    .args([&obj_path.to_string_lossy().to_string(), "-o", &args.output.to_string_lossy().to_string()])
+                    .status();
+                
+                if let Ok(status) = link_status {
+                    if status.success() {
+                        println!("✓ Linked: {}", args.output.display());
+                    }
+                }
+            }
+        }
+    } else if args.emit_asm {
         let asm_path = args.output.with_extension("s");
         std::fs::write(&asm_path, codegen::disassemble(&code, &target))?;
         println!("Wrote assembly to {}", asm_path.display());

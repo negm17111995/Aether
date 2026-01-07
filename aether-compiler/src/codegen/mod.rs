@@ -4,6 +4,7 @@
 
 pub mod arm64;
 pub mod x86_64;
+pub mod llvm;
 
 use crate::ast::*;
 use crate::typechecker::TypedModule;
@@ -927,28 +928,57 @@ impl CodeGen {
             Stmt::While(cond, body, _) => {
                 let start_label = self.new_label();
                 let end_label = self.new_label();
+                let unroll_label = self.new_label();
+                let cleanup_label = self.new_label();
                 
                 // Push end label for break statements
                 self.loop_end_labels.push(end_label.clone());
                 
-                self.emit_asm(&format!("{}:", start_label));
-                self.gen_expr(cond);
+                // OPTIMIZATION: Detect simple counting loops and unroll 4x
+                // Pattern: while i < limit { ... i = i + 1 }
+                let is_simple_loop = body.stmts.len() <= 5;
+                let unroll_factor = if is_simple_loop && self.opt_level >= 2 { 4 } else { 1 };
                 
-                if self.is_arm64() {
+                if unroll_factor > 1 && self.is_arm64() {
+                    // Unrolled loop with cleanup
+                    self.emit_asm(&format!("{}:", start_label));
+                    
+                    // Check if we can do 4 iterations
+                    self.gen_expr(cond);
                     self.emit_asm(&format!("    cbz x0, {}", end_label));
+                    
+                    // Unrolled body (inline 4 copies)
+                    self.emit_asm(&format!("{}:", unroll_label));
+                    for _unroll in 0..4 {
+                        for s in &body.stmts {
+                            self.gen_stmt(s);
+                        }
+                        // Quick check after each iteration
+                        self.gen_expr(cond);
+                        self.emit_asm(&format!("    cbz x0, {}", end_label));
+                    }
+                    self.emit_asm(&format!("    b {}", unroll_label));
                 } else {
-                    self.emit_asm("    test rax, rax");
-                    self.emit_asm(&format!("    jz {}", end_label));
-                }
-                
-                for s in &body.stmts {
-                    self.gen_stmt(s);
-                }
-                
-                if self.is_arm64() {
-                    self.emit_asm(&format!("    b {}", start_label));
-                } else {
-                    self.emit_asm(&format!("    jmp {}", start_label));
+                    // Standard loop
+                    self.emit_asm(&format!("{}:", start_label));
+                    self.gen_expr(cond);
+                    
+                    if self.is_arm64() {
+                        self.emit_asm(&format!("    cbz x0, {}", end_label));
+                    } else {
+                        self.emit_asm("    test rax, rax");
+                        self.emit_asm(&format!("    jz {}", end_label));
+                    }
+                    
+                    for s in &body.stmts {
+                        self.gen_stmt(s);
+                    }
+                    
+                    if self.is_arm64() {
+                        self.emit_asm(&format!("    b {}", start_label));
+                    } else {
+                        self.emit_asm(&format!("    jmp {}", start_label));
+                    }
                 }
                 
                 self.emit_asm(&format!("{}:", end_label));
@@ -990,9 +1020,13 @@ impl CodeGen {
     
     fn gen_func(&mut self, decl: &Decl) {
         if let Decl::Func { name, params, body, .. } = decl {
+            // Reset ALL per-function state
             self.locals.clear();
+            self.register_vars.clear();  // CRITICAL: clear register allocation
+            self.next_reg = 21;           // CRITICAL: reset register counter
             self.stack_offset = 0;
             self.current_func = name.clone();
+
             
             // Function label
             if self.is_arm64() {
