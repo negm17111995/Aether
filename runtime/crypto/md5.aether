@@ -1,0 +1,416 @@
+// AETHER MD5 - Real MD5 Hash Implementation
+// RFC 1321 compliant - NO STUBS
+// Required for PostgreSQL MD5 authentication
+
+// ============================================================================
+// MD5 CONSTANTS (RFC 1321)
+// ============================================================================
+
+const MD5_A: Int = 0x67452301
+const MD5_B: Int = 0xefcdab89
+const MD5_C: Int = 0x98badcfe
+const MD5_D: Int = 0x10325476
+
+// Per-round shift amounts
+const S11: Int = 7
+const S12: Int = 12
+const S13: Int = 17
+const S14: Int = 22
+const S21: Int = 5
+const S22: Int = 9
+const S23: Int = 14
+const S24: Int = 20
+const S31: Int = 4
+const S32: Int = 11
+const S33: Int = 16
+const S34: Int = 23
+const S41: Int = 6
+const S42: Int = 10
+const S43: Int = 15
+const S44: Int = 21
+
+// T constants (sin table)
+const T1: Int = 0xd76aa478
+const T2: Int = 0xe8c7b756
+const T3: Int = 0x242070db
+const T4: Int = 0xc1bdceee
+const T5: Int = 0xf57c0faf
+const T6: Int = 0x4787c62a
+const T7: Int = 0xa8304613
+const T8: Int = 0xfd469501
+const T9: Int = 0x698098d8
+const T10: Int = 0x8b44f7af
+const T11: Int = 0xffff5bb1
+const T12: Int = 0x895cd7be
+const T13: Int = 0x6b901122
+const T14: Int = 0xfd987193
+const T15: Int = 0xa679438e
+const T16: Int = 0x49b40821
+const T17: Int = 0xf61e2562
+const T18: Int = 0xc040b340
+const T19: Int = 0x265e5a51
+const T20: Int = 0xe9b6c7aa
+const T21: Int = 0xd62f105d
+const T22: Int = 0x02441453
+const T23: Int = 0xd8a1e681
+const T24: Int = 0xe7d3fbc8
+const T25: Int = 0x21e1cde6
+const T26: Int = 0xc33707d6
+const T27: Int = 0xf4d50d87
+const T28: Int = 0x455a14ed
+const T29: Int = 0xa9e3e905
+const T30: Int = 0xfcefa3f8
+const T31: Int = 0x676f02d9
+const T32: Int = 0x8d2a4c8a
+const T33: Int = 0xfffa3942
+const T34: Int = 0x8771f681
+const T35: Int = 0x6d9d6122
+const T36: Int = 0xfde5380c
+const T37: Int = 0xa4beea44
+const T38: Int = 0x4bdecfa9
+const T39: Int = 0xf6bb4b60
+const T40: Int = 0xbebfbc70
+const T41: Int = 0x289b7ec6
+const T42: Int = 0xeaa127fa
+const T43: Int = 0xd4ef3085
+const T44: Int = 0x04881d05
+const T45: Int = 0xd9d4d039
+const T46: Int = 0xe6db99e5
+const T47: Int = 0x1fa27cf8
+const T48: Int = 0xc4ac5665
+const T49: Int = 0xf4292244
+const T50: Int = 0x432aff97
+const T51: Int = 0xab9423a7
+const T52: Int = 0xfc93a039
+const T53: Int = 0x655b59c3
+const T54: Int = 0x8f0ccc92
+const T55: Int = 0xffeff47d
+const T56: Int = 0x85845dd1
+const T57: Int = 0x6fa87e4f
+const T58: Int = 0xfe2ce6e0
+const T59: Int = 0xa3014314
+const T60: Int = 0x4e0811a1
+const T61: Int = 0xf7537e82
+const T62: Int = 0xbd3af235
+const T63: Int = 0x2ad7d2bb
+const T64: Int = 0xeb86d391
+
+// ============================================================================
+// BIT OPERATIONS
+// ============================================================================
+
+func md5_rotl(x: Int, n: Int) -> Int {
+    ((x << n) | ((x >> (32 - n)) & ((1 << n) - 1))) & 0xFFFFFFFF
+}
+
+func md5_f(x: Int, y: Int, z: Int) -> Int {
+    (x & y) | (((x ^ 0xFFFFFFFF) & 0xFFFFFFFF) & z)
+}
+
+func md5_g(x: Int, y: Int, z: Int) -> Int {
+    (x & z) | (y & ((z ^ 0xFFFFFFFF) & 0xFFFFFFFF))
+}
+
+func md5_h(x: Int, y: Int, z: Int) -> Int {
+    x ^ y ^ z
+}
+
+func md5_i(x: Int, y: Int, z: Int) -> Int {
+    y ^ (x | ((z ^ 0xFFFFFFFF) & 0xFFFFFFFF))
+}
+
+// ============================================================================
+// MD5 TRANSFORM
+// ============================================================================
+
+func md5_transform(state: Int, block: Int) {
+    let a = __builtin_load64(state)
+    let b = __builtin_load64(state + 8)
+    let c = __builtin_load64(state + 16)
+    let d = __builtin_load64(state + 24)
+    
+    // Load block as little-endian 32-bit words
+    let x0 = __builtin_load8(block) + __builtin_load8(block + 1) * 256 + __builtin_load8(block + 2) * 65536 + __builtin_load8(block + 3) * 16777216
+    let x1 = __builtin_load8(block + 4) + __builtin_load8(block + 5) * 256 + __builtin_load8(block + 6) * 65536 + __builtin_load8(block + 7) * 16777216
+    let x2 = __builtin_load8(block + 8) + __builtin_load8(block + 9) * 256 + __builtin_load8(block + 10) * 65536 + __builtin_load8(block + 11) * 16777216
+    let x3 = __builtin_load8(block + 12) + __builtin_load8(block + 13) * 256 + __builtin_load8(block + 14) * 65536 + __builtin_load8(block + 15) * 16777216
+    let x4 = __builtin_load8(block + 16) + __builtin_load8(block + 17) * 256 + __builtin_load8(block + 18) * 65536 + __builtin_load8(block + 19) * 16777216
+    let x5 = __builtin_load8(block + 20) + __builtin_load8(block + 21) * 256 + __builtin_load8(block + 22) * 65536 + __builtin_load8(block + 23) * 16777216
+    let x6 = __builtin_load8(block + 24) + __builtin_load8(block + 25) * 256 + __builtin_load8(block + 26) * 65536 + __builtin_load8(block + 27) * 16777216
+    let x7 = __builtin_load8(block + 28) + __builtin_load8(block + 29) * 256 + __builtin_load8(block + 30) * 65536 + __builtin_load8(block + 31) * 16777216
+    let x8 = __builtin_load8(block + 32) + __builtin_load8(block + 33) * 256 + __builtin_load8(block + 34) * 65536 + __builtin_load8(block + 35) * 16777216
+    let x9 = __builtin_load8(block + 36) + __builtin_load8(block + 37) * 256 + __builtin_load8(block + 38) * 65536 + __builtin_load8(block + 39) * 16777216
+    let x10 = __builtin_load8(block + 40) + __builtin_load8(block + 41) * 256 + __builtin_load8(block + 42) * 65536 + __builtin_load8(block + 43) * 16777216
+    let x11 = __builtin_load8(block + 44) + __builtin_load8(block + 45) * 256 + __builtin_load8(block + 46) * 65536 + __builtin_load8(block + 47) * 16777216
+    let x12 = __builtin_load8(block + 48) + __builtin_load8(block + 49) * 256 + __builtin_load8(block + 50) * 65536 + __builtin_load8(block + 51) * 16777216
+    let x13 = __builtin_load8(block + 52) + __builtin_load8(block + 53) * 256 + __builtin_load8(block + 54) * 65536 + __builtin_load8(block + 55) * 16777216
+    let x14 = __builtin_load8(block + 56) + __builtin_load8(block + 57) * 256 + __builtin_load8(block + 58) * 65536 + __builtin_load8(block + 59) * 16777216
+    let x15 = __builtin_load8(block + 60) + __builtin_load8(block + 61) * 256 + __builtin_load8(block + 62) * 65536 + __builtin_load8(block + 63) * 16777216
+    
+    // Round 1
+    a = (b + md5_rotl((a + md5_f(b, c, d) + x0 + T1) & 0xFFFFFFFF, S11)) & 0xFFFFFFFF
+    d = (a + md5_rotl((d + md5_f(a, b, c) + x1 + T2) & 0xFFFFFFFF, S12)) & 0xFFFFFFFF
+    c = (d + md5_rotl((c + md5_f(d, a, b) + x2 + T3) & 0xFFFFFFFF, S13)) & 0xFFFFFFFF
+    b = (c + md5_rotl((b + md5_f(c, d, a) + x3 + T4) & 0xFFFFFFFF, S14)) & 0xFFFFFFFF
+    a = (b + md5_rotl((a + md5_f(b, c, d) + x4 + T5) & 0xFFFFFFFF, S11)) & 0xFFFFFFFF
+    d = (a + md5_rotl((d + md5_f(a, b, c) + x5 + T6) & 0xFFFFFFFF, S12)) & 0xFFFFFFFF
+    c = (d + md5_rotl((c + md5_f(d, a, b) + x6 + T7) & 0xFFFFFFFF, S13)) & 0xFFFFFFFF
+    b = (c + md5_rotl((b + md5_f(c, d, a) + x7 + T8) & 0xFFFFFFFF, S14)) & 0xFFFFFFFF
+    a = (b + md5_rotl((a + md5_f(b, c, d) + x8 + T9) & 0xFFFFFFFF, S11)) & 0xFFFFFFFF
+    d = (a + md5_rotl((d + md5_f(a, b, c) + x9 + T10) & 0xFFFFFFFF, S12)) & 0xFFFFFFFF
+    c = (d + md5_rotl((c + md5_f(d, a, b) + x10 + T11) & 0xFFFFFFFF, S13)) & 0xFFFFFFFF
+    b = (c + md5_rotl((b + md5_f(c, d, a) + x11 + T12) & 0xFFFFFFFF, S14)) & 0xFFFFFFFF
+    a = (b + md5_rotl((a + md5_f(b, c, d) + x12 + T13) & 0xFFFFFFFF, S11)) & 0xFFFFFFFF
+    d = (a + md5_rotl((d + md5_f(a, b, c) + x13 + T14) & 0xFFFFFFFF, S12)) & 0xFFFFFFFF
+    c = (d + md5_rotl((c + md5_f(d, a, b) + x14 + T15) & 0xFFFFFFFF, S13)) & 0xFFFFFFFF
+    b = (c + md5_rotl((b + md5_f(c, d, a) + x15 + T16) & 0xFFFFFFFF, S14)) & 0xFFFFFFFF
+    
+    // Round 2
+    a = (b + md5_rotl((a + md5_g(b, c, d) + x1 + T17) & 0xFFFFFFFF, S21)) & 0xFFFFFFFF
+    d = (a + md5_rotl((d + md5_g(a, b, c) + x6 + T18) & 0xFFFFFFFF, S22)) & 0xFFFFFFFF
+    c = (d + md5_rotl((c + md5_g(d, a, b) + x11 + T19) & 0xFFFFFFFF, S23)) & 0xFFFFFFFF
+    b = (c + md5_rotl((b + md5_g(c, d, a) + x0 + T20) & 0xFFFFFFFF, S24)) & 0xFFFFFFFF
+    a = (b + md5_rotl((a + md5_g(b, c, d) + x5 + T21) & 0xFFFFFFFF, S21)) & 0xFFFFFFFF
+    d = (a + md5_rotl((d + md5_g(a, b, c) + x10 + T22) & 0xFFFFFFFF, S22)) & 0xFFFFFFFF
+    c = (d + md5_rotl((c + md5_g(d, a, b) + x15 + T23) & 0xFFFFFFFF, S23)) & 0xFFFFFFFF
+    b = (c + md5_rotl((b + md5_g(c, d, a) + x4 + T24) & 0xFFFFFFFF, S24)) & 0xFFFFFFFF
+    a = (b + md5_rotl((a + md5_g(b, c, d) + x9 + T25) & 0xFFFFFFFF, S21)) & 0xFFFFFFFF
+    d = (a + md5_rotl((d + md5_g(a, b, c) + x14 + T26) & 0xFFFFFFFF, S22)) & 0xFFFFFFFF
+    c = (d + md5_rotl((c + md5_g(d, a, b) + x3 + T27) & 0xFFFFFFFF, S23)) & 0xFFFFFFFF
+    b = (c + md5_rotl((b + md5_g(c, d, a) + x8 + T28) & 0xFFFFFFFF, S24)) & 0xFFFFFFFF
+    a = (b + md5_rotl((a + md5_g(b, c, d) + x13 + T29) & 0xFFFFFFFF, S21)) & 0xFFFFFFFF
+    d = (a + md5_rotl((d + md5_g(a, b, c) + x2 + T30) & 0xFFFFFFFF, S22)) & 0xFFFFFFFF
+    c = (d + md5_rotl((c + md5_g(d, a, b) + x7 + T31) & 0xFFFFFFFF, S23)) & 0xFFFFFFFF
+    b = (c + md5_rotl((b + md5_g(c, d, a) + x12 + T32) & 0xFFFFFFFF, S24)) & 0xFFFFFFFF
+    
+    // Round 3
+    a = (b + md5_rotl((a + md5_h(b, c, d) + x5 + T33) & 0xFFFFFFFF, S31)) & 0xFFFFFFFF
+    d = (a + md5_rotl((d + md5_h(a, b, c) + x8 + T34) & 0xFFFFFFFF, S32)) & 0xFFFFFFFF
+    c = (d + md5_rotl((c + md5_h(d, a, b) + x11 + T35) & 0xFFFFFFFF, S33)) & 0xFFFFFFFF
+    b = (c + md5_rotl((b + md5_h(c, d, a) + x14 + T36) & 0xFFFFFFFF, S34)) & 0xFFFFFFFF
+    a = (b + md5_rotl((a + md5_h(b, c, d) + x1 + T37) & 0xFFFFFFFF, S31)) & 0xFFFFFFFF
+    d = (a + md5_rotl((d + md5_h(a, b, c) + x4 + T38) & 0xFFFFFFFF, S32)) & 0xFFFFFFFF
+    c = (d + md5_rotl((c + md5_h(d, a, b) + x7 + T39) & 0xFFFFFFFF, S33)) & 0xFFFFFFFF
+    b = (c + md5_rotl((b + md5_h(c, d, a) + x10 + T40) & 0xFFFFFFFF, S34)) & 0xFFFFFFFF
+    a = (b + md5_rotl((a + md5_h(b, c, d) + x13 + T41) & 0xFFFFFFFF, S31)) & 0xFFFFFFFF
+    d = (a + md5_rotl((d + md5_h(a, b, c) + x0 + T42) & 0xFFFFFFFF, S32)) & 0xFFFFFFFF
+    c = (d + md5_rotl((c + md5_h(d, a, b) + x3 + T43) & 0xFFFFFFFF, S33)) & 0xFFFFFFFF
+    b = (c + md5_rotl((b + md5_h(c, d, a) + x6 + T44) & 0xFFFFFFFF, S34)) & 0xFFFFFFFF
+    a = (b + md5_rotl((a + md5_h(b, c, d) + x9 + T45) & 0xFFFFFFFF, S31)) & 0xFFFFFFFF
+    d = (a + md5_rotl((d + md5_h(a, b, c) + x12 + T46) & 0xFFFFFFFF, S32)) & 0xFFFFFFFF
+    c = (d + md5_rotl((c + md5_h(d, a, b) + x15 + T47) & 0xFFFFFFFF, S33)) & 0xFFFFFFFF
+    b = (c + md5_rotl((b + md5_h(c, d, a) + x2 + T48) & 0xFFFFFFFF, S34)) & 0xFFFFFFFF
+    
+    // Round 4
+    a = (b + md5_rotl((a + md5_i(b, c, d) + x0 + T49) & 0xFFFFFFFF, S41)) & 0xFFFFFFFF
+    d = (a + md5_rotl((d + md5_i(a, b, c) + x7 + T50) & 0xFFFFFFFF, S42)) & 0xFFFFFFFF
+    c = (d + md5_rotl((c + md5_i(d, a, b) + x14 + T51) & 0xFFFFFFFF, S43)) & 0xFFFFFFFF
+    b = (c + md5_rotl((b + md5_i(c, d, a) + x5 + T52) & 0xFFFFFFFF, S44)) & 0xFFFFFFFF
+    a = (b + md5_rotl((a + md5_i(b, c, d) + x12 + T53) & 0xFFFFFFFF, S41)) & 0xFFFFFFFF
+    d = (a + md5_rotl((d + md5_i(a, b, c) + x3 + T54) & 0xFFFFFFFF, S42)) & 0xFFFFFFFF
+    c = (d + md5_rotl((c + md5_i(d, a, b) + x10 + T55) & 0xFFFFFFFF, S43)) & 0xFFFFFFFF
+    b = (c + md5_rotl((b + md5_i(c, d, a) + x1 + T56) & 0xFFFFFFFF, S44)) & 0xFFFFFFFF
+    a = (b + md5_rotl((a + md5_i(b, c, d) + x8 + T57) & 0xFFFFFFFF, S41)) & 0xFFFFFFFF
+    d = (a + md5_rotl((d + md5_i(a, b, c) + x15 + T58) & 0xFFFFFFFF, S42)) & 0xFFFFFFFF
+    c = (d + md5_rotl((c + md5_i(d, a, b) + x6 + T59) & 0xFFFFFFFF, S43)) & 0xFFFFFFFF
+    b = (c + md5_rotl((b + md5_i(c, d, a) + x13 + T60) & 0xFFFFFFFF, S44)) & 0xFFFFFFFF
+    a = (b + md5_rotl((a + md5_i(b, c, d) + x4 + T61) & 0xFFFFFFFF, S41)) & 0xFFFFFFFF
+    d = (a + md5_rotl((d + md5_i(a, b, c) + x11 + T62) & 0xFFFFFFFF, S42)) & 0xFFFFFFFF
+    c = (d + md5_rotl((c + md5_i(d, a, b) + x2 + T63) & 0xFFFFFFFF, S43)) & 0xFFFFFFFF
+    b = (c + md5_rotl((b + md5_i(c, d, a) + x9 + T64) & 0xFFFFFFFF, S44)) & 0xFFFFFFFF
+    
+    // Update state
+    __builtin_store64(state, (__builtin_load64(state) + a) & 0xFFFFFFFF)
+    __builtin_store64(state + 8, (__builtin_load64(state + 8) + b) & 0xFFFFFFFF)
+    __builtin_store64(state + 16, (__builtin_load64(state + 16) + c) & 0xFFFFFFFF)
+    __builtin_store64(state + 24, (__builtin_load64(state + 24) + d) & 0xFFFFFFFF)
+}
+
+// ============================================================================
+// MD5 CONTEXT AND API
+// ============================================================================
+
+func md5_new() -> Int {
+    let ctx = __builtin_malloc(96)
+    __builtin_store64(ctx, MD5_A)      // A
+    __builtin_store64(ctx + 8, MD5_B)  // B
+    __builtin_store64(ctx + 16, MD5_C) // C
+    __builtin_store64(ctx + 24, MD5_D) // D
+    __builtin_store64(ctx + 32, __builtin_malloc(64)) // buffer
+    __builtin_store64(ctx + 40, 0)     // buflen
+    __builtin_store64(ctx + 48, 0)     // total_len
+    ctx
+}
+
+func md5_update(ctx: Int, data: Int, len: Int) {
+    let buffer = __builtin_load64(ctx + 32)
+    let buflen = __builtin_load64(ctx + 40)
+    let total = __builtin_load64(ctx + 48)
+    
+    let i = 0
+    while i < len {
+        __builtin_store8(buffer + buflen, __builtin_load8(data + i))
+        buflen = buflen + 1
+        
+        if buflen == 64 {
+            md5_transform(ctx, buffer)
+            buflen = 0
+        }
+        i = i + 1
+    }
+    
+    __builtin_store64(ctx + 40, buflen)
+    __builtin_store64(ctx + 48, total + len)
+}
+
+func md5_final(ctx: Int, hash: Int) {
+    let buffer = __builtin_load64(ctx + 32)
+    let buflen = __builtin_load64(ctx + 40)
+    let total = __builtin_load64(ctx + 48)
+    
+    // Padding
+    __builtin_store8(buffer + buflen, 0x80)
+    buflen = buflen + 1
+    
+    if buflen > 56 {
+        while buflen < 64 {
+            __builtin_store8(buffer + buflen, 0)
+            buflen = buflen + 1
+        }
+        md5_transform(ctx, buffer)
+        buflen = 0
+    }
+    
+    while buflen < 56 {
+        __builtin_store8(buffer + buflen, 0)
+        buflen = buflen + 1
+    }
+    
+    // Length in bits (little-endian)
+    let bits = total * 8
+    __builtin_store8(buffer + 56, bits % 256)
+    __builtin_store8(buffer + 57, (bits / 256) % 256)
+    __builtin_store8(buffer + 58, (bits / 65536) % 256)
+    __builtin_store8(buffer + 59, (bits / 16777216) % 256)
+    __builtin_store8(buffer + 60, (bits / 4294967296) % 256)
+    __builtin_store8(buffer + 61, (bits / 1099511627776) % 256)
+    __builtin_store8(buffer + 62, (bits / 281474976710656) % 256)
+    __builtin_store8(buffer + 63, (bits / 72057594037927936) % 256)
+    
+    md5_transform(ctx, buffer)
+    
+    // Write output (little-endian)
+    let a = __builtin_load64(ctx)
+    let b = __builtin_load64(ctx + 8)
+    let c = __builtin_load64(ctx + 16)
+    let d = __builtin_load64(ctx + 24)
+    
+    __builtin_store8(hash, a % 256)
+    __builtin_store8(hash + 1, (a / 256) % 256)
+    __builtin_store8(hash + 2, (a / 65536) % 256)
+    __builtin_store8(hash + 3, (a / 16777216) % 256)
+    __builtin_store8(hash + 4, b % 256)
+    __builtin_store8(hash + 5, (b / 256) % 256)
+    __builtin_store8(hash + 6, (b / 65536) % 256)
+    __builtin_store8(hash + 7, (b / 16777216) % 256)
+    __builtin_store8(hash + 8, c % 256)
+    __builtin_store8(hash + 9, (c / 256) % 256)
+    __builtin_store8(hash + 10, (c / 65536) % 256)
+    __builtin_store8(hash + 11, (c / 16777216) % 256)
+    __builtin_store8(hash + 12, d % 256)
+    __builtin_store8(hash + 13, (d / 256) % 256)
+    __builtin_store8(hash + 14, (d / 65536) % 256)
+    __builtin_store8(hash + 15, (d / 16777216) % 256)
+}
+
+// ============================================================================
+// HIGH-LEVEL API
+// ============================================================================
+
+func md5(data: Int, len: Int) -> Int {
+    let ctx = md5_new()
+    md5_update(ctx, data, len)
+    let hash = __builtin_malloc(16)
+    md5_final(ctx, hash)
+    hash
+}
+
+func md5_str(s: Int) -> Int {
+    let len = 0
+    while __builtin_load8(s + len) != 0 { len = len + 1 }
+    md5(s, len)
+}
+
+// Convert MD5 hash to hex string
+func md5_to_hex(hash: Int) -> Int {
+    let hex = __builtin_malloc(33)
+    let hex_chars = "0123456789abcdef"
+    
+    let i = 0
+    while i < 16 {
+        let b = __builtin_load8(hash + i)
+        __builtin_store8(hex + i * 2, __builtin_load8(hex_chars + (b / 16)))
+        __builtin_store8(hex + i * 2 + 1, __builtin_load8(hex_chars + (b % 16)))
+        i = i + 1
+    }
+    __builtin_store8(hex + 32, 0)
+    hex
+}
+
+// ============================================================================
+// POSTGRESQL MD5 AUTHENTICATION
+// Format: "md5" + md5(md5(password + username) + salt)
+// ============================================================================
+
+func pg_md5_auth(password: Int, username: Int, salt: Int) -> Int {
+    // Step 1: md5(password + username)
+    let pwd_len = 0
+    while __builtin_load8(password + pwd_len) != 0 { pwd_len = pwd_len + 1 }
+    let user_len = 0
+    while __builtin_load8(username + user_len) != 0 { user_len = user_len + 1 }
+    
+    let concat1 = __builtin_malloc(pwd_len + user_len + 1)
+    let i = 0
+    while i < pwd_len {
+        __builtin_store8(concat1 + i, __builtin_load8(password + i))
+        i = i + 1
+    }
+    let j = 0
+    while j < user_len {
+        __builtin_store8(concat1 + pwd_len + j, __builtin_load8(username + j))
+        j = j + 1
+    }
+    __builtin_store8(concat1 + pwd_len + user_len, 0)
+    
+    let hash1 = md5(concat1, pwd_len + user_len)
+    let hex1 = md5_to_hex(hash1)
+    
+    // Step 2: md5(hex_hash + salt)
+    let concat2 = __builtin_malloc(32 + 4 + 1)
+    i = 0
+    while i < 32 {
+        __builtin_store8(concat2 + i, __builtin_load8(hex1 + i))
+        i = i + 1
+    }
+    __builtin_store8(concat2 + 32, __builtin_load8(salt))
+    __builtin_store8(concat2 + 33, __builtin_load8(salt + 1))
+    __builtin_store8(concat2 + 34, __builtin_load8(salt + 2))
+    __builtin_store8(concat2 + 35, __builtin_load8(salt + 3))
+    
+    let hash2 = md5(concat2, 36)
+    let hex2 = md5_to_hex(hash2)
+    
+    // Step 3: Prepend "md5"
+    let result = __builtin_malloc(36)
+    __builtin_store8(result, 109)  // m
+    __builtin_store8(result + 1, 100)  // d
+    __builtin_store8(result + 2, 53)   // 5
+    i = 0
+    while i < 32 {
+        __builtin_store8(result + 3 + i, __builtin_load8(hex2 + i))
+        i = i + 1
+    }
+    __builtin_store8(result + 35, 0)
+    
+    result
+}

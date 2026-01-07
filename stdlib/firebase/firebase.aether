@@ -88,28 +88,112 @@ func auth_sign_in_anonymous(auth: Int) -> Int {
     let config = firebase_get_config(__builtin_load64(auth))
     let api_key = __builtin_load64(config + 8)
     
-    // Build REST API URL
+    // Build REST API request
     // POST https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=API_KEY
-    // Body: {"returnSecureToken": true}
     
-    // For now, create placeholder user
-    let user = __builtin_malloc(24)
-    __builtin_store64(user, 1)     // uid
-    __builtin_store64(user + 8, 0) // email
-    __builtin_store64(user + 16, 1) // is_anonymous
-    __builtin_store64(auth + 8, user)
+    // Connect to Google API via HTTPS
+    let tls = https_connect_hostname("identitytoolkit.googleapis.com")
+    if tls == 0 { return 0 }
+    
+    // Build HTTP POST request
+    let request = __builtin_malloc(2048)
+    let pos = 0
+    pos = pos + firebase_strcpy(request + pos, "POST /v1/accounts:signUp?key=")
+    pos = pos + firebase_strcpy(request + pos, api_key)
+    pos = pos + firebase_strcpy(request + pos, " HTTP/1.1\r\n")
+    pos = pos + firebase_strcpy(request + pos, "Host: identitytoolkit.googleapis.com\r\n")
+    pos = pos + firebase_strcpy(request + pos, "Content-Type: application/json\r\n")
+    pos = pos + firebase_strcpy(request + pos, "Content-Length: 27\r\n\r\n")
+    pos = pos + firebase_strcpy(request + pos, "{\"returnSecureToken\":true}")
+    
+    tls_send(tls, request, pos)
+    
+    // Read response
+    let response = __builtin_malloc(8192)
+    let resp_len = tls_recv(tls, response, 8192)
+    
+    // Parse JSON response for localId and idToken
+    let user = firebase_parse_auth_response(response, resp_len)
+    
+    if user != 0 {
+        __builtin_store64(user + 16, 1)  // is_anonymous = true
+        __builtin_store64(auth + 8, user)
+        
+        // Store id_token for future requests
+        let id_token = firebase_extract_json_field(response, "idToken")
+        __builtin_store64(auth + 16, id_token)
+        
+        let refresh_token = firebase_extract_json_field(response, "refreshToken")
+        __builtin_store64(auth + 24, refresh_token)
+    }
+    
+    tls_close(tls)
     user
 }
 
 func auth_sign_in_email(auth: Int, email: Int, password: Int) -> Int {
     let config = firebase_get_config(__builtin_load64(auth))
+    let api_key = __builtin_load64(config + 8)
+    
     // POST https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=API_KEY
     
-    let user = __builtin_malloc(24)
-    __builtin_store64(user, 2)       // uid
-    __builtin_store64(user + 8, email)
-    __builtin_store64(user + 16, 0)  // is_anonymous = false
-    __builtin_store64(auth + 8, user)
+    let tls = https_connect_hostname("identitytoolkit.googleapis.com")
+    if tls == 0 { return 0 }
+    
+    // Build JSON body
+    let body = __builtin_malloc(1024)
+    let bpos = 0
+    bpos = bpos + firebase_strcpy(body + bpos, "{\"email\":\"")
+    bpos = bpos + firebase_strcpy(body + bpos, email)
+    bpos = bpos + firebase_strcpy(body + bpos, "\",\"password\":\"")
+    bpos = bpos + firebase_strcpy(body + bpos, password)
+    bpos = bpos + firebase_strcpy(body + bpos, "\",\"returnSecureToken\":true}")
+    
+    // Build HTTP request
+    let request = __builtin_malloc(2048)
+    let pos = 0
+    pos = pos + firebase_strcpy(request + pos, "POST /v1/accounts:signInWithPassword?key=")
+    pos = pos + firebase_strcpy(request + pos, api_key)
+    pos = pos + firebase_strcpy(request + pos, " HTTP/1.1\r\n")
+    pos = pos + firebase_strcpy(request + pos, "Host: identitytoolkit.googleapis.com\r\n")
+    pos = pos + firebase_strcpy(request + pos, "Content-Type: application/json\r\n")
+    pos = pos + firebase_strcpy(request + pos, "Content-Length: ")
+    
+    // Convert body length to string
+    let len_str = firebase_int_to_str(bpos)
+    pos = pos + firebase_strcpy(request + pos, len_str)
+    pos = pos + firebase_strcpy(request + pos, "\r\n\r\n")
+    
+    // Append body
+    let i = 0
+    while i < bpos {
+        __builtin_store8(request + pos, __builtin_load8(body + i))
+        pos = pos + 1
+        i = i + 1
+    }
+    
+    tls_send(tls, request, pos)
+    
+    // Read response
+    let response = __builtin_malloc(8192)
+    let resp_len = tls_recv(tls, response, 8192)
+    
+    // Parse response
+    let user = firebase_parse_auth_response(response, resp_len)
+    
+    if user != 0 {
+        __builtin_store64(user + 8, email)
+        __builtin_store64(user + 16, 0)  // is_anonymous = false
+        __builtin_store64(auth + 8, user)
+        
+        let id_token = firebase_extract_json_field(response, "idToken")
+        __builtin_store64(auth + 16, id_token)
+        
+        let refresh_token = firebase_extract_json_field(response, "refreshToken")
+        __builtin_store64(auth + 24, refresh_token)
+    }
+    
+    tls_close(tls)
     user
 }
 
@@ -404,9 +488,10 @@ func cloudsql_send_password(conn: Int, password: Int) {
 }
 
 func cloudsql_send_md5_password(conn: Int, password: Int, salt: Int) {
-    // MD5(MD5(password + user) + salt)
-    // For now, use cleartext as fallback
-    cloudsql_send_password(conn, password)
+    // REAL MD5 authentication: "md5" + md5(md5(password + user) + salt)
+    let user = __builtin_load64(conn + 24)
+    let md5_pwd = pg_md5_auth(password, user, salt)
+    cloudsql_send_password(conn, md5_pwd)
 }
 
 func cloudsql_query(conn: Int, sql: Int) -> Int {
@@ -618,34 +703,11 @@ func tcp_connect_ip(ip_a: Int, ip_b: Int, ip_c: Int, ip_d: Int, port: Int) -> In
     fd
 }
 
-// TCP connect by hostname - for now uses hardcoded IPs for known hosts
-// In production, would need DNS resolution
+// TCP connect by hostname - uses DNS resolution
+// No hardcoded IPs - resolved dynamically
 func tcp_connect(host: Int, port: Int) -> Int {
-    // Check for common Firebase/Google hosts
-    // firebaseio.com -> 142.250.185.110 (Google IP)
-    // googleapis.com -> 142.250.185.110
-    // For local testing: localhost -> 127.0.0.1
-    
-    // Simple hostname check by first char
-    let c = __builtin_load8(host)
-    
-    // 'l' = localhost (127.0.0.1)
-    if c == 108 {
-        return tcp_connect_ip(127, 0, 0, 1, port)
-    }
-    
-    // 'f' = firebase (Google: 142.250.185.110)
-    if c == 102 {
-        return tcp_connect_ip(142, 250, 185, 110, port)
-    }
-    
-    // 'g' = googleapis (142.250.185.110)
-    if c == 103 {
-        return tcp_connect_ip(142, 250, 185, 110, port)
-    }
-    
-    // Default: try localhost
-    tcp_connect_ip(127, 0, 0, 1, port)
+    // Use DNS resolution for all hosts
+    tcp_connect_hostname(host, port)
 }
 
 // TCP send data

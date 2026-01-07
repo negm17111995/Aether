@@ -1,0 +1,399 @@
+// AETHER RSA - Real RSA Encryption Implementation
+// Required for TLS pre-master secret encryption
+// NO STUBS - Real modular exponentiation
+
+// ============================================================================
+// RSA CONSTANTS
+// ============================================================================
+
+const RSA_KEY_SIZE: Int = 2048
+const RSA_KEY_BYTES: Int = 256
+
+// ============================================================================
+// BIG INTEGER OPERATIONS (for RSA)
+// ============================================================================
+
+// Big integer structure: [len, data...]
+// Each word is 32-bit for simplicity
+
+func bigint_new(size: Int) -> Int {
+    let bi = __builtin_malloc(8 + size * 4)
+    __builtin_store64(bi, size)
+    let i = 0
+    while i < size {
+        __builtin_store32(bi + 8 + i * 4, 0)
+        i = i + 1
+    }
+    bi
+}
+
+func bigint_from_bytes(data: Int, len: Int) -> Int {
+    let words = (len + 3) / 4
+    let bi = bigint_new(words)
+    
+    // Convert big-endian bytes to little-endian words
+    let i = 0
+    while i < len {
+        let word_idx = (len - 1 - i) / 4
+        let byte_idx = (len - 1 - i) % 4
+        let word = __builtin_load32(bi + 8 + word_idx * 4)
+        let byte_val = __builtin_load8(data + i)
+        word = word | (byte_val << (byte_idx * 8))
+        __builtin_store32(bi + 8 + word_idx * 4, word)
+        i = i + 1
+    }
+    bi
+}
+
+func bigint_to_bytes(bi: Int, out: Int, len: Int) {
+    let words = __builtin_load64(bi)
+    
+    let i = 0
+    while i < len {
+        let word_idx = (len - 1 - i) / 4
+        let byte_idx = (len - 1 - i) % 4
+        let word = 0
+        if word_idx < words {
+            word = __builtin_load32(bi + 8 + word_idx * 4)
+        }
+        __builtin_store8(out + i, (word >> (byte_idx * 8)) & 0xFF)
+        i = i + 1
+    }
+}
+
+// Compare: returns -1 if a < b, 0 if a == b, 1 if a > b
+func bigint_cmp(a: Int, b: Int) -> Int {
+    let len_a = __builtin_load64(a)
+    let len_b = __builtin_load64(b)
+    
+    let max_len = len_a
+    if len_b > max_len { max_len = len_b }
+    
+    let i = max_len - 1
+    while i >= 0 {
+        let wa = 0
+        let wb = 0
+        if i < len_a { wa = __builtin_load32(a + 8 + i * 4) }
+        if i < len_b { wb = __builtin_load32(b + 8 + i * 4) }
+        if wa > wb { return 1 }
+        if wa < wb { return 0 - 1 }
+        i = i - 1
+    }
+    0
+}
+
+// Addition: c = a + b
+func bigint_add(a: Int, b: Int, c: Int) {
+    let len_a = __builtin_load64(a)
+    let len_b = __builtin_load64(b)
+    let len_c = __builtin_load64(c)
+    
+    let carry = 0
+    let i = 0
+    while i < len_c {
+        let wa = 0
+        let wb = 0
+        if i < len_a { wa = __builtin_load32(a + 8 + i * 4) }
+        if i < len_b { wb = __builtin_load32(b + 8 + i * 4) }
+        
+        let sum = wa + wb + carry
+        __builtin_store32(c + 8 + i * 4, sum & 0xFFFFFFFF)
+        carry = sum >> 32
+        i = i + 1
+    }
+}
+
+// Subtraction: c = a - b (assumes a >= b)
+func bigint_sub(a: Int, b: Int, c: Int) {
+    let len_a = __builtin_load64(a)
+    let len_b = __builtin_load64(b)
+    let len_c = __builtin_load64(c)
+    
+    let borrow = 0
+    let i = 0
+    while i < len_c {
+        let wa = 0
+        let wb = 0
+        if i < len_a { wa = __builtin_load32(a + 8 + i * 4) }
+        if i < len_b { wb = __builtin_load32(b + 8 + i * 4) }
+        
+        let diff = wa - wb - borrow
+        if diff < 0 {
+            diff = diff + 0x100000000
+            borrow = 1
+        } else {
+            borrow = 0
+        }
+        __builtin_store32(c + 8 + i * 4, diff)
+        i = i + 1
+    }
+}
+
+// Multiplication: c = a * b
+func bigint_mul(a: Int, b: Int, c: Int) {
+    let len_a = __builtin_load64(a)
+    let len_b = __builtin_load64(b)
+    let len_c = __builtin_load64(c)
+    
+    // Clear result
+    let k = 0
+    while k < len_c {
+        __builtin_store32(c + 8 + k * 4, 0)
+        k = k + 1
+    }
+    
+    let i = 0
+    while i < len_a {
+        let wa = __builtin_load32(a + 8 + i * 4)
+        let carry = 0
+        
+        let j = 0
+        while j < len_b && i + j < len_c {
+            let wb = __builtin_load32(b + 8 + j * 4)
+            let wc = __builtin_load32(c + 8 + (i + j) * 4)
+            
+            let prod = wa * wb + wc + carry
+            __builtin_store32(c + 8 + (i + j) * 4, prod & 0xFFFFFFFF)
+            carry = prod >> 32
+            j = j + 1
+        }
+        
+        if i + len_b < len_c {
+            let wc = __builtin_load32(c + 8 + (i + len_b) * 4)
+            __builtin_store32(c + 8 + (i + len_b) * 4, wc + carry)
+        }
+        i = i + 1
+    }
+}
+
+// Modular reduction: c = a mod m
+func bigint_mod(a: Int, m: Int, c: Int) {
+    let len_a = __builtin_load64(a)
+    let len_m = __builtin_load64(m)
+    let len_c = __builtin_load64(c)
+    
+    // Copy a to c
+    let i = 0
+    while i < len_c {
+        if i < len_a {
+            __builtin_store32(c + 8 + i * 4, __builtin_load32(a + 8 + i * 4))
+        } else {
+            __builtin_store32(c + 8 + i * 4, 0)
+        }
+        i = i + 1
+    }
+    
+    // Simple subtraction-based reduction
+    while bigint_cmp(c, m) >= 0 {
+        bigint_sub(c, m, c)
+    }
+}
+
+// Modular multiplication: c = (a * b) mod m
+func bigint_mulmod(a: Int, b: Int, m: Int, c: Int) {
+    let len = __builtin_load64(m)
+    let temp = bigint_new(len * 2)
+    bigint_mul(a, b, temp)
+    bigint_mod(temp, m, c)
+}
+
+// ============================================================================
+// MODULAR EXPONENTIATION (Square-and-multiply)
+// ============================================================================
+
+// result = base^exp mod mod
+func bigint_powmod(base: Int, exp: Int, mod: Int, result: Int) {
+    let len = __builtin_load64(mod)
+    let exp_len = __builtin_load64(exp)
+    
+    // Initialize result = 1
+    __builtin_store32(result + 8, 1)
+    let i = 1
+    while i < len {
+        __builtin_store32(result + 8 + i * 4, 0)
+        i = i + 1
+    }
+    
+    // Copy base for squaring
+    let sq = bigint_new(len)
+    i = 0
+    while i < len {
+        if i < __builtin_load64(base) {
+            __builtin_store32(sq + 8 + i * 4, __builtin_load32(base + 8 + i * 4))
+        }
+        i = i + 1
+    }
+    
+    let temp = bigint_new(len)
+    
+    // Process each bit of exponent
+    let word_idx = 0
+    while word_idx < exp_len {
+        let exp_word = __builtin_load32(exp + 8 + word_idx * 4)
+        let bit = 0
+        while bit < 32 {
+            if (exp_word >> bit) & 1 == 1 {
+                // result = result * sq mod mod
+                bigint_mulmod(result, sq, mod, temp)
+                // Copy temp to result
+                i = 0
+                while i < len {
+                    __builtin_store32(result + 8 + i * 4, __builtin_load32(temp + 8 + i * 4))
+                    i = i + 1
+                }
+            }
+            // sq = sq * sq mod mod
+            bigint_mulmod(sq, sq, mod, temp)
+            i = 0
+            while i < len {
+                __builtin_store32(sq + 8 + i * 4, __builtin_load32(temp + 8 + i * 4))
+                i = i + 1
+            }
+            bit = bit + 1
+        }
+        word_idx = word_idx + 1
+    }
+}
+
+// ============================================================================
+// RSA PUBLIC KEY ENCRYPTION
+// ============================================================================
+
+struct RsaPublicKey {
+    n: Int,      // Modulus (big integer)
+    e: Int,      // Public exponent (big integer)
+    key_size: Int,
+}
+
+func rsa_pubkey_new(n_bytes: Int, n_len: Int, e: Int) -> Int {
+    let key = __builtin_malloc(24)
+    
+    // Convert n to big integer
+    let n = bigint_from_bytes(n_bytes, n_len)
+    __builtin_store64(key, n)
+    
+    // e is usually 65537 (0x10001)
+    let e_bi = bigint_new(1)
+    __builtin_store32(e_bi + 8, e)
+    __builtin_store64(key + 8, e_bi)
+    
+    __builtin_store64(key + 16, n_len)
+    key
+}
+
+// RSA encrypt: ciphertext = plaintext^e mod n
+func rsa_encrypt(key: Int, plaintext: Int, pt_len: Int, ciphertext: Int) -> Int {
+    let n = __builtin_load64(key)
+    let e = __builtin_load64(key + 8)
+    let key_size = __builtin_load64(key + 16)
+    
+    // PKCS#1 v1.5 padding
+    // 0x00 0x02 [random non-zero bytes] 0x00 [message]
+    let padded = __builtin_malloc(key_size)
+    __builtin_store8(padded, 0)
+    __builtin_store8(padded + 1, 2)
+    
+    let pad_len = key_size - pt_len - 3
+    let i = 0
+    while i < pad_len {
+        // Random non-zero byte
+        let r = (tls_random() % 255) + 1
+        __builtin_store8(padded + 2 + i, r)
+        i = i + 1
+    }
+    __builtin_store8(padded + 2 + pad_len, 0)
+    
+    // Copy message
+    i = 0
+    while i < pt_len {
+        __builtin_store8(padded + 3 + pad_len + i, __builtin_load8(plaintext + i))
+        i = i + 1
+    }
+    
+    // Convert to big integer
+    let pt_bi = bigint_from_bytes(padded, key_size)
+    
+    // Encrypt: ct = pt^e mod n
+    let len = __builtin_load64(n)
+    let ct_bi = bigint_new(len)
+    bigint_powmod(pt_bi, e, n, ct_bi)
+    
+    // Convert back to bytes
+    bigint_to_bytes(ct_bi, ciphertext, key_size)
+    
+    key_size
+}
+
+// ============================================================================
+// TLS RSA KEY EXCHANGE
+// ============================================================================
+
+// Encrypt pre-master secret with server's RSA public key
+func tls_encrypt_premaster(premaster: Int, server_pubkey: Int, output: Int) -> Int {
+    rsa_encrypt(server_pubkey, premaster, 48, output)
+}
+
+// Parse RSA public key from X.509 certificate
+func tls_parse_certificate_pubkey(cert: Int, cert_len: Int) -> Int {
+    // Simplified X.509 parsing - find RSA modulus
+    // In real X.509, modulus is at specific ASN.1 offset
+    
+    // Look for RSA OID: 1.2.840.113549.1.1.1
+    let oid = __builtin_malloc(9)
+    __builtin_store8(oid, 0x2A)
+    __builtin_store8(oid + 1, 0x86)
+    __builtin_store8(oid + 2, 0x48)
+    __builtin_store8(oid + 3, 0x86)
+    __builtin_store8(oid + 4, 0xF7)
+    __builtin_store8(oid + 5, 0x0D)
+    __builtin_store8(oid + 6, 0x01)
+    __builtin_store8(oid + 7, 0x01)
+    __builtin_store8(oid + 8, 0x01)
+    
+    // Find OID in certificate
+    let i = 0
+    let found = 0
+    while i < cert_len - 9 && found == 0 {
+        let match = 1
+        let j = 0
+        while j < 9 && match == 1 {
+            if __builtin_load8(cert + i + j) != __builtin_load8(oid + j) {
+                match = 0
+            }
+            j = j + 1
+        }
+        if match == 1 {
+            found = i
+        }
+        i = i + 1
+    }
+    
+    if found == 0 { return 0 }
+    
+    // After OID, find BIT STRING containing public key
+    // Skip ahead to find modulus (typically 256 bytes for 2048-bit RSA)
+    i = found + 20
+    
+    // Look for modulus length marker
+    while i < cert_len - 3 {
+        if __builtin_load8(cert + i) == 0x02 {  // INTEGER tag
+            let len = __builtin_load8(cert + i + 1)
+            if len == 0x82 {  // Two-byte length
+                let mod_len = __builtin_load8(cert + i + 2) * 256 + __builtin_load8(cert + i + 3)
+                if mod_len >= 256 && mod_len <= 512 {
+                    // Found modulus
+                    let mod_start = i + 4
+                    if __builtin_load8(cert + mod_start) == 0 {
+                        // Skip leading zero
+                        mod_start = mod_start + 1
+                        mod_len = mod_len - 1
+                    }
+                    return rsa_pubkey_new(cert + mod_start, mod_len, 65537)
+                }
+            }
+        }
+        i = i + 1
+    }
+    
+    0
+}

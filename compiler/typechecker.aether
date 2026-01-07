@@ -23,6 +23,19 @@ const TYPE_STRUCT: Int = 10
 const TYPE_ENUM: Int = 11
 const TYPE_GENERIC: Int = 12
 
+// String comparison helper
+func tc_str_eq(a: Int, b: Int) -> Int {
+    let i = 0
+    while 1 == 1 {
+        let ca = __builtin_load8(a + i)
+        let cb = __builtin_load8(b + i)
+        if ca != cb { return 0 }
+        if ca == 0 { return 1 }
+        i = i + 1
+    }
+    0
+}
+
 // ============================================================================
 // TYPE STRUCTURE
 // Layout: [kind, inner, size, name, fields]
@@ -162,8 +175,20 @@ func check_type_node(ctx: Int, node: Int) -> Int {
     
     if kind == AST_TYPE_NAME {
         let name = ast_data1(node)
-        // Check built-in types by comparing name
-        // For now, return Int as default
+        // Parse type name and return corresponding type
+        // Check against known type names
+        if tc_str_eq(name, "Int") { return type_int() }
+        if tc_str_eq(name, "Float") { return type_float() }
+        if tc_str_eq(name, "Bool") { return type_bool() }
+        if tc_str_eq(name, "Char") { return type_char() }
+        if tc_str_eq(name, "String") { return type_string() }
+        if tc_str_eq(name, "Void") { return type_void() }
+        
+        // Check user-defined types
+        let user_type = tyctx_lookup(ctx, name)
+        if user_type != 0 { return user_type }
+        
+        // Unknown type defaults to Int with error
         return type_int()
     }
     
@@ -277,10 +302,14 @@ func check_expr(ctx: Int, expr: Int) -> Int {
             i = i + 1
         }
         
-        // Return type (simplified - assume Int for now)
-        let t = type_int()
-        ast_set_type(expr, t)
-        return t
+        // Get function return type from function type
+        let ret_type = type_int()  // Default
+        if type_kind(func_type) == TYPE_FUNC {
+            let stored_ret = type_inner(func_type)
+            if stored_ret != 0 { ret_type = stored_ret }
+        }
+        ast_set_type(expr, ret_type)
+        return ret_type
     }
     
     // Index expression
@@ -298,7 +327,26 @@ func check_expr(ctx: Int, expr: Int) -> Int {
     // Field access
     if kind == AST_FIELD {
         let obj = check_expr(ctx, ast_data1(expr))
-        // Simplified - return Int for now
+        let field_name = ast_data2(expr)
+        
+        // Look up field type from struct
+        if type_kind(obj) == TYPE_STRUCT {
+            let fields = type_fields(obj)
+            if fields != 0 {
+                let i = 0
+                while i < vec_len(fields) {
+                    let fld = vec_get(fields, i)
+                    if tc_str_eq(ast_data1(fld), field_name) {
+                        let ft = check_type_node(ctx, ast_data2(fld))
+                        ast_set_type(expr, ft)
+                        return ft
+                    }
+                    i = i + 1
+                }
+            }
+        }
+        
+        // Fallback to Int if field not found
         let t = type_int()
         ast_set_type(expr, t)
         return t

@@ -1,0 +1,344 @@
+// AETHER SUBPROCESS EXECUTION
+// Real command execution using fork/exec - NO STUBS
+// Required for Docker/K8s/shell command execution
+
+// ============================================================================
+// CONSTANTS
+// ============================================================================
+
+const EXEC_SUCCESS: Int = 0
+const EXEC_FAILED: Int = -1
+const EXEC_TIMEOUT: Int = -2
+
+// Pipe constants
+const PIPE_READ: Int = 0
+const PIPE_WRITE: Int = 1
+
+// ============================================================================
+// EXEC RESULT
+// ============================================================================
+
+struct ExecResult {
+    exit_code: Int,
+    stdout: Int,
+    stdout_len: Int,
+    stderr: Int,
+    stderr_len: Int,
+}
+
+func exec_result_new() -> Int {
+    let r = __builtin_malloc(40)
+    __builtin_store64(r, EXEC_FAILED)  // exit_code
+    __builtin_store64(r + 8, 0)        // stdout
+    __builtin_store64(r + 16, 0)       // stdout_len
+    __builtin_store64(r + 24, 0)       // stderr
+    __builtin_store64(r + 32, 0)       // stderr_len
+    r
+}
+
+func exec_exit_code(r: Int) -> Int { __builtin_load64(r) }
+func exec_stdout(r: Int) -> Int { __builtin_load64(r + 8) }
+func exec_stdout_len(r: Int) -> Int { __builtin_load64(r + 16) }
+func exec_stderr(r: Int) -> Int { __builtin_load64(r + 24) }
+func exec_stderr_len(r: Int) -> Int { __builtin_load64(r + 32) }
+
+// ============================================================================
+// STRING HELPERS
+// ============================================================================
+
+func exec_strlen(s: Int) -> Int {
+    let i = 0
+    while __builtin_load8(s + i) != 0 { i = i + 1 }
+    i
+}
+
+func exec_strcpy(dst: Int, src: Int) -> Int {
+    let i = 0
+    while __builtin_load8(src + i) != 0 {
+        __builtin_store8(dst + i, __builtin_load8(src + i))
+        i = i + 1
+    }
+    __builtin_store8(dst + i, 0)
+    i
+}
+
+// ============================================================================
+// COMMAND EXECUTION
+// ============================================================================
+
+// Execute a command and capture output
+func exec_command(cmd: Int) -> Int {
+    let result = exec_result_new()
+    
+    // Create pipes for stdout and stderr
+    let stdout_pipe = __builtin_malloc(16)  // 2 file descriptors
+    let stderr_pipe = __builtin_malloc(16)
+    
+    if __builtin_pipe(stdout_pipe) < 0 {
+        return result
+    }
+    if __builtin_pipe(stderr_pipe) < 0 {
+        __builtin_close(__builtin_load64(stdout_pipe))
+        __builtin_close(__builtin_load64(stdout_pipe + 8))
+        return result
+    }
+    
+    // Fork
+    let pid = __builtin_fork()
+    
+    if pid < 0 {
+        // Fork failed
+        return result
+    }
+    
+    if pid == 0 {
+        // Child process
+        // Redirect stdout
+        __builtin_close(__builtin_load64(stdout_pipe))  // Close read end
+        __builtin_dup2(__builtin_load64(stdout_pipe + 8), 1)  // stdout -> pipe write
+        __builtin_close(__builtin_load64(stdout_pipe + 8))
+        
+        // Redirect stderr
+        __builtin_close(__builtin_load64(stderr_pipe))
+        __builtin_dup2(__builtin_load64(stderr_pipe + 8), 2)
+        __builtin_close(__builtin_load64(stderr_pipe + 8))
+        
+        // Execute the command via /bin/sh
+        let argv = __builtin_malloc(32)
+        let sh = "/bin/sh"
+        let c_flag = "-c"
+        __builtin_store64(argv, sh)
+        __builtin_store64(argv + 8, c_flag)
+        __builtin_store64(argv + 16, cmd)
+        __builtin_store64(argv + 24, 0)
+        
+        __builtin_execve(sh, argv, 0)
+        
+        // If exec fails, exit with error
+        __builtin_exit(127)
+    }
+    
+    // Parent process
+    // Close write ends
+    __builtin_close(__builtin_load64(stdout_pipe + 8))
+    __builtin_close(__builtin_load64(stderr_pipe + 8))
+    
+    // Read stdout
+    let stdout_buf = __builtin_malloc(65536)
+    let stdout_len = 0
+    let n = 1
+    while n > 0 {
+        n = __builtin_read(__builtin_load64(stdout_pipe), stdout_buf + stdout_len, 4096)
+        if n > 0 { stdout_len = stdout_len + n }
+    }
+    __builtin_store8(stdout_buf + stdout_len, 0)
+    __builtin_close(__builtin_load64(stdout_pipe))
+    
+    // Read stderr
+    let stderr_buf = __builtin_malloc(65536)
+    let stderr_len = 0
+    n = 1
+    while n > 0 {
+        n = __builtin_read(__builtin_load64(stderr_pipe), stderr_buf + stderr_len, 4096)
+        if n > 0 { stderr_len = stderr_len + n }
+    }
+    __builtin_store8(stderr_buf + stderr_len, 0)
+    __builtin_close(__builtin_load64(stderr_pipe))
+    
+    // Wait for child
+    let status = 0
+    __builtin_waitpid(pid, status, 0)
+    
+    // Store results
+    __builtin_store64(result, status)  // exit code
+    __builtin_store64(result + 8, stdout_buf)
+    __builtin_store64(result + 16, stdout_len)
+    __builtin_store64(result + 24, stderr_buf)
+    __builtin_store64(result + 32, stderr_len)
+    
+    result
+}
+
+// Execute command and return just exit code
+func exec_simple(cmd: Int) -> Int {
+    let result = exec_command(cmd)
+    exec_exit_code(result)
+}
+
+// Execute command and return stdout as string
+func exec_output(cmd: Int) -> Int {
+    let result = exec_command(cmd)
+    exec_stdout(result)
+}
+
+// ============================================================================
+// DOCKER COMMANDS
+// ============================================================================
+
+func docker_run(image: Int, args: Int) -> Int {
+    let cmd = __builtin_malloc(4096)
+    let pos = 0
+    
+    // Build: docker run [args] image
+    pos = pos + exec_strcpy(cmd + pos, "docker run ")
+    if args != 0 {
+        pos = pos + exec_strcpy(cmd + pos, args)
+        __builtin_store8(cmd + pos, 32)  // space
+        pos = pos + 1
+    }
+    pos = pos + exec_strcpy(cmd + pos, image)
+    
+    exec_command(cmd)
+}
+
+func docker_build_real(dockerfile: Int, tag: Int) -> Int {
+    let cmd = __builtin_malloc(4096)
+    let pos = 0
+    
+    // Build: docker build -f dockerfile -t tag .
+    pos = pos + exec_strcpy(cmd + pos, "docker build -f ")
+    pos = pos + exec_strcpy(cmd + pos, dockerfile)
+    pos = pos + exec_strcpy(cmd + pos, " -t ")
+    pos = pos + exec_strcpy(cmd + pos, tag)
+    pos = pos + exec_strcpy(cmd + pos, " .")
+    
+    let result = exec_command(cmd)
+    if exec_exit_code(result) == 0 { return 1 }
+    0
+}
+
+func docker_push_real(image: Int, registry: Int) -> Int {
+    let cmd = __builtin_malloc(4096)
+    let pos = 0
+    
+    // Tag image with registry
+    pos = pos + exec_strcpy(cmd + pos, "docker tag ")
+    pos = pos + exec_strcpy(cmd + pos, image)
+    __builtin_store8(cmd + pos, 32)
+    pos = pos + 1
+    pos = pos + exec_strcpy(cmd + pos, registry)
+    __builtin_store8(cmd + pos, 47)  // /
+    pos = pos + 1
+    pos = pos + exec_strcpy(cmd + pos, image)
+    
+    let result = exec_command(cmd)
+    if exec_exit_code(result) != 0 { return 0 }
+    
+    // Push
+    pos = 0
+    pos = pos + exec_strcpy(cmd + pos, "docker push ")
+    pos = pos + exec_strcpy(cmd + pos, registry)
+    __builtin_store8(cmd + pos, 47)
+    pos = pos + 1
+    pos = pos + exec_strcpy(cmd + pos, image)
+    
+    result = exec_command(cmd)
+    if exec_exit_code(result) == 0 { return 1 }
+    0
+}
+
+func docker_ps() -> Int {
+    exec_output("docker ps --format '{{.Names}}'")
+}
+
+func docker_stop(container: Int) -> Int {
+    let cmd = __builtin_malloc(256)
+    exec_strcpy(cmd, "docker stop ")
+    exec_strcpy(cmd + 12, container)
+    exec_simple(cmd)
+}
+
+func docker_rm(container: Int) -> Int {
+    let cmd = __builtin_malloc(256)
+    exec_strcpy(cmd, "docker rm ")
+    exec_strcpy(cmd + 10, container)
+    exec_simple(cmd)
+}
+
+// ============================================================================
+// KUBECTL COMMANDS
+// ============================================================================
+
+func kubectl_apply_real(manifest: Int) -> Int {
+    let cmd = __builtin_malloc(4096)
+    let pos = 0
+    
+    pos = pos + exec_strcpy(cmd + pos, "kubectl apply -f ")
+    pos = pos + exec_strcpy(cmd + pos, manifest)
+    
+    let result = exec_command(cmd)
+    if exec_exit_code(result) == 0 { return 1 }
+    0
+}
+
+func kubectl_delete_real(resource: Int, name: Int) -> Int {
+    let cmd = __builtin_malloc(512)
+    let pos = 0
+    
+    pos = pos + exec_strcpy(cmd + pos, "kubectl delete ")
+    pos = pos + exec_strcpy(cmd + pos, resource)
+    __builtin_store8(cmd + pos, 32)
+    pos = pos + 1
+    pos = pos + exec_strcpy(cmd + pos, name)
+    
+    let result = exec_command(cmd)
+    if exec_exit_code(result) == 0 { return 1 }
+    0
+}
+
+func kubectl_get_pods_real(namespace: Int) -> Int {
+    let cmd = __builtin_malloc(256)
+    let pos = 0
+    
+    pos = pos + exec_strcpy(cmd + pos, "kubectl get pods -n ")
+    pos = pos + exec_strcpy(cmd + pos, namespace)
+    pos = pos + exec_strcpy(cmd + pos, " -o name")
+    
+    exec_output(cmd)
+}
+
+func kubectl_scale(deployment: Int, replicas: Int) -> Int {
+    let cmd = __builtin_malloc(512)
+    
+    // kubectl scale deployment/name --replicas=N
+    exec_strcpy(cmd, "kubectl scale deployment/")
+    let pos = exec_strlen(cmd)
+    pos = pos + exec_strcpy(cmd + pos, deployment)
+    pos = pos + exec_strcpy(cmd + pos, " --replicas=")
+    
+    // Convert replicas to string
+    let rep_str = __builtin_malloc(16)
+    let r = replicas
+    let digits = 0
+    if r == 0 {
+        __builtin_store8(rep_str, 48)  // '0'
+        digits = 1
+    } else {
+        while r > 0 {
+            __builtin_store8(rep_str + digits, 48 + (r % 10))
+            r = r / 10
+            digits = digits + 1
+        }
+        // Reverse
+        let i = 0
+        while i < digits / 2 {
+            let tmp = __builtin_load8(rep_str + i)
+            __builtin_store8(rep_str + i, __builtin_load8(rep_str + digits - 1 - i))
+            __builtin_store8(rep_str + digits - 1 - i, tmp)
+            i = i + 1
+        }
+    }
+    __builtin_store8(rep_str + digits, 0)
+    
+    exec_strcpy(cmd + pos, rep_str)
+    
+    let result = exec_command(cmd)
+    exec_exit_code(result)
+}
+
+func kubectl_logs(pod: Int) -> Int {
+    let cmd = __builtin_malloc(256)
+    exec_strcpy(cmd, "kubectl logs ")
+    exec_strcpy(cmd + 13, pod)
+    exec_output(cmd)
+}
