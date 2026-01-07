@@ -77,6 +77,8 @@ impl LLVMCodeGen {
         self.emit_raw("declare i64 @open(i8*, i32, i32)");
         self.emit_raw("declare i64 @close(i32)");
         self.emit_raw("declare i8* @mmap(i8*, i64, i32, i32, i32, i64)");
+        self.emit_raw("declare i32 @pthread_create(i64*, i8*, i8* (i8*)*, i8*)");
+        self.emit_raw("declare i32 @pthread_join(i64, i8**)");
         self.emit_raw("");
     }
     
@@ -266,6 +268,33 @@ impl LLVMCodeGen {
     pub fn get_local(&self, name: &str) -> Option<&String> {
         self.locals.get(name)
     }
+
+    /// Generate native thread spawn
+    pub fn gen_spawn(&mut self, func_name: &str, arg: &str) -> String {
+        // 1. Allocate thread ID
+        let tid_ptr = self.new_var();
+        self.emit(&format!("{} = alloca i64", tid_ptr));
+        
+        // 2. Cast thread function to correct signature: i8* (i8*)*
+        // Aether functions are i64 (i64), so we need a wrapper or cast
+        // For v1, we assume the target function accepts i64 and returns i64
+        let func_cast = self.new_var();
+        self.emit(&format!("{} = bitcast i64 (i64)* @{} to i8* (i8*)*", func_cast, func_name));
+        
+        // 3. Cast argument to void* (i8*)
+        let arg_cast = self.new_var();
+        self.emit(&format!("{} = inttoptr i64 {} to i8*", arg_cast, arg));
+        
+        // 4. Call pthread_create(tid_ptr, NULL, func, arg)
+        let result = self.new_var();
+        self.emit(&format!("{} = call i32 @pthread_create(i64* {}, i8* null, i8* (i8*)* {}, i8* {})",
+            result, tid_ptr, func_cast, arg_cast));
+            
+        // Return thread ID
+        let tid_load = self.new_var();
+        self.emit(&format!("{} = load i64, i64* {}", tid_load, tid_ptr));
+        tid_load
+    }
 }
 
 // ============================================================================
@@ -432,6 +461,21 @@ impl LLVMCodeGen {
                 // End
                 self.emit_label(&end_label);
                 then_val
+            }
+            
+            Expr::Spawn(func, args, _) => {
+                if let Expr::Ident(name, _) = func.as_ref() {
+                    // Currently assume single argument for v1 simple spawn
+                    let arg_val = if !args.is_empty() {
+                        self.gen_expr(&args[0])
+                    } else {
+                        "0".to_string()
+                    };
+                    
+                    self.gen_spawn(name, &arg_val)
+                } else {
+                    "0".to_string()
+                }
             }
             
             _ => "0".to_string(),

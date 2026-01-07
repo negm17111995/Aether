@@ -124,6 +124,8 @@ pub enum Expr {
     Match(Box<Expr>, Vec<MatchArm>, Span),
     /// Path: module::item
     Path(Vec<String>, Span),
+    /// Spawn thread: spawn(func, args)
+    Spawn(Box<Expr>, Vec<Expr>, Span),
 }
 
 impl Expr {
@@ -134,7 +136,7 @@ impl Expr {
             Expr::Unary(_, _, s) | Expr::Call(_, _, s) | Expr::Field(_, _, s) |
             Expr::Index(_, _, s) | Expr::Array(_, s) | Expr::Struct(_, _, s) |
             Expr::If(_, _, _, s) | Expr::Lambda(_, _, _, s) | Expr::Match(_, _, s) |
-            Expr::MethodCall(_, _, _, s) | Expr::Path(_, s) => *s,
+            Expr::MethodCall(_, _, _, s) | Expr::Path(_, s) | Expr::Spawn(_, _, s) => *s,
         }
     }
 }
