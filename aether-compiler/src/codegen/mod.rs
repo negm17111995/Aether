@@ -137,6 +137,8 @@ impl CodeGen {
                     BinOp::BitAnd => l & r,
                     BinOp::BitOr => l | r,
                     BinOp::BitXor => l ^ r,
+                    BinOp::Shl => l << r,
+                    BinOp::Shr => l >> r,
                     _ => return None,
                 })
             }
@@ -351,6 +353,8 @@ impl CodeGen {
                         BinOp::BitAnd => self.emit_asm("    and x0, x0, x1"),
                         BinOp::BitOr => self.emit_asm("    orr x0, x0, x1"),
                         BinOp::BitXor => self.emit_asm("    eor x0, x0, x1"),
+                        BinOp::Shl => self.emit_asm("    lsl x0, x0, x1"),
+                        BinOp::Shr => self.emit_asm("    lsr x0, x0, x1"),
                     }
                 } else {
                     self.emit_asm("    mov rcx, rax");
@@ -404,6 +408,8 @@ impl CodeGen {
                         BinOp::BitAnd => self.emit_asm("    and rax, rcx"),
                         BinOp::BitOr => self.emit_asm("    or rax, rcx"),
                         BinOp::BitXor => self.emit_asm("    xor rax, rcx"),
+                        BinOp::Shl => self.emit_asm("    shl rax, cl"),
+                        BinOp::Shr => self.emit_asm("    shr rax, cl"),
                     }
                 }
             }

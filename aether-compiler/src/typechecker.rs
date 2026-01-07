@@ -126,7 +126,7 @@ impl TypeChecker {
                     }
                     BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge |
                     BinOp::And | BinOp::Or => Type::Named("Bool".into()),
-                    BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor => lt,
+                    BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => lt,
                 }
             }
             

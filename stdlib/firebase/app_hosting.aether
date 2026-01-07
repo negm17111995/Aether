@@ -173,6 +173,9 @@ func apphosting_deploy(ah: Int, source_dir: Int) -> Int {
     pos = pos + 1
     __builtin_store8(buf + pos, 47)   // /
     pos = pos + 1
+    buf
+}
+
 // REAL DEPLOYMENT using Firebase CLI
 func apphosting_deploy_real(ah: Int, source_dir: Int) -> Int {
     let project = __builtin_load64(ah)

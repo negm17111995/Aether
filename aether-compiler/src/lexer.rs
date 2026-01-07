@@ -68,6 +68,8 @@ pub enum TokenKind {
     Arrow,
     FatArrow,
     ColonColon,
+    Shl,  // <<
+    Shr,  // >>
     
     // Delimiters
     LParen,
@@ -361,11 +363,13 @@ impl<'a> Lexer<'a> {
                 else { self.make_token(TokenKind::Bang) }
             }
             '<' => {
-                if self.match_char('=') { self.make_token(TokenKind::Le) }
+                if self.match_char('<') { self.make_token(TokenKind::Shl) }
+                else if self.match_char('=') { self.make_token(TokenKind::Le) }
                 else { self.make_token(TokenKind::Lt) }
             }
             '>' => {
-                if self.match_char('=') { self.make_token(TokenKind::Ge) }
+                if self.match_char('>') { self.make_token(TokenKind::Shr) }
+                else if self.match_char('=') { self.make_token(TokenKind::Ge) }
                 else { self.make_token(TokenKind::Gt) }
             }
             '&' => {

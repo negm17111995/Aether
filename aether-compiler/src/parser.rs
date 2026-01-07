@@ -321,8 +321,9 @@ impl<'a> Parser<'a> {
             TokenKind::Amp => 5,
             TokenKind::EqEq | TokenKind::Ne => 6,
             TokenKind::Lt | TokenKind::Le | TokenKind::Gt | TokenKind::Ge => 7,
-            TokenKind::Plus | TokenKind::Minus => 8,
-            TokenKind::Star | TokenKind::Slash | TokenKind::Percent => 9,
+            TokenKind::Shl | TokenKind::Shr => 8,
+            TokenKind::Plus | TokenKind::Minus => 9,
+            TokenKind::Star | TokenKind::Slash | TokenKind::Percent => 10,
             _ => 0,
         }
     }
@@ -345,6 +346,8 @@ impl<'a> Parser<'a> {
             TokenKind::Amp => Some(BinOp::BitAnd),
             TokenKind::Pipe => Some(BinOp::BitOr),
             TokenKind::Caret => Some(BinOp::BitXor),
+            TokenKind::Shl => Some(BinOp::Shl),
+            TokenKind::Shr => Some(BinOp::Shr),
             _ => None,
         }
     }
@@ -727,6 +730,24 @@ impl<'a> Parser<'a> {
         Ok(Decl::Const { name, ty, value, public, span })
     }
     
+    fn parse_static(&mut self, public: bool) -> Result<Decl> {
+        let span = self.span();
+        self.expect(TokenKind::Let)?;
+        let mutable = self.match_tok(TokenKind::Mut);
+        let name = self.expect(TokenKind::Ident)?.lexeme.clone();
+        let ty = if self.match_tok(TokenKind::Colon) {
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+        let value = if self.match_tok(TokenKind::Eq) {
+            Some(self.parse_expr()?)
+        } else {
+            None
+        };
+        Ok(Decl::Static { name, ty, value, mutable, public, span })
+    }
+    
     fn parse_decl(&mut self) -> Result<Decl> {
         let public = self.match_tok(TokenKind::Pub);
         
@@ -736,6 +757,7 @@ impl<'a> Parser<'a> {
             TokenKind::Enum => self.parse_enum(public),
             TokenKind::Import => self.parse_import(),
             TokenKind::Const => self.parse_const(public),
+            TokenKind::Let => self.parse_static(public),
             TokenKind::Trait => self.parse_trait(public),
             TokenKind::Impl => self.parse_impl(),
             TokenKind::Type => self.parse_type_alias(public),

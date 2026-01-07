@@ -78,7 +78,7 @@ impl fmt::Display for Type {
 pub enum BinOp {
     Add, Sub, Mul, Div, Mod,
     Eq, Ne, Lt, Le, Gt, Ge,
-    And, Or, BitAnd, BitOr, BitXor,
+    And, Or, BitAnd, BitOr, BitXor, Shl, Shr,
 }
 
 /// Unary operators
@@ -291,6 +291,15 @@ pub enum Decl {
         alias: Option<String>,
         span: Span,
     },
+    /// Static/global mutable variable
+    Static {
+        name: String,
+        ty: Option<Type>,
+        value: Option<Expr>,
+        mutable: bool,
+        public: bool,
+        span: Span,
+    },
 }
 
 impl Decl {
@@ -298,7 +307,8 @@ impl Decl {
         match self {
             Decl::Func { name, .. } | Decl::Struct { name, .. } |
             Decl::Enum { name, .. } | Decl::Trait { name, .. } |
-            Decl::Const { name, .. } | Decl::TypeAlias { name, .. } => Some(name),
+            Decl::Const { name, .. } | Decl::TypeAlias { name, .. } |
+            Decl::Static { name, .. } => Some(name),
             Decl::Impl { type_name, .. } => Some(type_name),
             Decl::Import { .. } => None,
         }

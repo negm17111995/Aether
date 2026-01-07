@@ -368,6 +368,16 @@ impl LLVMCodeGen {
                         self.emit(&format!("{} = xor i64 {}, {}", result, l, r));
                         result
                     }
+                    BinOp::Shl => {
+                        let result = self.new_var();
+                        self.emit(&format!("{} = shl i64 {}, {}", result, l, r));
+                        result
+                    }
+                    BinOp::Shr => {
+                        let result = self.new_var();
+                        self.emit(&format!("{} = lshr i64 {}, {}", result, l, r));
+                        result
+                    }
                 }
             }
             
