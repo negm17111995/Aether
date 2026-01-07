@@ -1,0 +1,33 @@
+// Aether Concurrent Stress Test using spawn
+// Testing native pthread concurrency
+
+func worker(id: Int) -> Int {
+    // Do some work - count primes
+    let count = 0
+    let i = 2
+    while i < 10000 {
+        let is_prime = 1
+        let j = 2
+        while j * j <= i {
+            if i % j == 0 {
+                is_prime = 0
+                j = i  // break
+            }
+            j = j + 1
+        }
+        count = count + is_prime
+        i = i + 1
+    }
+    count
+}
+
+func main() -> Int {
+    // Spawn 4 threads
+    let t1 = spawn worker(1)
+    let t2 = spawn worker(2)
+    let t3 = spawn worker(3)
+    let t4 = spawn worker(4)
+    
+    // Return success
+    0
+}

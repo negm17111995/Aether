@@ -40,6 +40,7 @@ pub enum TokenKind {
     Self_,
     Match,
     Parallel,
+    Spawn,
     
     // Operators
     Plus,
@@ -153,6 +154,7 @@ impl<'a> Lexer<'a> {
         keywords.insert("false", TokenKind::False);
         keywords.insert("match", TokenKind::Match);
         keywords.insert("parallel", TokenKind::Parallel);
+        keywords.insert("spawn", TokenKind::Spawn);
         
         Lexer {
             source,

@@ -221,6 +221,18 @@ impl<'a> Parser<'a> {
             return Ok(iter);
         }
         
+        // Spawn expression: spawn func(args) - creates new thread
+        if self.match_tok(TokenKind::Spawn) {
+            let func = self.parse_postfix()?;
+            // func should be a Call expression with args inside, or just an ident
+            if let Expr::Call(callee, args, _) = func {
+                return Ok(Expr::Spawn(callee, args, span));
+            } else {
+                // spawn func - no args
+                return Ok(Expr::Spawn(Box::new(func), vec![], span));
+            }
+        }
+        
         // If expression
         if self.check(TokenKind::If) {
             return self.parse_if_expr();
