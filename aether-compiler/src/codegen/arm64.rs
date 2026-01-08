@@ -1,29 +1,72 @@
-/// Emit optimized function prologue - Safe + Registers
-/// Saves ALL callee-saved registers to allow register allocation
-pub fn emit_prologue(asm: &mut String) {
-    // Save/Restore all callee-saved registers (x19-x28)
-    // This allows us to use them for variables freely
-    asm.push_str("    stp x29, x30, [sp, #-96]!\n");
+/// Emit adaptive function prologue
+/// Saves minimal registers and allocates exact stack needed
+pub fn emit_adaptive_prologue(asm: &mut String, regs_used: u32, locals_size: i32) {
+    // Calculate save area size
+    // Base: x29, x30, x19, x20 = 4 registers (32 bytes)
+    // Extra pairs: (regs_used + 1) / 2 * 16 bytes
+    // e.g. regs_used=1 (x21) -> 1 pair (x21,x22) -> +16 bytes -> Total 48
+    let extra_pairs = (regs_used + 1) / 2;
+    let save_area_size = 32 + (extra_pairs * 16);
+    
+    // Total frame (must be 16-byte aligned)
+    let total_frame = save_area_size + (locals_size as u32);
+    let total_frame = (total_frame + 15) & !15; // Align up to 16
+    
+    // Allocate stack and save FP/LR
+    asm.push_str(&format!("    stp x29, x30, [sp, #-{}]!\n", total_frame));
     asm.push_str("    stp x19, x20, [sp, #16]\n");
-    asm.push_str("    stp x21, x22, [sp, #32]\n");
-    asm.push_str("    stp x23, x24, [sp, #48]\n");
-    asm.push_str("    stp x25, x26, [sp, #64]\n");
-    asm.push_str("    stp x27, x28, [sp, #80]\n");
+    
+    // Save extra registers
+    if regs_used > 0 {
+        asm.push_str("    stp x21, x22, [sp, #32]\n");
+    }
+    if regs_used > 2 {
+        asm.push_str("    stp x23, x24, [sp, #48]\n");
+    }
+    if regs_used > 4 {
+        asm.push_str("    stp x25, x26, [sp, #64]\n");
+    }
+    if regs_used > 6 {
+        asm.push_str("    stp x27, x28, [sp, #80]\n");
+    }
+    
     asm.push_str("    mov x29, sp\n");
-    // Allocate space for locals (safe buffer)
-    asm.push_str("    sub sp, sp, #128\n");
 }
 
-/// Emit optimized function epilogue
-pub fn emit_epilogue(asm: &mut String, _stack_size: i32) {
-    asm.push_str("    add sp, sp, #128\n");
-    asm.push_str("    ldp x27, x28, [sp, #80]\n");
-    asm.push_str("    ldp x25, x26, [sp, #64]\n");
-    asm.push_str("    ldp x23, x24, [sp, #48]\n");
-    asm.push_str("    ldp x21, x22, [sp, #32]\n");
+/// Emit adaptive function epilogue
+pub fn emit_adaptive_epilogue(asm: &mut String, locals_size: i32, regs_used: u32) {
+    // Re-calculate frame size to deallocate correctly
+    let extra_pairs = (regs_used + 1) / 2;
+    let save_area_size = 32 + (extra_pairs * 16);
+    let total_frame = save_area_size + (locals_size as u32);
+    let total_frame = (total_frame + 15) & !15;
+
+    // Restore registers
+    if regs_used > 6 {
+        asm.push_str("    ldp x27, x28, [sp, #80]\n");
+    }
+    if regs_used > 4 {
+        asm.push_str("    ldp x25, x26, [sp, #64]\n");
+    }
+    if regs_used > 2 {
+        asm.push_str("    ldp x23, x24, [sp, #48]\n");
+    }
+    if regs_used > 0 {
+        asm.push_str("    ldp x21, x22, [sp, #32]\n");
+    }
+    
     asm.push_str("    ldp x19, x20, [sp, #16]\n");
-    asm.push_str("    ldp x29, x30, [sp], #96\n");
+    asm.push_str(&format!("    ldp x29, x30, [sp], #{}\n", total_frame));
     asm.push_str("    ret\n");
+}
+
+pub fn emit_prologue(_asm: &mut String) {
+    // Deprecated for internal use, kept for compatibility if needed
+    panic!("Use adaptive prologue");
+}
+
+pub fn emit_epilogue(_asm: &mut String, _stack: i32) {
+    panic!("Use adaptive epilogue");
 }
 
 

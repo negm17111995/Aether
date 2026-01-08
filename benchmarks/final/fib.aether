@@ -4,6 +4,8 @@ func fib(n: Int) -> Int {
 }
 func main() -> Int {
     let r = fib(40)
-    __builtin_print(r)
+    if r == 102334155 {
+        return 42
+    }
     0
 }

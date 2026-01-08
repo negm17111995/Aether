@@ -874,7 +874,8 @@ impl CodeGen {
                     self.gen_expr(v);
                 }
                 if self.is_arm64() {
-                    arm64::emit_epilogue(&mut self.asm, self.stack_offset);
+                    // Jump to common epilogue (adaptive)
+                    self.emit_asm(&format!("    b .Lret_{}", self.current_func));
                 } else {
                     x86_64::emit_epilogue(&mut self.asm, self.stack_offset);
                 }
@@ -900,13 +901,55 @@ impl CodeGen {
                 }
                 
                 if !used_tbnz {
-                    self.gen_expr(cond);
-                    
+                    // OPTIMIZATION: Detect simple comparison to avoid cset/cbz overhead
+                    // Pattern: if x <= y ...
+                    let mut optimized_cmp = false;
                     if self.is_arm64() {
-                        self.emit_asm(&format!("    cbz x0, {}", else_label));
-                    } else {
-                        self.emit_asm("    test rax, rax");
-                        self.emit_asm(&format!("    jz {}", else_label));
+                        if let Expr::Binary(op, left, right, _) = cond {
+                            match op {
+                                BinOp::Le | BinOp::Lt | BinOp::Ge | BinOp::Gt | BinOp::Eq | BinOp::Ne => {
+                                    self.gen_expr(left);
+                                    // Save left (in x0) to temp x0? No, we need to compare
+                                    // Wait, gen_expr puts result in x0.
+                                    // We need to compare x0 with right.
+                                    // But gen_expr(right) might clobber x0.
+                                    // We need to push x0 or move to temp.
+                                    
+                                    // Better strategy: Just optimize 'n <= constant'
+                                    if let Expr::Int(rval, _) = right.as_ref() {
+                                        if *rval >= 0 && *rval < 4096 {
+                                            // cmp x0, #imm
+                                            self.emit_asm(&format!("    cmp x0, #{}", rval));
+                                            
+                                            // Branch to ELSE if condition is FALSE
+                                            let branch_instr = match op {
+                                                BinOp::Le => "b.gt", // False: >
+                                                BinOp::Lt => "b.ge", // False: >=
+                                                BinOp::Ge => "b.lt", // False: <
+                                                BinOp::Gt => "b.le", // False: <=
+                                                BinOp::Eq => "b.ne", // False: !=
+                                                BinOp::Ne => "b.eq", // False: ==
+                                                _ => "cbz", // Fallback
+                                            };
+                                            self.emit_asm(&format!("    {} {}", branch_instr, else_label));
+                                            optimized_cmp = true;
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+
+                    if !optimized_cmp {
+                        self.gen_expr(cond);
+                        
+                        if self.is_arm64() {
+                            self.emit_asm(&format!("    cbz x0, {}", else_label));
+                        } else {
+                            self.emit_asm("    test rax, rax");
+                            self.emit_asm(&format!("    jz {}", else_label));
+                        }
                     }
                 }
                 
@@ -1040,14 +1083,16 @@ impl CodeGen {
                 self.emit_asm(&format!(".global _{}", name));
                 self.emit_asm(".align 4");
                 self.emit_asm(&format!("_{}:", name));
-                arm64::emit_prologue(&mut self.asm);
-                
-                // (Hardcoded x20 optimization removed in favor of register allocator)
             } else {
                 self.emit_asm(&format!(".global {}", name));
                 self.emit_asm(&format!("{}:", name));
-                x86_64::emit_prologue(&mut self.asm);
+                x86_64::emit_prologue(&mut self.asm); // Standard prologue for x86 still
             }
+
+            // BUFFERING: Temporarily swap self.asm to buffer body
+            // This allows us to know exactly how many registers were used before emitting prologue
+            let mut body_asm = String::new();
+            std::mem::swap(&mut self.asm, &mut body_asm);
             
             // Store parameters (for access by name)
             let param_regs_arm = ["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"];
@@ -1062,15 +1107,10 @@ impl CodeGen {
                 };
 
                 if let Some(reg) = reg_allocated {
-                    // Parameter is in register!
-                    // Move from argument register (x0..x7) to allocated register (x21..)
                     if i < param_regs_arm.len() {
                         self.emit_asm(&format!("    mov {}, {}", reg, param_regs_arm[i]));
-                    } else {
-                        // Stack argument (not handled yet for >8 params in this optimization)
                     }
                 } else {
-                    // Fallback to stack
                     let off = self.alloc_local(&param.name);
                     if self.is_arm64() && i < param_regs_arm.len() {
                         arm64::emit_store_local(&mut self.asm, param_regs_arm[i], off);
@@ -1085,10 +1125,29 @@ impl CodeGen {
                 self.gen_stmt(stmt);
             }
             
-            // Epilogue (return value should already be in x0/rax from expression)
-            if self.is_arm64() {
-                arm64::emit_epilogue(&mut self.asm, self.stack_offset);
-            } else {
+                // Capture generated body and restore main asm
+                std::mem::swap(&mut self.asm, &mut body_asm);
+                
+                // NOW we emit the prologue because we know register usage!
+                if self.is_arm64() {
+                    // Determine how many registers we used (start was 21)
+                    let regs_used = self.next_reg - 21; 
+                    // Calculate locals size (stack_offset starts at 16)
+                    let locals_size = if self.stack_offset > 16 { self.stack_offset - 16 } else { 0 };
+                    
+                    arm64::emit_adaptive_prologue(&mut self.asm, regs_used as u32, locals_size);
+                    
+                    // Append the buffered body
+                    self.asm.push_str(&body_asm);
+                    
+                    // Common return label
+                    self.emit_asm(&format!(".Lret_{}:", name));
+                    
+                    // Emit matching epilogue
+                    arm64::emit_adaptive_epilogue(&mut self.asm, locals_size, regs_used as u32);
+                } else {
+                // x86 path unchanged (already emitted prologue above)
+                self.asm.push_str(&body_asm);
                 x86_64::emit_epilogue(&mut self.asm, self.stack_offset);
             }
         }
