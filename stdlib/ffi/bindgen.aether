@@ -1,0 +1,814 @@
+// AETHER BINDGEN - C Header to Aether Signature Generator
+// Parses C headers and generates Aether FFI bindings
+// Zero runtime overhead - all generated code uses direct syscalls
+//
+// Usage:
+//   let bindings = bindgen_parse_header("/usr/include/stdio.h")
+//   let aether_code = bindgen_generate(bindings)
+//   bindgen_emit(aether_code, "stdio.aether")
+
+import runtime.vec
+import runtime.str
+import runtime.types
+
+// ============================================================================
+// BINDGEN CONSTANTS
+// ============================================================================
+
+const BINDGEN_MAGIC: Int = 0x42494E44     // "BIND"
+
+// C type categories
+const C_TYPE_VOID: Int = 0
+const C_TYPE_CHAR: Int = 1
+const C_TYPE_SHORT: Int = 2
+const C_TYPE_INT: Int = 3
+const C_TYPE_LONG: Int = 4
+const C_TYPE_FLOAT: Int = 5
+const C_TYPE_DOUBLE: Int = 6
+const C_TYPE_PTR: Int = 7
+const C_TYPE_STRUCT: Int = 8
+const C_TYPE_ENUM: Int = 9
+const C_TYPE_FUNC: Int = 10
+
+// ============================================================================
+// C TYPE REPRESENTATION
+// ============================================================================
+
+// C Type structure: [category, name_ptr, size, is_unsigned, pointee_type]
+const C_TYPE_SIZE: Int = 40
+
+func c_type_new(category: Int, name: Int, size: Int, is_unsigned: Int) -> Int {
+    let t = __builtin_malloc(C_TYPE_SIZE)
+    __builtin_store64(t, category)
+    __builtin_store64(t + 8, name)
+    __builtin_store64(t + 16, size)
+    __builtin_store64(t + 24, is_unsigned)
+    __builtin_store64(t + 32, 0)  // pointee (for pointers)
+    t
+}
+
+func c_type_category(t: Int) -> Int { __builtin_load64(t) }
+func c_type_name(t: Int) -> Int { __builtin_load64(t + 8) }
+func c_type_size(t: Int) -> Int { __builtin_load64(t + 16) }
+func c_type_unsigned(t: Int) -> Int { __builtin_load64(t + 24) }
+func c_type_pointee(t: Int) -> Int { __builtin_load64(t + 32) }
+
+func c_type_set_pointee(t: Int, pointee: Int) { __builtin_store64(t + 32, pointee) }
+
+// Map C types to Aether types
+func c_type_to_aether(c_type: Int) -> Int {
+    let cat = c_type_category(c_type)
+    
+    // All C integer types map to Int in Aether
+    if cat == C_TYPE_CHAR { return str_dup("Int") }
+    if cat == C_TYPE_SHORT { return str_dup("Int") }
+    if cat == C_TYPE_INT { return str_dup("Int") }
+    if cat == C_TYPE_LONG { return str_dup("Int") }
+    
+    // Floating point maps to Float
+    if cat == C_TYPE_FLOAT { return str_dup("Float") }
+    if cat == C_TYPE_DOUBLE { return str_dup("Float") }
+    
+    // Pointers map to MemPtr (Int at runtime)
+    if cat == C_TYPE_PTR { return str_dup("Int") }
+    
+    // Void returns nothing
+    if cat == C_TYPE_VOID { return 0 }
+    
+    // Structs and enums become Int (pointer to struct)
+    if cat == C_TYPE_STRUCT { return str_dup("Int") }
+    if cat == C_TYPE_ENUM { return str_dup("Int") }
+    
+    str_dup("Int")  // Default
+}
+
+// ============================================================================
+// C FUNCTION DECLARATION
+// ============================================================================
+
+// Function decl: [name_ptr, return_type, params_vec, is_variadic]
+const C_FUNC_SIZE: Int = 32
+
+func c_func_new(name: Int, ret_type: Int, params: Int, is_variadic: Int) -> Int {
+    let f = __builtin_malloc(C_FUNC_SIZE)
+    __builtin_store64(f, name)
+    __builtin_store64(f + 8, ret_type)
+    __builtin_store64(f + 16, params)
+    __builtin_store64(f + 24, is_variadic)
+    f
+}
+
+func c_func_name(f: Int) -> Int { __builtin_load64(f) }
+func c_func_return(f: Int) -> Int { __builtin_load64(f + 8) }
+func c_func_params(f: Int) -> Int { __builtin_load64(f + 16) }
+func c_func_variadic(f: Int) -> Int { __builtin_load64(f + 24) }
+
+// ============================================================================
+// C STRUCT DECLARATION
+// ============================================================================
+
+// Struct decl: [name_ptr, fields_vec, total_size]
+const C_STRUCT_SIZE: Int = 24
+
+func c_struct_new(name: Int, fields: Int, size: Int) -> Int {
+    let s = __builtin_malloc(C_STRUCT_SIZE)
+    __builtin_store64(s, name)
+    __builtin_store64(s + 8, fields)
+    __builtin_store64(s + 16, size)
+    s
+}
+
+func c_struct_name(s: Int) -> Int { __builtin_load64(s) }
+func c_struct_fields(s: Int) -> Int { __builtin_load64(s + 8) }
+func c_struct_size(s: Int) -> Int { __builtin_load64(s + 16) }
+
+// ============================================================================
+// C CONSTANT/DEFINE
+// ============================================================================
+
+// Constant: [name_ptr, value, is_string]
+const C_CONST_SIZE: Int = 24
+
+func c_const_new(name: Int, value: Int, is_string: Int) -> Int {
+    let c = __builtin_malloc(C_CONST_SIZE)
+    __builtin_store64(c, name)
+    __builtin_store64(c + 8, value)
+    __builtin_store64(c + 16, is_string)
+    c
+}
+
+func c_const_name(c: Int) -> Int { __builtin_load64(c) }
+func c_const_value(c: Int) -> Int { __builtin_load64(c + 8) }
+func c_const_is_string(c: Int) -> Int { __builtin_load64(c + 16) }
+
+// ============================================================================
+// BINDINGS COLLECTION
+// ============================================================================
+
+// Bindings: [magic, functions_vec, structs_vec, constants_vec, library_name]
+const BINDINGS_SIZE: Int = 40
+
+func bindings_new(library_name: Int) -> Int {
+    let b = __builtin_malloc(BINDINGS_SIZE)
+    __builtin_store64(b, BINDGEN_MAGIC)
+    __builtin_store64(b + 8, vec_new())   // functions
+    __builtin_store64(b + 16, vec_new())  // structs
+    __builtin_store64(b + 24, vec_new())  // constants
+    __builtin_store64(b + 32, library_name)
+    b
+}
+
+func bindings_functions(b: Int) -> Int { __builtin_load64(b + 8) }
+func bindings_structs(b: Int) -> Int { __builtin_load64(b + 16) }
+func bindings_constants(b: Int) -> Int { __builtin_load64(b + 24) }
+func bindings_library(b: Int) -> Int { __builtin_load64(b + 32) }
+
+func bindings_add_function(b: Int, f: Int) {
+    vec_push(bindings_functions(b), f)
+}
+
+func bindings_add_struct(b: Int, s: Int) {
+    vec_push(bindings_structs(b), s)
+}
+
+func bindings_add_constant(b: Int, c: Int) {
+    vec_push(bindings_constants(b), c)
+}
+
+// ============================================================================
+// HEADER PARSING
+// ============================================================================
+
+// Parse a C header file and extract declarations
+func bindgen_parse_header(path: Int) -> Int {
+    // Read the header file
+    let content = file_read_all(path)
+    if content == 0 { return 0 }
+    
+    let bindings = bindings_new(path)
+    
+    // Parse the content
+    let len = str_len(content)
+    let pos = 0
+    
+    while pos < len {
+        // Skip whitespace and comments
+        pos = skip_whitespace_and_comments(content, pos, len)
+        if pos >= len { break }
+        
+        // Try to parse different declaration types
+        let result = try_parse_define(content, pos, len, bindings)
+        if result > pos {
+            pos = result
+            continue
+        }
+        
+        result = try_parse_typedef(content, pos, len, bindings)
+        if result > pos {
+            pos = result
+            continue
+        }
+        
+        result = try_parse_function(content, pos, len, bindings)
+        if result > pos {
+            pos = result
+            continue
+        }
+        
+        result = try_parse_struct(content, pos, len, bindings)
+        if result > pos {
+            pos = result
+            continue
+        }
+        
+        // Skip to next line if nothing matched
+        pos = skip_to_next_line(content, pos, len)
+    }
+    
+    bindings
+}
+
+// Skip whitespace and C-style comments
+func skip_whitespace_and_comments(s: Int, pos: Int, len: Int) -> Int {
+    while pos < len {
+        let ch = ae_load8(s + pos)
+        
+        // Whitespace
+        if ch == 32 || ch == 9 || ch == 10 || ch == 13 {
+            pos = pos + 1
+            continue
+        }
+        
+        // Check for comments
+        if ch == 47 && pos + 1 < len {  // '/'
+            let next = ae_load8(s + pos + 1)
+            
+            // Line comment //
+            if next == 47 {
+                pos = skip_to_next_line(s, pos, len)
+                continue
+            }
+            
+            // Block comment /*
+            if next == 42 {
+                pos = pos + 2
+                while pos + 1 < len {
+                    if ae_load8(s + pos) == 42 && ae_load8(s + pos + 1) == 47 {
+                        pos = pos + 2
+                        break
+                    }
+                    pos = pos + 1
+                }
+                continue
+            }
+        }
+        
+        break
+    }
+    pos
+}
+
+// Skip to next line
+func skip_to_next_line(s: Int, pos: Int, len: Int) -> Int {
+    while pos < len {
+        if ae_load8(s + pos) == 10 {  // '\n'
+            return pos + 1
+        }
+        pos = pos + 1
+    }
+    len
+}
+
+// Try to parse #define
+func try_parse_define(s: Int, pos: Int, len: Int, bindings: Int) -> Int {
+    // Check for #define
+    if ae_load8(s + pos) != 35 { return pos }  // '#'
+    if !str_starts_at(s, pos + 1, "define") { return pos }
+    
+    let start = pos + 8
+    start = skip_whitespace(s, start, len)
+    
+    // Parse name
+    let name_start = start
+    while start < len {
+        let ch = ae_load8(s + start)
+        if !is_identifier_char(ch) { break }
+        start = start + 1
+    }
+    let name = str_slice(s, name_start, start - name_start)
+    
+    start = skip_whitespace(s, start, len)
+    
+    // Parse value (until newline)
+    let value_start = start
+    while start < len && ae_load8(s + start) != 10 {
+        start = start + 1
+    }
+    let value_str = str_slice(s, value_start, start - value_start)
+    let value = str_to_int(value_str)
+    
+    let c = c_const_new(name, value, 0)
+    bindings_add_constant(bindings, c)
+    
+    start
+}
+
+// Try to parse function declaration
+func try_parse_function(s: Int, pos: Int, len: Int, bindings: Int) -> Int {
+    // Simple function pattern: type name(params);
+    let start = pos
+    
+    // Parse return type
+    let ret_type = parse_c_type(s, start, len)
+    if ret_type == 0 { return pos }
+    
+    start = skip_whitespace(s, start + type_token_len(s, start, len), len)
+    
+    // Parse function name
+    let name_start = start
+    while start < len && is_identifier_char(ae_load8(s + start)) {
+        start = start + 1
+    }
+    if start == name_start { return pos }
+    let name = str_slice(s, name_start, start - name_start)
+    
+    start = skip_whitespace(s, start, len)
+    
+    // Expect (
+    if ae_load8(s + start) != 40 { return pos }  // '('
+    start = start + 1
+    
+    // Parse parameters
+    let params = vec_new()
+    while start < len {
+        start = skip_whitespace(s, start, len)
+        
+        // Check for )
+        if ae_load8(s + start) == 41 {  // ')'
+            start = start + 1
+            break
+        }
+        
+        // Check for ...
+        if ae_load8(s + start) == 46 && ae_load8(s + start + 1) == 46 {
+            // Variadic
+            start = start + 3
+            continue
+        }
+        
+        // Parse parameter type
+        let param_type = parse_c_type(s, start, len)
+        if param_type != 0 {
+            vec_push(params, param_type)
+            start = start + type_token_len(s, start, len)
+        }
+        
+        // Skip parameter name
+        start = skip_whitespace(s, start, len)
+        while start < len && is_identifier_char(ae_load8(s + start)) {
+            start = start + 1
+        }
+        
+        // Skip comma or )
+        start = skip_whitespace(s, start, len)
+        if ae_load8(s + start) == 44 {  // ','
+            start = start + 1
+        }
+    }
+    
+    // Expect ;
+    start = skip_whitespace(s, start, len)
+    if ae_load8(s + start) != 59 { return pos }  // ';'
+    start = start + 1
+    
+    let f = c_func_new(name, ret_type, params, 0)
+    bindings_add_function(bindings, f)
+    
+    start
+}
+
+// Try to parse struct
+func try_parse_struct(s: Int, pos: Int, len: Int, bindings: Int) -> Int {
+    if !str_starts_at(s, pos, "struct") { return pos }
+    
+    let start = pos + 6
+    start = skip_whitespace(s, start, len)
+    
+    // Parse struct name
+    let name_start = start
+    while start < len && is_identifier_char(ae_load8(s + start)) {
+        start = start + 1
+    }
+    let name = str_slice(s, name_start, start - name_start)
+    
+    start = skip_whitespace(s, start, len)
+    
+    // Check for { for definition
+    if ae_load8(s + start) != 123 { return pos }  // '{'
+    start = start + 1
+    
+    let fields = vec_new()
+    let total_size = 0
+    
+    // Parse fields
+    while start < len {
+        start = skip_whitespace_and_comments(s, start, len)
+        
+        if ae_load8(s + start) == 125 {  // '}'
+            start = start + 1
+            break
+        }
+        
+        // Parse field type
+        let field_type = parse_c_type(s, start, len)
+        if field_type != 0 {
+            vec_push(fields, field_type)
+            total_size = total_size + c_type_size(field_type)
+            start = start + type_token_len(s, start, len)
+        }
+        
+        // Skip field name
+        start = skip_whitespace(s, start, len)
+        while start < len && is_identifier_char(ae_load8(s + start)) {
+            start = start + 1
+        }
+        
+        // Skip to ;
+        while start < len && ae_load8(s + start) != 59 {
+            start = start + 1
+        }
+        start = start + 1
+    }
+    
+    // Skip to final ;
+    start = skip_whitespace(s, start, len)
+    if ae_load8(s + start) == 59 {
+        start = start + 1
+    }
+    
+    let st = c_struct_new(name, fields, total_size)
+    bindings_add_struct(bindings, st)
+    
+    start
+}
+
+// Try to parse typedef
+func try_parse_typedef(s: Int, pos: Int, len: Int, bindings: Int) -> Int {
+    if !str_starts_at(s, pos, "typedef") { return pos }
+    
+    // Skip to semicolon for now (simplified)
+    let start = pos
+    while start < len && ae_load8(s + start) != 59 {
+        start = start + 1
+    }
+    start + 1
+}
+
+// Parse a C type
+func parse_c_type(s: Int, pos: Int, len: Int) -> Int {
+    let start = pos
+    
+    // Skip const, volatile, etc.
+    if str_starts_at(s, start, "const") { start = start + 5 }
+    if str_starts_at(s, start, "volatile") { start = start + 8 }
+    start = skip_whitespace(s, start, len)
+    
+    // Check for unsigned
+    let is_unsigned = 0
+    if str_starts_at(s, start, "unsigned") {
+        is_unsigned = 1
+        start = start + 8
+        start = skip_whitespace(s, start, len)
+    }
+    
+    // Parse base type
+    if str_starts_at(s, start, "void") {
+        return c_type_new(C_TYPE_VOID, str_dup("void"), 0, 0)
+    }
+    if str_starts_at(s, start, "char") {
+        return c_type_new(C_TYPE_CHAR, str_dup("char"), 1, is_unsigned)
+    }
+    if str_starts_at(s, start, "short") {
+        return c_type_new(C_TYPE_SHORT, str_dup("short"), 2, is_unsigned)
+    }
+    if str_starts_at(s, start, "int") {
+        return c_type_new(C_TYPE_INT, str_dup("int"), 4, is_unsigned)
+    }
+    if str_starts_at(s, start, "long") {
+        return c_type_new(C_TYPE_LONG, str_dup("long"), 8, is_unsigned)
+    }
+    if str_starts_at(s, start, "float") {
+        return c_type_new(C_TYPE_FLOAT, str_dup("float"), 4, 0)
+    }
+    if str_starts_at(s, start, "double") {
+        return c_type_new(C_TYPE_DOUBLE, str_dup("double"), 8, 0)
+    }
+    
+    0  // Unknown type
+}
+
+// Get length of type token
+func type_token_len(s: Int, pos: Int, len: Int) -> Int {
+    let start = pos
+    
+    // Skip modifiers
+    if str_starts_at(s, start, "const") { start = start + 6 }
+    if str_starts_at(s, start, "unsigned") { start = start + 9 }
+    
+    // Count identifier
+    while start < len && is_identifier_char(ae_load8(s + start)) {
+        start = start + 1
+    }
+    
+    // Count pointer stars
+    let ws = skip_whitespace(s, start, len)
+    while ws < len && ae_load8(s + ws) == 42 {  // '*'
+        ws = ws + 1
+        ws = skip_whitespace(s, ws, len)
+    }
+    
+    ws - pos
+}
+
+// ============================================================================
+// CODE GENERATION
+// ============================================================================
+
+// Generate Aether code from bindings
+func bindgen_generate(bindings: Int) -> Int {
+    let buf = buffer_new()
+    
+    // Header
+    buffer_append(buf, "// Auto-generated by Aether Bindgen")
+    buffer_newline(buf)
+    buffer_append(buf, "// Source: ")
+    buffer_append(buf, bindings_library(bindings))
+    buffer_newline(buf)
+    buffer_newline(buf)
+    
+    buffer_append(buf, "import std.ffi")
+    buffer_newline(buf)
+    buffer_newline(buf)
+    
+    // Generate constants
+    let constants = bindings_constants(bindings)
+    let count = vec_len(constants)
+    if count > 0 {
+        buffer_append(buf, "// Constants")
+        buffer_newline(buf)
+        
+        let i = 0
+        while i < count {
+            let c = vec_get(constants, i)
+            buffer_append(buf, "const ")
+            buffer_append(buf, c_const_name(c))
+            buffer_append(buf, ": Int = ")
+            buffer_append_int(buf, c_const_value(c))
+            buffer_newline(buf)
+            i = i + 1
+        }
+        buffer_newline(buf)
+    }
+    
+    // Generate struct wrappers
+    let structs = bindings_structs(bindings)
+    count = vec_len(structs)
+    if count > 0 {
+        buffer_append(buf, "// Structs")
+        buffer_newline(buf)
+        
+        let i = 0
+        while i < count {
+            let s = vec_get(structs, i)
+            buffer_append(buf, "const ")
+            buffer_append(buf, c_struct_name(s))
+            buffer_append(buf, "_SIZE: Int = ")
+            buffer_append_int(buf, c_struct_size(s))
+            buffer_newline(buf)
+            i = i + 1
+        }
+        buffer_newline(buf)
+    }
+    
+    // Generate function bindings
+    let funcs = bindings_functions(bindings)
+    count = vec_len(funcs)
+    if count > 0 {
+        buffer_append(buf, "// Functions")
+        buffer_newline(buf)
+        
+        let i = 0
+        while i < count {
+            let f = vec_get(funcs, i)
+            generate_function_binding(buf, f)
+            i = i + 1
+        }
+    }
+    
+    buffer_to_string(buf)
+}
+
+// Generate a single function binding
+func generate_function_binding(buf: Int, f: Int) {
+    let name = c_func_name(f)
+    let ret = c_func_return(f)
+    let params = c_func_params(f)
+    let param_count = vec_len(params)
+    
+    // func name(param0: Int, param1: Int, ...) -> Int
+    buffer_append(buf, "func ")
+    buffer_append(buf, name)
+    buffer_append(buf, "(")
+    
+    let i = 0
+    while i < param_count {
+        if i > 0 {
+            buffer_append(buf, ", ")
+        }
+        buffer_append(buf, "arg")
+        buffer_append_int(buf, i)
+        buffer_append(buf, ": Int")
+        i = i + 1
+    }
+    
+    buffer_append(buf, ")")
+    
+    // Return type
+    if ret != 0 && c_type_category(ret) != C_TYPE_VOID {
+        buffer_append(buf, " -> Int")
+    }
+    
+    buffer_append(buf, " {")
+    buffer_newline(buf)
+    
+    // Generate FFI call
+    buffer_append(buf, "    ")
+    if ret != 0 && c_type_category(ret) != C_TYPE_VOID {
+        buffer_append(buf, "return ")
+    }
+    buffer_append(buf, "__builtin_ffi_call")
+    buffer_append_int(buf, param_count)
+    buffer_append(buf, "(\"")
+    buffer_append(buf, name)
+    buffer_append(buf, "\"")
+    
+    i = 0
+    while i < param_count {
+        buffer_append(buf, ", arg")
+        buffer_append_int(buf, i)
+        i = i + 1
+    }
+    
+    buffer_append(buf, ")")
+    buffer_newline(buf)
+    
+    buffer_append(buf, "}")
+    buffer_newline(buf)
+}
+
+// Write generated code to file
+func bindgen_emit(code: Int, path: Int) -> Int {
+    let len = str_len(code)
+    let fd = __builtin_open(path, 577, 420)
+    if fd < 0 { return 0 }
+    __builtin_write(fd, code, len)
+    __builtin_close(fd)
+    1
+}
+
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+
+func skip_whitespace(s: Int, pos: Int, len: Int) -> Int {
+    while pos < len {
+        let ch = ae_load8(s + pos)
+        if ch != 32 && ch != 9 { break }
+        pos = pos + 1
+    }
+    pos
+}
+
+func is_identifier_char(ch: Int) -> Int {
+    if ch >= 65 && ch <= 90 { return 1 }   // A-Z
+    if ch >= 97 && ch <= 122 { return 1 }  // a-z
+    if ch >= 48 && ch <= 57 { return 1 }   // 0-9
+    if ch == 95 { return 1 }               // _
+    0
+}
+
+func str_starts_at(s: Int, pos: Int, prefix: Int) -> Int {
+    let plen = str_len(prefix)
+    let i = 0
+    while i < plen {
+        if ae_load8(s + pos + i) != ae_load8(prefix + i) {
+            return 0
+        }
+        i = i + 1
+    }
+    1
+}
+
+func buffer_new() -> Int {
+    let b = __builtin_malloc(24)
+    __builtin_store64(b, __builtin_malloc(4096))
+    __builtin_store64(b + 8, 0)
+    __builtin_store64(b + 16, 4096)
+    b
+}
+
+func buffer_append(buf: Int, s: Int) {
+    let data = __builtin_load64(buf)
+    let len = __builtin_load64(buf + 8)
+    let slen = str_len(s)
+    
+    let i = 0
+    while i < slen {
+        ae_store8(data + len + i, ae_load8(s + i))
+        i = i + 1
+    }
+    __builtin_store64(buf + 8, len + slen)
+}
+
+func buffer_append_int(buf: Int, n: Int) {
+    let s = int_to_str(n)
+    buffer_append(buf, s)
+}
+
+func buffer_newline(buf: Int) {
+    let data = __builtin_load64(buf)
+    let len = __builtin_load64(buf + 8)
+    ae_store8(data + len, 10)
+    __builtin_store64(buf + 8, len + 1)
+}
+
+func buffer_to_string(buf: Int) -> Int {
+    let data = __builtin_load64(buf)
+    let len = __builtin_load64(buf + 8)
+    ae_store8(data + len, 0)
+    data
+}
+
+func file_read_all(path: Int) -> Int {
+    let fd = __builtin_open(path, 0, 0)
+    if fd < 0 { return 0 }
+    
+    let size = 65536
+    let buf = __builtin_malloc(size)
+    let read = __builtin_read(fd, buf, size - 1)
+    __builtin_close(fd)
+    
+    if read < 0 { return 0 }
+    ae_store8(buf + read, 0)
+    buf
+}
+
+func int_to_str(n: Int) -> Int {
+    let buf = __builtin_malloc(32)
+    let pos = 30
+    let neg = 0
+    
+    if n < 0 {
+        neg = 1
+        n = 0 - n
+    }
+    if n == 0 {
+        ae_store8(buf, 48)
+        ae_store8(buf + 1, 0)
+        return buf
+    }
+    
+    while n > 0 {
+        ae_store8(buf + pos, 48 + n % 10)
+        n = n / 10
+        pos = pos - 1
+    }
+    
+    if neg == 1 {
+        ae_store8(buf + pos, 45)
+        pos = pos - 1
+    }
+    
+    buf + pos + 1
+}
+
+func str_to_int(s: Int) -> Int {
+    let result = 0
+    let i = 0
+    let neg = 0
+    
+    if ae_load8(s) == 45 {  // '-'
+        neg = 1
+        i = 1
+    }
+    
+    while 1 == 1 {
+        let ch = ae_load8(s + i)
+        if ch < 48 || ch > 57 { break }
+        result = result * 10 + (ch - 48)
+        i = i + 1
+    }
+    
+    if neg == 1 { result = 0 - result }
+    result
+}

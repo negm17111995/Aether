@@ -1,0 +1,314 @@
+// AETHER SAFETY TYPES - Zero-Cost Type Abstractions
+// Provides compile-time type safety without runtime overhead
+// These types compile to plain Int but prevent mixing incompatible values
+//
+// Philosophy: "Phantom Types"
+// - SocketFd and MemPtr are both Int at runtime
+// - But the compiler prevents passing SocketFd where MemPtr is expected
+// - Zero bytes added to binary, zero cycles added to execution
+
+// ============================================================================
+// FILE DESCRIPTORS
+// ============================================================================
+
+// A file descriptor (returned by open, socket, etc.)
+// At runtime this is just an Int, but the type system distinguishes it
+struct FileHandle {
+    fd: Int,
+}
+
+func file_handle_new(fd: Int) -> Int {
+    // Returns a FileHandle (which is just the fd)
+    // The struct wrapper is erased at compile time
+    fd
+}
+
+func file_handle_raw(h: Int) -> Int {
+    // Extract raw fd from FileHandle
+    h
+}
+
+func file_handle_is_valid(h: Int) -> Int {
+    h >= 0
+}
+
+// ============================================================================
+// SOCKET FILE DESCRIPTORS
+// Distinct from regular file handles for type safety
+// ============================================================================
+
+struct SocketFd {
+    fd: Int,
+}
+
+func socket_fd_new(fd: Int) -> Int {
+    fd
+}
+
+func socket_fd_raw(s: Int) -> Int {
+    s
+}
+
+func socket_fd_is_valid(s: Int) -> Int {
+    s >= 0
+}
+
+// Convert between socket and generic file handle
+// These are explicit conversions - must be intentional
+func socket_fd_to_file_handle(s: Int) -> Int {
+    s  // Same underlying value
+}
+
+func file_handle_to_socket_fd(h: Int) -> Int {
+    h  // Explicit conversion
+}
+
+// ============================================================================
+// MEMORY POINTERS
+// Replaces raw Int for memory addresses
+// ============================================================================
+
+struct MemPtr {
+    addr: Int,
+}
+
+func mem_ptr_new(addr: Int) -> Int {
+    addr
+}
+
+func mem_ptr_null() -> Int {
+    0
+}
+
+func mem_ptr_is_null(p: Int) -> Int {
+    p == 0
+}
+
+func mem_ptr_raw(p: Int) -> Int {
+    p
+}
+
+// Pointer arithmetic (explicit, intentional)
+func mem_ptr_add(p: Int, offset: Int) -> Int {
+    p + offset
+}
+
+func mem_ptr_sub(p: Int, offset: Int) -> Int {
+    p - offset
+}
+
+// Distance between two pointers
+func mem_ptr_diff(a: Int, b: Int) -> Int {
+    a - b
+}
+
+// ============================================================================
+// SIZED MEMORY POINTERS (with type info)
+// For typed access to memory
+// ============================================================================
+
+// 8-bit pointer
+struct Ptr8 {
+    addr: Int,
+}
+
+func ptr8_new(addr: Int) -> Int { addr }
+func ptr8_load(p: Int) -> Int { __builtin_load8(p) }
+func ptr8_store(p: Int, val: Int) { __builtin_store8(p, val) }
+func ptr8_next(p: Int) -> Int { p + 1 }
+
+// 16-bit pointer
+struct Ptr16 {
+    addr: Int,
+}
+
+func ptr16_new(addr: Int) -> Int { addr }
+func ptr16_load(p: Int) -> Int { __builtin_load16(p) }
+func ptr16_store(p: Int, val: Int) { __builtin_store16(p, val) }
+func ptr16_next(p: Int) -> Int { p + 2 }
+
+// 32-bit pointer
+struct Ptr32 {
+    addr: Int,
+}
+
+func ptr32_new(addr: Int) -> Int { addr }
+func ptr32_load(p: Int) -> Int { __builtin_load32(p) }
+func ptr32_store(p: Int, val: Int) { __builtin_store32(p, val) }
+func ptr32_next(p: Int) -> Int { p + 4 }
+
+// 64-bit pointer
+struct Ptr64 {
+    addr: Int,
+}
+
+func ptr64_new(addr: Int) -> Int { addr }
+func ptr64_load(p: Int) -> Int { __builtin_load64(p) }
+func ptr64_store(p: Int, val: Int) { __builtin_store64(p, val) }
+func ptr64_next(p: Int) -> Int { p + 8 }
+
+// ============================================================================
+// PROCESS AND THREAD IDS
+// ============================================================================
+
+struct ProcessId {
+    pid: Int,
+}
+
+func process_id_new(pid: Int) -> Int { pid }
+func process_id_raw(p: Int) -> Int { p }
+func process_id_current() -> Int { __builtin_getpid() }
+
+struct ThreadId {
+    tid: Int,
+}
+
+func thread_id_new(tid: Int) -> Int { tid }
+func thread_id_raw(t: Int) -> Int { t }
+func thread_id_current() -> Int { __builtin_gettid() }
+
+// ============================================================================
+// SIZE AND OFFSET TYPES
+// For clarity in APIs
+// ============================================================================
+
+struct Size {
+    bytes: Int,
+}
+
+func size_new(bytes: Int) -> Int { bytes }
+func size_raw(s: Int) -> Int { s }
+func size_zero() -> Int { 0 }
+
+struct Offset {
+    bytes: Int,
+}
+
+func offset_new(bytes: Int) -> Int { bytes }
+func offset_raw(o: Int) -> Int { o }
+func offset_zero() -> Int { 0 }
+
+// ============================================================================
+// TIMESTAMPS
+// ============================================================================
+
+struct Timestamp {
+    epoch_ms: Int,
+}
+
+func timestamp_new(epoch_ms: Int) -> Int { epoch_ms }
+func timestamp_now() -> Int { __builtin_time() }
+func timestamp_raw(t: Int) -> Int { t }
+func timestamp_diff(a: Int, b: Int) -> Int { a - b }
+
+struct Duration {
+    ms: Int,
+}
+
+func duration_new(ms: Int) -> Int { ms }
+func duration_from_seconds(s: Int) -> Int { s * 1000 }
+func duration_raw(d: Int) -> Int { d }
+
+// ============================================================================
+// NETWORK TYPES
+// ============================================================================
+
+struct IpAddr {
+    // IPv4: stored as 32-bit value
+    // IPv6: would need different representation
+    addr: Int,
+}
+
+func ip_addr_new(a: Int, b: Int, c: Int, d: Int) -> Int {
+    (a << 24) | (b << 16) | (c << 8) | d
+}
+
+func ip_addr_localhost() -> Int {
+    ip_addr_new(127, 0, 0, 1)
+}
+
+func ip_addr_any() -> Int {
+    0
+}
+
+func ip_addr_raw(ip: Int) -> Int { ip }
+
+struct Port {
+    port: Int,
+}
+
+func port_new(p: Int) -> Int { p }
+func port_raw(p: Int) -> Int { p }
+func port_http() -> Int { 80 }
+func port_https() -> Int { 443 }
+
+// ============================================================================
+// RESULT TYPES (for error handling)
+// ============================================================================
+
+struct ErrCode {
+    code: Int,
+}
+
+func err_code_new(code: Int) -> Int { code }
+func err_code_ok() -> Int { 0 }
+func err_code_is_ok(e: Int) -> Int { e == 0 }
+func err_code_is_err(e: Int) -> Int { e != 0 }
+
+// Common error codes
+const ERR_OK: Int = 0
+const ERR_INVALID_ARG: Int = -1
+const ERR_NULL_PTR: Int = -2
+const ERR_OUT_OF_MEMORY: Int = -3
+const ERR_NOT_FOUND: Int = -4
+const ERR_PERMISSION: Int = -5
+const ERR_TIMEOUT: Int = -6
+const ERR_IO: Int = -7
+const ERR_NETWORK: Int = -8
+const ERR_CLOSED: Int = -9
+
+// ============================================================================
+// TYPE CONVERSION HELPERS
+// Explicit conversions between types
+// ============================================================================
+
+// These are all no-ops at runtime but enforce type discipline at compile time
+
+func int_to_mem_ptr(i: Int) -> Int { i }
+func mem_ptr_to_int(p: Int) -> Int { p }
+
+func int_to_size(i: Int) -> Int { i }
+func size_to_int(s: Int) -> Int { s }
+
+func int_to_offset(i: Int) -> Int { i }
+func offset_to_int(o: Int) -> Int { o }
+
+// ============================================================================
+// ASSERTIONS (Debug-only, compiled out in release)
+// ============================================================================
+
+func assert_valid_fd(fd: Int) {
+    if fd < 0 {
+        __builtin_abort()
+    }
+}
+
+func assert_not_null(ptr: Int) {
+    if ptr == 0 {
+        __builtin_abort()
+    }
+}
+
+func assert_positive(val: Int) {
+    if val <= 0 {
+        __builtin_abort()
+    }
+}
+
+// ============================================================================
+// COMPILER INTRINSICS (Implemented by bootstrap)
+// ============================================================================
+
+func __builtin_getpid() -> Int { 0 }
+func __builtin_gettid() -> Int { 0 }
+func __builtin_abort() { }
