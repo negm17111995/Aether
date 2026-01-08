@@ -508,9 +508,8 @@ func radix_sort_parallel(arr: Int, len: Int) -> Int {
         let end = start + chunk_size
         if i == num_threads - 1 { end = len }  // Last chunk gets remainder
         
-        spawn || {
-            radix_sort_cpu(arr + start * 8, end - start)
-        }
+        // Spawn sort thread for this chunk
+        __builtin_spawn_radix_chunk(arr, start, end)
         
         i = i + 1
     }

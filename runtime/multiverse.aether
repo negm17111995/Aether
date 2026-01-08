@@ -160,9 +160,7 @@ func multiverse_fork(paths: Int, state: Int, state_size: Int) -> Int {
         
         // Spawn the execution thread
         let universe_id = i + 1
-        let thread_id = spawn || {
-            multiverse_run_path(universe_id, path_func, mv)
-        }
+        let thread_id = __builtin_spawn_with_arg(multiverse_run_path, universe_id, path_func, mv)
         __builtin_store64(universe + 40, thread_id)
         
         i = i + 1

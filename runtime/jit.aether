@@ -385,9 +385,7 @@ func jit_start_morphing_thread() {
     if jit_morphing_thread != 0 { return }  // Already running
     
     // Spawn the morphing thread
-    spawn || {
-        jit_morphing_loop()
-    }
+    __builtin_spawn(jit_morphing_loop)
 }
 
 // The main morphing loop
