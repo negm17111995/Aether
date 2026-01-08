@@ -1,0 +1,9 @@
+func fib(n: Int) -> Int {
+    if n <= 1 { return n }
+    fib(n - 1) + fib(n - 2)
+}
+func main() -> Int {
+    let r = fib(40)
+    __builtin_print(r)
+    0
+}

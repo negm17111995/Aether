@@ -1,11 +1,8 @@
-//! ARM64 code generation helpers - OPTIMIZED FOR PERFORMANCE
-//! Matches C-level speed with proper register saving
-
-/// Emit optimized function prologue
-/// Saves ALL callee-saved registers (x19-x28) to prevent corruption
+/// Emit optimized function prologue - Safe + Registers
+/// Saves ALL callee-saved registers to allow register allocation
 pub fn emit_prologue(asm: &mut String) {
-    // Save frame pointer, link register, and ALL callee-saved regs
-    // x19-x28 are callee-saved in ARM64 ABI
+    // Save/Restore all callee-saved registers (x19-x28)
+    // This allows us to use them for variables freely
     asm.push_str("    stp x29, x30, [sp, #-96]!\n");
     asm.push_str("    stp x19, x20, [sp, #16]\n");
     asm.push_str("    stp x21, x22, [sp, #32]\n");
@@ -13,13 +10,13 @@ pub fn emit_prologue(asm: &mut String) {
     asm.push_str("    stp x25, x26, [sp, #64]\n");
     asm.push_str("    stp x27, x28, [sp, #80]\n");
     asm.push_str("    mov x29, sp\n");
-    // Allocate 256 bytes for locals
-    asm.push_str("    sub sp, sp, #256\n");
+    // Allocate space for locals (safe buffer)
+    asm.push_str("    sub sp, sp, #128\n");
 }
 
 /// Emit optimized function epilogue
 pub fn emit_epilogue(asm: &mut String, _stack_size: i32) {
-    asm.push_str("    add sp, sp, #256\n");
+    asm.push_str("    add sp, sp, #128\n");
     asm.push_str("    ldp x27, x28, [sp, #80]\n");
     asm.push_str("    ldp x25, x26, [sp, #64]\n");
     asm.push_str("    ldp x23, x24, [sp, #48]\n");

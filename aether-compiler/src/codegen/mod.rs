@@ -1030,7 +1030,8 @@ impl CodeGen {
             self.locals.clear();
             self.register_vars.clear();  // CRITICAL: clear register allocation
             self.next_reg = 21;           // CRITICAL: reset register counter
-            self.stack_offset = 0;
+            // Start stack offset at 16 to skip saved x19/x20 (at x29-8, x29-16)
+            self.stack_offset = 16;
             self.current_func = name.clone();
 
             
@@ -1041,11 +1042,7 @@ impl CodeGen {
                 self.emit_asm(&format!("_{}:", name));
                 arm64::emit_prologue(&mut self.asm);
                 
-                // OPTIMIZATION: Keep first param in x20 register 
-                // This avoids memory loads in hot loops/recursion
-                if !params.is_empty() {
-                    self.emit_asm("    mov x20, x0");  // Save first param in callee-saved register
-                }
+                // (Hardcoded x20 optimization removed in favor of register allocator)
             } else {
                 self.emit_asm(&format!(".global {}", name));
                 self.emit_asm(&format!("{}:", name));
@@ -1057,11 +1054,29 @@ impl CodeGen {
             let param_regs_x86 = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"];
             
             for (i, param) in params.iter().enumerate() {
-                let off = self.alloc_local(&param.name);
-                if self.is_arm64() && i < param_regs_arm.len() {
-                    arm64::emit_store_local(&mut self.asm, param_regs_arm[i], off);
-                } else if !self.is_arm64() && i < param_regs_x86.len() {
-                    x86_64::emit_store_local(&mut self.asm, param_regs_x86[i], off);
+                // Try to allocate register first (ARM64 only for now)
+                let reg_allocated = if self.is_arm64() {
+                    self.alloc_register(&param.name)
+                } else {
+                    None
+                };
+
+                if let Some(reg) = reg_allocated {
+                    // Parameter is in register!
+                    // Move from argument register (x0..x7) to allocated register (x21..)
+                    if i < param_regs_arm.len() {
+                        self.emit_asm(&format!("    mov {}, {}", reg, param_regs_arm[i]));
+                    } else {
+                        // Stack argument (not handled yet for >8 params in this optimization)
+                    }
+                } else {
+                    // Fallback to stack
+                    let off = self.alloc_local(&param.name);
+                    if self.is_arm64() && i < param_regs_arm.len() {
+                        arm64::emit_store_local(&mut self.asm, param_regs_arm[i], off);
+                    } else if !self.is_arm64() && i < param_regs_x86.len() {
+                        x86_64::emit_store_local(&mut self.asm, param_regs_x86[i], off);
+                    }
                 }
             }
             
