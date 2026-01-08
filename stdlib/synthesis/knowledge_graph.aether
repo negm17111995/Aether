@@ -1,0 +1,440 @@
+// AETHER KNOWLEDGE GRAPH
+// Semantic representation of the entire stdlib for synthesis
+// Enables intent-to-code mapping for the Synthesis Engine
+//
+// This is the "brain" of the Synthesis Engine:
+// - Maps concepts to modules (e.g., "database" -> ["postgres", "firebase.rtdb"])
+// - Tracks dependencies (postgres -> net -> dns, tls)
+// - Provides function signatures for code generation
+
+import runtime.vec
+import runtime.map
+import runtime.str
+
+// ============================================================================
+// KNOWLEDGE GRAPH CONSTANTS
+// ============================================================================
+
+const KG_MAGIC: Int = 0x4B475248           // "KGRH"
+const MAX_MODULES: Int = 256
+const MAX_CONCEPTS: Int = 512
+const MAX_DEPENDENCIES: Int = 64
+
+// Module categories
+const CAT_CORE: Int = 1
+const CAT_RUNTIME: Int = 2
+const CAT_COLLECTIONS: Int = 3
+const CAT_NETWORKING: Int = 4
+const CAT_CRYPTO: Int = 5
+const CAT_DATABASE: Int = 6
+const CAT_CLOUD: Int = 7
+const CAT_ACTOR: Int = 8
+const CAT_TEXT: Int = 9
+const CAT_TOOLS: Int = 10
+
+// ============================================================================
+// MODULE NODE STRUCTURE
+// Represents a stdlib module in the knowledge graph
+// Layout: [id, name_ptr, category, deps_vec, funcs_vec, keywords_vec]
+// ============================================================================
+
+const MODULE_NODE_SIZE: Int = 48
+
+func module_node_new(id: Int, name: Int, category: Int) -> Int {
+    let node = __builtin_malloc(MODULE_NODE_SIZE)
+    __builtin_store64(node, id)
+    __builtin_store64(node + 8, name)
+    __builtin_store64(node + 16, category)
+    __builtin_store64(node + 24, vec_new())   // dependencies
+    __builtin_store64(node + 32, vec_new())   // functions
+    __builtin_store64(node + 40, vec_new())   // keywords
+    node
+}
+
+func module_node_id(node: Int) -> Int { __builtin_load64(node) }
+func module_node_name(node: Int) -> Int { __builtin_load64(node + 8) }
+func module_node_category(node: Int) -> Int { __builtin_load64(node + 16) }
+func module_node_deps(node: Int) -> Int { __builtin_load64(node + 24) }
+func module_node_funcs(node: Int) -> Int { __builtin_load64(node + 32) }
+func module_node_keywords(node: Int) -> Int { __builtin_load64(node + 40) }
+
+func module_node_add_dep(node: Int, dep_id: Int) {
+    let deps = module_node_deps(node)
+    vec_push(deps, dep_id)
+}
+
+func module_node_add_func(node: Int, func_sig: Int) {
+    let funcs = module_node_funcs(node)
+    vec_push(funcs, func_sig)
+}
+
+func module_node_add_keyword(node: Int, keyword: Int) {
+    let keywords = module_node_keywords(node)
+    vec_push(keywords, keyword)
+}
+
+// ============================================================================
+// FUNCTION SIGNATURE STRUCTURE
+// ============================================================================
+
+const FUNC_SIG_SIZE: Int = 40
+
+func func_sig_new(name: Int, params: Int, return_type: Int, is_public: Int) -> Int {
+    let sig = __builtin_malloc(FUNC_SIG_SIZE)
+    __builtin_store64(sig, name)
+    __builtin_store64(sig + 8, params)        // Pointer to params vec
+    __builtin_store64(sig + 16, return_type)
+    __builtin_store64(sig + 24, is_public)
+    __builtin_store64(sig + 32, 0)            // doc comment (optional)
+    sig
+}
+
+func func_sig_name(sig: Int) -> Int { __builtin_load64(sig) }
+func func_sig_params(sig: Int) -> Int { __builtin_load64(sig + 8) }
+func func_sig_return(sig: Int) -> Int { __builtin_load64(sig + 16) }
+func func_sig_public(sig: Int) -> Int { __builtin_load64(sig + 24) }
+
+// ============================================================================
+// KNOWLEDGE GRAPH STRUCTURE
+// ============================================================================
+
+let kg_modules: Int = 0           // Map<module_id, ModuleNode>
+let kg_concepts: Int = 0          // Map<keyword_hash, List<module_id>>
+let kg_module_count: Int = 0
+
+// Initialize the knowledge graph
+func kg_init() {
+    if kg_modules != 0 { return }  // Already initialized
+    
+    kg_modules = map_new()
+    kg_concepts = map_new()
+    kg_module_count = 0
+    
+    // Populate with stdlib modules
+    kg_populate_stdlib()
+}
+
+// ============================================================================
+// STDLIB POPULATION
+// This is the "learned knowledge" of the Aether ecosystem
+// ============================================================================
+
+func kg_populate_stdlib() {
+    // === CORE RUNTIME ===
+    let core = kg_add_module("runtime.core", CAT_CORE)
+    kg_add_keyword(core, "memory")
+    kg_add_keyword(core, "malloc")
+    kg_add_keyword(core, "alloc")
+    kg_add_keyword(core, "pointer")
+    kg_add_func_to_module(core, "ae_malloc", "(size: Int) -> Int", 1)
+    kg_add_func_to_module(core, "ae_free", "(ptr: Int)", 1)
+    kg_add_func_to_module(core, "ae_load64", "(addr: Int) -> Int", 1)
+    kg_add_func_to_module(core, "ae_store64", "(addr: Int, val: Int)", 1)
+    
+    // === COLLECTIONS ===
+    let vec = kg_add_module("runtime.vec", CAT_COLLECTIONS)
+    kg_add_keyword(vec, "array")
+    kg_add_keyword(vec, "list")
+    kg_add_keyword(vec, "vector")
+    kg_add_keyword(vec, "collection")
+    kg_add_func_to_module(vec, "vec_new", "() -> Int", 1)
+    kg_add_func_to_module(vec, "vec_push", "(v: Int, item: Int)", 1)
+    kg_add_func_to_module(vec, "vec_pop", "(v: Int) -> Int", 1)
+    kg_add_func_to_module(vec, "vec_get", "(v: Int, idx: Int) -> Int", 1)
+    kg_add_func_to_module(vec, "vec_len", "(v: Int) -> Int", 1)
+    
+    let map_mod = kg_add_module("runtime.map", CAT_COLLECTIONS)
+    kg_add_keyword(map_mod, "hashmap")
+    kg_add_keyword(map_mod, "dictionary")
+    kg_add_keyword(map_mod, "map")
+    kg_add_keyword(map_mod, "key")
+    kg_add_keyword(map_mod, "value")
+    kg_add_func_to_module(map_mod, "map_new", "() -> Int", 1)
+    kg_add_func_to_module(map_mod, "map_set_int", "(m: Int, key: Int, val: Int)", 1)
+    kg_add_func_to_module(map_mod, "map_get_int", "(m: Int, key: Int) -> Int", 1)
+    
+    // === NETWORKING ===
+    let net = kg_add_module("runtime.net", CAT_NETWORKING)
+    kg_add_keyword(net, "network")
+    kg_add_keyword(net, "socket")
+    kg_add_keyword(net, "tcp")
+    kg_add_keyword(net, "udp")
+    kg_add_keyword(net, "connection")
+    kg_add_func_to_module(net, "tcp_socket", "() -> Int", 1)
+    kg_add_func_to_module(net, "tcp_connect_ip", "(a: Int, b: Int, c: Int, d: Int, port: Int) -> Int", 1)
+    kg_add_func_to_module(net, "tcp_send", "(fd: Int, data: Int, len: Int) -> Int", 1)
+    kg_add_func_to_module(net, "tcp_recv", "(fd: Int, buf: Int, max: Int) -> Int", 1)
+    
+    let dns = kg_add_module("runtime.dns", CAT_NETWORKING)
+    kg_add_keyword(dns, "dns")
+    kg_add_keyword(dns, "resolve")
+    kg_add_keyword(dns, "domain")
+    kg_add_keyword(dns, "hostname")
+    kg_add_dep(net, dns)
+    kg_add_func_to_module(dns, "dns_resolve", "(hostname: Int) -> Int", 1)
+    
+    let tls = kg_add_module("runtime.tls", CAT_CRYPTO)
+    kg_add_keyword(tls, "tls")
+    kg_add_keyword(tls, "ssl")
+    kg_add_keyword(tls, "secure")
+    kg_add_keyword(tls, "https")
+    kg_add_keyword(tls, "encryption")
+    kg_add_dep(tls, net)
+    kg_add_func_to_module(tls, "tls_new", "(fd: Int) -> Int", 1)
+    kg_add_func_to_module(tls, "tls_handshake", "(tls: Int) -> Int", 1)
+    kg_add_func_to_module(tls, "tls_send", "(tls: Int, data: Int, len: Int)", 1)
+    kg_add_func_to_module(tls, "tls_recv", "(tls: Int, buf: Int, max: Int) -> Int", 1)
+    
+    let http = kg_add_module("runtime.http", CAT_NETWORKING)
+    kg_add_keyword(http, "http")
+    kg_add_keyword(http, "web")
+    kg_add_keyword(http, "request")
+    kg_add_keyword(http, "response")
+    kg_add_keyword(http, "api")
+    kg_add_keyword(http, "rest")
+    kg_add_dep(http, tls)
+    kg_add_dep(http, dns)
+    kg_add_func_to_module(http, "http_get", "(url: Int) -> Int", 1)
+    kg_add_func_to_module(http, "http_post_json", "(url: Int, body: Int) -> Int", 1)
+    
+    // === CRYPTO ===
+    let sha256 = kg_add_module("runtime.crypto.sha256", CAT_CRYPTO)
+    kg_add_keyword(sha256, "hash")
+    kg_add_keyword(sha256, "sha256")
+    kg_add_keyword(sha256, "crypto")
+    kg_add_func_to_module(sha256, "sha256", "(data: Int, len: Int) -> Int", 1)
+    
+    // === DATABASE ===
+    let postgres = kg_add_module("stdlib.database.postgres", CAT_DATABASE)
+    kg_add_keyword(postgres, "database")
+    kg_add_keyword(postgres, "postgres")
+    kg_add_keyword(postgres, "postgresql")
+    kg_add_keyword(postgres, "sql")
+    kg_add_keyword(postgres, "query")
+    kg_add_dep(postgres, net)
+    kg_add_func_to_module(postgres, "pg_connect", "(ip: Int, port: Int, db: Int, user: Int, pass: Int) -> Int", 1)
+    kg_add_func_to_module(postgres, "pg_query", "(conn: Int, sql: Int) -> Int", 1)
+    kg_add_func_to_module(postgres, "pg_result_rows", "(res: Int) -> Int", 1)
+    
+    // === FIREBASE ===
+    let firebase = kg_add_module("stdlib.firebase.firebase", CAT_CLOUD)
+    kg_add_keyword(firebase, "firebase")
+    kg_add_keyword(firebase, "auth")
+    kg_add_keyword(firebase, "google")
+    kg_add_keyword(firebase, "realtime")
+    kg_add_keyword(firebase, "login")
+    kg_add_keyword(firebase, "user")
+    kg_add_dep(firebase, http)
+    kg_add_func_to_module(firebase, "firebase_init", "(config: Int) -> Int", 1)
+    kg_add_func_to_module(firebase, "auth_sign_in_email", "(auth: Int, email: Int, pass: Int) -> Int", 1)
+    kg_add_func_to_module(firebase, "rtdb_get", "(ref: Int) -> Int", 1)
+    kg_add_func_to_module(firebase, "rtdb_set", "(ref: Int, data: Int)", 1)
+    
+    // === CLOUD RUN ===
+    let cloudrun = kg_add_module("stdlib.cloud.cloudrun", CAT_CLOUD)
+    kg_add_keyword(cloudrun, "cloudrun")
+    kg_add_keyword(cloudrun, "deploy")
+    kg_add_keyword(cloudrun, "container")
+    kg_add_keyword(cloudrun, "gcp")
+    kg_add_keyword(cloudrun, "serverless")
+    kg_add_dep(cloudrun, http)
+    kg_add_func_to_module(cloudrun, "cloudrun_deploy", "(svc: Int, token: Int) -> Int", 1)
+    kg_add_func_to_module(cloudrun, "cloudrun_get_url", "(svc: Int) -> Int", 1)
+    
+    // === ACTOR SYSTEM ===
+    let actor = kg_add_module("stdlib.std.actor.actor", CAT_ACTOR)
+    kg_add_keyword(actor, "actor")
+    kg_add_keyword(actor, "message")
+    kg_add_keyword(actor, "concurrent")
+    kg_add_keyword(actor, "erlang")
+    kg_add_keyword(actor, "supervisor")
+    kg_add_func_to_module(actor, "system_spawn", "(sys: Int, behavior: Int) -> Int", 1)
+    kg_add_func_to_module(actor, "system_send", "(sys: Int, to: Int, from: Int, tag: Int, payload: Int)", 1)
+    kg_add_func_to_module(actor, "actor_receive", "(actor: Int) -> Int", 1)
+    
+    // === TEXT/JSON ===
+    let json = kg_add_module("stdlib.text.json", CAT_TEXT)
+    kg_add_keyword(json, "json")
+    kg_add_keyword(json, "parse")
+    kg_add_keyword(json, "serialize")
+    kg_add_func_to_module(json, "json_object_new", "() -> Int", 1)
+    kg_add_func_to_module(json, "json_object_set", "(obj: Int, key: Int, val: Int)", 1)
+}
+
+// ============================================================================
+// KNOWLEDGE GRAPH OPERATIONS
+// ============================================================================
+
+// Add a module to the knowledge graph
+func kg_add_module(name: Int, category: Int) -> Int {
+    kg_module_count = kg_module_count + 1
+    let id = kg_module_count
+    
+    let node = module_node_new(id, name, category)
+    map_set_int(kg_modules, id, node)
+    
+    id
+}
+
+// Add a keyword association for a module
+func kg_add_keyword(module_id: Int, keyword: Int) {
+    let node = map_get_int(kg_modules, module_id)
+    if node == 0 { return }
+    
+    module_node_add_keyword(node, keyword)
+    
+    // Also add to reverse index (keyword -> modules)
+    let keyword_hash = str_hash(keyword)
+    let modules_for_keyword = map_get_int(kg_concepts, keyword_hash)
+    if modules_for_keyword == 0 {
+        modules_for_keyword = vec_new()
+        map_set_int(kg_concepts, keyword_hash, modules_for_keyword)
+    }
+    vec_push(modules_for_keyword, module_id)
+}
+
+// Add a dependency between modules
+func kg_add_dep(from_id: Int, to_id: Int) {
+    let node = map_get_int(kg_modules, from_id)
+    if node != 0 {
+        module_node_add_dep(node, to_id)
+    }
+}
+
+// Add a function to a module
+func kg_add_func_to_module(module_id: Int, name: Int, signature: Int, is_public: Int) {
+    let node = map_get_int(kg_modules, module_id)
+    if node == 0 { return }
+    
+    let sig = func_sig_new(name, signature, 0, is_public)
+    module_node_add_func(node, sig)
+}
+
+// ============================================================================
+// KNOWLEDGE GRAPH QUERIES
+// ============================================================================
+
+// Find modules matching a keyword
+func kg_find_by_keyword(keyword: Int) -> Int {
+    kg_init()
+    
+    let keyword_hash = str_hash(keyword)
+    let modules = map_get_int(kg_concepts, keyword_hash)
+    
+    if modules == 0 {
+        return vec_new()  // Empty result
+    }
+    
+    modules
+}
+
+// Get a module by ID
+func kg_get_module(id: Int) -> Int {
+    kg_init()
+    map_get_int(kg_modules, id)
+}
+
+// Get all dependencies for a module (recursive)
+func kg_get_all_deps(module_id: Int) -> Int {
+    let visited = map_new()
+    let result = vec_new()
+    
+    kg_collect_deps(module_id, visited, result)
+    
+    result
+}
+
+// Helper: recursively collect dependencies
+func kg_collect_deps(module_id: Int, visited: Int, result: Int) {
+    // Skip if already visited
+    if map_has_int(visited, module_id) == 1 { return }
+    map_set_int(visited, module_id, 1)
+    
+    let node = map_get_int(kg_modules, module_id)
+    if node == 0 { return }
+    
+    let deps = module_node_deps(node)
+    let count = vec_len(deps)
+    
+    let i = 0
+    while i < count {
+        let dep_id = vec_get(deps, i)
+        
+        // Add to result
+        vec_push(result, dep_id)
+        
+        // Recurse
+        kg_collect_deps(dep_id, visited, result)
+        
+        i = i + 1
+    }
+}
+
+// Get module name by ID
+func kg_get_module_name(id: Int) -> Int {
+    let node = map_get_int(kg_modules, id)
+    if node == 0 { return 0 }
+    module_node_name(node)
+}
+
+// Get module API (list of function signatures)
+func kg_get_module_api(id: Int) -> Int {
+    let node = map_get_int(kg_modules, id)
+    if node == 0 { return vec_new() }
+    module_node_funcs(node)
+}
+
+// Find path between two modules (BFS)
+func kg_find_path(from_id: Int, to_id: Int) -> Int {
+    // BFS to find shortest path
+    let queue = vec_new()
+    let visited = map_new()
+    let parent = map_new()
+    
+    vec_push(queue, from_id)
+    map_set_int(visited, from_id, 1)
+    
+    while vec_len(queue) > 0 {
+        let current = vec_get(queue, 0)
+        vec_remove(queue, 0)
+        
+        if current == to_id {
+            // Reconstruct path
+            return kg_reconstruct_path(parent, from_id, to_id)
+        }
+        
+        let node = map_get_int(kg_modules, current)
+        if node == 0 { continue }
+        
+        let deps = module_node_deps(node)
+        let count = vec_len(deps)
+        
+        let i = 0
+        while i < count {
+            let dep = vec_get(deps, i)
+            if map_has_int(visited, dep) == 0 {
+                vec_push(queue, dep)
+                map_set_int(visited, dep, 1)
+                map_set_int(parent, dep, current)
+            }
+            i = i + 1
+        }
+    }
+    
+    vec_new()  // No path found
+}
+
+// Reconstruct path from parent map
+func kg_reconstruct_path(parent: Int, from_id: Int, to_id: Int) -> Int {
+    let path = vec_new()
+    let current = to_id
+    
+    while current != from_id {
+        vec_insert(path, 0, current)
+        current = map_get_int(parent, current)
+        if current == 0 { break }
+    }
+    
+    vec_insert(path, 0, from_id)
+    path
+}

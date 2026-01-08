@@ -160,3 +160,123 @@ func module_execute(mod: Int, arg: Int) -> Int {
     if entry == 0 { return 0 }
     __builtin_call(entry, arg)
 }
+
+// ============================================================================
+// ATOMIC SWAP - Thread-safe code replacement for JIT
+// ============================================================================
+
+// Global lock for atomic operations
+let hotreload_lock: Int = 0
+
+// Acquire the atomic lock (spinlock implementation)
+func hotreload_lock_acquire() {
+    // Spinlock using atomic compare-and-swap
+    while __builtin_atomic_cas(hotreload_lock, 0, 1) != 0 {
+        // Spin
+        __builtin_pause()
+    }
+}
+
+// Release the atomic lock
+func hotreload_lock_release() {
+    __builtin_atomic_store(hotreload_lock, 0)
+}
+
+// Atomically swap a function pointer in a module
+// This is thread-safe - all threads see either old OR new, never partial
+func module_atomic_swap(mod: Int, old_code: Int, new_code: Int, new_size: Int) -> Int {
+    // Acquire exclusive lock
+    hotreload_lock_acquire()
+    
+    let versions = module_get_versions(mod)
+    
+    // Verify the old code is still active
+    let current = version_get_active(versions)
+    if current != old_code {
+        hotreload_lock_release()
+        return 0  // Race condition - someone else swapped first
+    }
+    
+    // Add the new version
+    let new_ver = version_add(versions, new_code, new_size)
+    
+    // Deactivate all previous versions
+    let count = ae_load64(versions)
+    let i = 0
+    while i < count - 1 {  // All except the newest
+        let offset = 8 + i * VERSION_ENTRY_SIZE
+        ae_store64(versions + offset + 24, 0)  // Deactivate
+        i = i + 1
+    }
+    
+    // Migrate state if exists
+    let old_state = module_get_state(mod)
+    if old_state != 0 {
+        let new_state = state_migrate(old_state, new_ver)
+        module_set_state(mod, new_state)
+    }
+    
+    // Release lock
+    hotreload_lock_release()
+    
+    new_ver
+}
+
+// Rollback to a previous version (for recovery)
+func module_rollback(mod: Int, target_version: Int) -> Int {
+    hotreload_lock_acquire()
+    
+    let versions = module_get_versions(mod)
+    let count = ae_load64(versions)
+    
+    // Find the target version
+    let found = 0
+    let i = 0
+    while i < count {
+        let offset = 8 + i * VERSION_ENTRY_SIZE
+        let ver = ae_load64(versions + offset)
+        
+        if ver == target_version {
+            // Activate this version
+            ae_store64(versions + offset + 24, 1)
+            found = 1
+        } else if ver > target_version {
+            // Deactivate newer versions
+            ae_store64(versions + offset + 24, 0)
+        }
+        i = i + 1
+    }
+    
+    hotreload_lock_release()
+    found
+}
+
+// Get version history for debugging
+func module_get_version_count(mod: Int) -> Int {
+    let versions = module_get_versions(mod)
+    ae_load64(versions)
+}
+
+// Get specific version code pointer
+func module_get_version_ptr(mod: Int, version: Int) -> Int {
+    let versions = module_get_versions(mod)
+    let count = ae_load64(versions)
+    
+    let i = 0
+    while i < count {
+        let offset = 8 + i * VERSION_ENTRY_SIZE
+        if ae_load64(versions + offset) == version {
+            return ae_load64(versions + offset + 8)
+        }
+        i = i + 1
+    }
+    0
+}
+
+// ============================================================================
+// INTRINSIC STUBS (Provided by runtime)
+// ============================================================================
+
+func __builtin_atomic_cas(ptr: Int, expected: Int, desired: Int) -> Int { 0 }
+func __builtin_atomic_store(ptr: Int, val: Int) { }
+func __builtin_pause() { }

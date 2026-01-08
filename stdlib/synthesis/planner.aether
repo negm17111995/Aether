@@ -1,0 +1,421 @@
+// AETHER PLANNER - Intent Decomposition and Module Selection
+// Converts high-level intent ("Travel API with Firebase and Postgres")
+// into a concrete module dependency graph for code generation
+//
+// This is the "right brain" of the Synthesis Engine:
+// 1. Parse intent keywords
+// 2. Match keywords to modules via Knowledge Graph
+// 3. Resolve all dependencies
+// 4. Return ordered list of modules to import
+
+import runtime.vec
+import runtime.map
+import runtime.str
+import stdlib.synthesis.knowledge_graph
+
+// ============================================================================
+// PLAN CONSTANTS
+// ============================================================================
+
+const PLAN_MAGIC: Int = 0x504C414E          // "PLAN"
+const MAX_PLAN_MODULES: Int = 64
+
+// ============================================================================
+// PLAN STRUCTURE
+// Represents a synthesized application plan
+// Layout: [magic, modules_vec, entry_point, config_ptr, status]
+// ============================================================================
+
+func plan_new() -> Int {
+    let plan = __builtin_malloc(40)
+    __builtin_store64(plan, PLAN_MAGIC)
+    __builtin_store64(plan + 8, vec_new())    // modules (ordered)
+    __builtin_store64(plan + 16, 0)            // entry_point name
+    __builtin_store64(plan + 24, 0)            // config
+    __builtin_store64(plan + 32, 0)            // status (0=pending, 1=ready, 2=error)
+    plan
+}
+
+func plan_modules(plan: Int) -> Int { __builtin_load64(plan + 8) }
+func plan_entry(plan: Int) -> Int { __builtin_load64(plan + 16) }
+func plan_config(plan: Int) -> Int { __builtin_load64(plan + 24) }
+func plan_status(plan: Int) -> Int { __builtin_load64(plan + 32) }
+
+func plan_set_entry(plan: Int, entry: Int) { __builtin_store64(plan + 16, entry) }
+func plan_set_config(plan: Int, cfg: Int) { __builtin_store64(plan + 24, cfg) }
+func plan_set_status(plan: Int, s: Int) { __builtin_store64(plan + 32, s) }
+
+func plan_add_module(plan: Int, module_id: Int) {
+    let modules = plan_modules(plan)
+    
+    // Check if already added
+    let count = vec_len(modules)
+    let i = 0
+    while i < count {
+        if vec_get(modules, i) == module_id {
+            return  // Already present
+        }
+        i = i + 1
+    }
+    
+    vec_push(modules, module_id)
+}
+
+// ============================================================================
+// INTENT PARSING
+// Extract keywords from a natural language intent string
+// ============================================================================
+
+// Parse intent string into keywords
+// Returns: Vector of keyword hashes
+func parse_intent(intent: Int) -> Int {
+    let keywords = vec_new()
+    
+    // Simple tokenization: split by spaces and punctuation
+    let len = str_len(intent)
+    let word_start = 0
+    let i = 0
+    
+    while i <= len {
+        let ch = 0
+        if i < len {
+            ch = ae_load8(intent + i)
+        }
+        
+        // Check for word boundary
+        let is_boundary = 0
+        if i == len { is_boundary = 1 }
+        if ch == 32 { is_boundary = 1 }  // space
+        if ch == 44 { is_boundary = 1 }  // comma
+        if ch == 46 { is_boundary = 1 }  // period
+        if ch == 45 { is_boundary = 1 }  // hyphen
+        if ch == 95 { is_boundary = 1 }  // underscore
+        
+        if is_boundary == 1 && i > word_start {
+            // Extract word
+            let word_len = i - word_start
+            if word_len > 2 {  // Skip very short words
+                let word = extract_word(intent, word_start, word_len)
+                let lower = str_to_lower(word)
+                
+                // Skip common stop words
+                if is_stop_word(lower) == 0 {
+                    vec_push(keywords, lower)
+                }
+            }
+            word_start = i + 1
+        } else if is_boundary == 1 {
+            word_start = i + 1
+        }
+        
+        i = i + 1
+    }
+    
+    keywords
+}
+
+// Extract a word from string
+func extract_word(s: Int, start: Int, len: Int) -> Int {
+    let word = __builtin_malloc(len + 1)
+    
+    let i = 0
+    while i < len {
+        ae_store8(word + i, ae_load8(s + start + i))
+        i = i + 1
+    }
+    ae_store8(word + len, 0)  // Null terminator
+    
+    word
+}
+
+// Convert string to lowercase
+func str_to_lower(s: Int) -> Int {
+    let len = str_len(s)
+    let lower = __builtin_malloc(len + 1)
+    
+    let i = 0
+    while i < len {
+        let ch = ae_load8(s + i)
+        
+        // A-Z (65-90) -> a-z (97-122)
+        if ch >= 65 && ch <= 90 {
+            ch = ch + 32
+        }
+        
+        ae_store8(lower + i, ch)
+        i = i + 1
+    }
+    ae_store8(lower + len, 0)
+    
+    lower
+}
+
+// Check if word is a stop word (common words to ignore)
+func is_stop_word(word: Int) -> Int {
+    // Common stop words
+    if str_eq(word, "a") == 1 { return 1 }
+    if str_eq(word, "an") == 1 { return 1 }
+    if str_eq(word, "the") == 1 { return 1 }
+    if str_eq(word, "and") == 1 { return 1 }
+    if str_eq(word, "or") == 1 { return 1 }
+    if str_eq(word, "with") == 1 { return 1 }
+    if str_eq(word, "for") == 1 { return 1 }
+    if str_eq(word, "to") == 1 { return 1 }
+    if str_eq(word, "of") == 1 { return 1 }
+    if str_eq(word, "in") == 1 { return 1 }
+    if str_eq(word, "on") == 1 { return 1 }
+    if str_eq(word, "is") == 1 { return 1 }
+    if str_eq(word, "be") == 1 { return 1 }
+    if str_eq(word, "that") == 1 { return 1 }
+    if str_eq(word, "this") == 1 { return 1 }
+    
+    0
+}
+
+// ============================================================================
+// MODULE MATCHING
+// Match keywords to modules using Knowledge Graph
+// ============================================================================
+
+// Find modules matching keywords
+// Returns: Vector of module IDs (deduplicated)
+func match_keywords_to_modules(keywords: Int) -> Int {
+    kg_init()
+    
+    let matched = vec_new()
+    let seen = map_new()
+    
+    let count = vec_len(keywords)
+    let i = 0
+    
+    while i < count {
+        let keyword = vec_get(keywords, i)
+        
+        // Find modules for this keyword
+        let modules = kg_find_by_keyword(keyword)
+        let mod_count = vec_len(modules)
+        
+        let j = 0
+        while j < mod_count {
+            let mod_id = vec_get(modules, j)
+            
+            // Deduplicate
+            if map_has_int(seen, mod_id) == 0 {
+                vec_push(matched, mod_id)
+                map_set_int(seen, mod_id, 1)
+            }
+            
+            j = j + 1
+        }
+        
+        i = i + 1
+    }
+    
+    matched
+}
+
+// ============================================================================
+// DEPENDENCY RESOLUTION
+// Add all required dependencies for selected modules
+// ============================================================================
+
+// Resolve all dependencies for a set of modules
+// Returns: Topologically sorted list of module IDs
+func resolve_dependencies(modules: Int) -> Int {
+    let all_modules = vec_new()
+    let seen = map_new()
+    
+    // For each matched module, collect all deps
+    let count = vec_len(modules)
+    let i = 0
+    
+    while i < count {
+        let mod_id = vec_get(modules, i)
+        
+        // Add the module itself
+        if map_has_int(seen, mod_id) == 0 {
+            vec_push(all_modules, mod_id)
+            map_set_int(seen, mod_id, 1)
+        }
+        
+        // Add all dependencies
+        let deps = kg_get_all_deps(mod_id)
+        let dep_count = vec_len(deps)
+        
+        let j = 0
+        while j < dep_count {
+            let dep_id = vec_get(deps, j)
+            
+            if map_has_int(seen, dep_id) == 0 {
+                // Insert at beginning (dependencies first)
+                vec_insert(all_modules, 0, dep_id)
+                map_set_int(seen, dep_id, 1)
+            }
+            
+            j = j + 1
+        }
+        
+        i = i + 1
+    }
+    
+    // Topological sort (ensures deps come before dependents)
+    topological_sort(all_modules)
+}
+
+// Topological sort of modules by dependencies
+func topological_sort(modules: Int) -> Int {
+    let sorted = vec_new()
+    let in_degree = map_new()
+    let adj = map_new()
+    
+    // Initialize in-degrees
+    let count = vec_len(modules)
+    let i = 0
+    while i < count {
+        let mod_id = vec_get(modules, i)
+        map_set_int(in_degree, mod_id, 0)
+        map_set_int(adj, mod_id, vec_new())
+        i = i + 1
+    }
+    
+    // Count in-degrees
+    i = 0
+    while i < count {
+        let mod_id = vec_get(modules, i)
+        let deps = kg_get_all_deps(mod_id)
+        let dep_count = vec_len(deps)
+        
+        let j = 0
+        while j < dep_count {
+            let dep_id = vec_get(deps, j)
+            
+            // dep_id -> mod_id (mod_id depends on dep_id)
+            let neighbors = map_get_int(adj, dep_id)
+            if neighbors != 0 {
+                vec_push(neighbors, mod_id)
+                
+                let degree = map_get_int(in_degree, mod_id)
+                map_set_int(in_degree, mod_id, degree + 1)
+            }
+            
+            j = j + 1
+        }
+        
+        i = i + 1
+    }
+    
+    // Collect nodes with in-degree 0
+    let queue = vec_new()
+    i = 0
+    while i < count {
+        let mod_id = vec_get(modules, i)
+        if map_get_int(in_degree, mod_id) == 0 {
+            vec_push(queue, mod_id)
+        }
+        i = i + 1
+    }
+    
+    // Kahn's algorithm
+    while vec_len(queue) > 0 {
+        let node = vec_get(queue, 0)
+        vec_remove(queue, 0)
+        vec_push(sorted, node)
+        
+        let neighbors = map_get_int(adj, node)
+        if neighbors != 0 {
+            let n_count = vec_len(neighbors)
+            let j = 0
+            while j < n_count {
+                let neighbor = vec_get(neighbors, j)
+                let degree = map_get_int(in_degree, neighbor) - 1
+                map_set_int(in_degree, neighbor, degree)
+                
+                if degree == 0 {
+                    vec_push(queue, neighbor)
+                }
+                
+                j = j + 1
+            }
+        }
+    }
+    
+    sorted
+}
+
+// ============================================================================
+// MAIN PLANNING FUNCTION
+// ============================================================================
+
+// Create a plan from a natural language intent
+func plan_from_intent(intent: Int) -> Int {
+    let plan = plan_new()
+    
+    // Step 1: Parse keywords from intent
+    let keywords = parse_intent(intent)
+    
+    if vec_len(keywords) == 0 {
+        plan_set_status(plan, 2)  // Error: no keywords
+        return plan
+    }
+    
+    // Step 2: Match keywords to modules
+    let matched_modules = match_keywords_to_modules(keywords)
+    
+    if vec_len(matched_modules) == 0 {
+        plan_set_status(plan, 2)  // Error: no matching modules
+        return plan
+    }
+    
+    // Step 3: Resolve dependencies
+    let all_modules = resolve_dependencies(matched_modules)
+    
+    // Step 4: Add all modules to plan
+    let count = vec_len(all_modules)
+    let i = 0
+    while i < count {
+        plan_add_module(plan, vec_get(all_modules, i))
+        i = i + 1
+    }
+    
+    // Step 5: Set entry point (use first matched module's primary function)
+    if vec_len(matched_modules) > 0 {
+        let primary = vec_get(matched_modules, 0)
+        let api = kg_get_module_api(primary)
+        if vec_len(api) > 0 {
+            let first_func = vec_get(api, 0)
+            plan_set_entry(plan, func_sig_name(first_func))
+        }
+    }
+    
+    plan_set_status(plan, 1)  // Ready
+    plan
+}
+
+// Get number of modules in plan
+func plan_module_count(plan: Int) -> Int {
+    vec_len(plan_modules(plan))
+}
+
+// Get module at index
+func plan_get_module(plan: Int, idx: Int) -> Int {
+    vec_get(plan_modules(plan), idx)
+}
+
+// Get import statement for a module
+func plan_get_import(plan: Int, idx: Int) -> Int {
+    let mod_id = plan_get_module(plan, idx)
+    kg_get_module_name(mod_id)
+}
+
+// Debug: print plan
+func plan_debug(plan: Int) {
+    let count = plan_module_count(plan)
+    __builtin_print(count)  // Number of modules
+    
+    let i = 0
+    while i < count {
+        let name = plan_get_import(plan, i)
+        __builtin_print_str(name)
+        i = i + 1
+    }
+}

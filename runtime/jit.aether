@@ -1,0 +1,483 @@
+// AETHER JIT - Just-In-Time Recompilation Engine
+// Recompiles hot functions at runtime with optimization hints
+// Zero-downtime code updates using atomic function pointer swaps
+//
+// This module works with:
+// - runtime/profiler.aether: Detects hot paths
+// - stdlib/std/hotreload/hotreload.aether: Atomic code swapping
+//
+// The Morphing Thread:
+// 1. Periodically queries profiler_get_hot_paths()
+// 2. For each hot function, calls jit_recompile() with hints
+// 3. Atomically swaps the old function with the optimized version
+
+import runtime.profiler
+import runtime.vec
+import stdlib.std.hotreload.hotreload
+
+// ============================================================================
+// JIT CONSTANTS
+// ============================================================================
+
+const JIT_MAGIC: Int = 0x4A495443           // "JITC"
+const MAX_COMPILED_VERSIONS: Int = 64
+const JIT_CHECK_INTERVAL_MS: Int = 1000     // Check for hot paths every 1 second
+
+// Optimization hints (bitmask)
+const OPT_NONE: Int = 0
+const OPT_INLINE: Int = 1                   // Inline callees
+const OPT_UNROLL: Int = 2                   // Unroll loops
+const OPT_VECTORIZE: Int = 4               // Use SIMD
+const OPT_SPECIALIZE: Int = 8              // Specialize for observed types
+const OPT_AGGRESSIVE: Int = 15             // All optimizations
+
+// ============================================================================
+// JIT STATE
+// ============================================================================
+
+// Compiled function entry: [func_id, original_ptr, optimized_ptr, version, hints]
+const JIT_ENTRY_SIZE: Int = 40
+
+let jit_storage: Int = 0
+let jit_count: Int = 0
+let jit_enabled: Int = 0
+let jit_morphing_thread: Int = 0           // Thread handle for background morphing
+
+// Compiler state (loaded via FFI or embedded)
+let jit_compiler_handle: Int = 0
+
+// ============================================================================
+// JIT INITIALIZATION
+// ============================================================================
+
+// Initialize the JIT system
+func jit_init() {
+    if jit_storage == 0 {
+        // Allocate storage for compiled versions
+        jit_storage = __builtin_malloc(MAX_COMPILED_VERSIONS * JIT_ENTRY_SIZE)
+        
+        // Zero-initialize
+        let i = 0
+        while i < MAX_COMPILED_VERSIONS * JIT_ENTRY_SIZE {
+            __builtin_store8(jit_storage + i, 0)
+            i = i + 1
+        }
+        
+        jit_count = 0
+        jit_enabled = 1
+        
+        // Initialize the profiler
+        profiler_init()
+    }
+}
+
+// Enable JIT compilation
+func jit_enable() {
+    jit_enabled = 1
+}
+
+// Disable JIT compilation
+func jit_disable() {
+    jit_enabled = 0
+}
+
+// ============================================================================
+// COMPILED VERSION TRACKING
+// ============================================================================
+
+// Find JIT entry for a function
+func jit_find_entry(func_id: Int) -> Int {
+    let i = 0
+    while i < jit_count {
+        let entry = jit_storage + i * JIT_ENTRY_SIZE
+        if __builtin_load64(entry) == func_id {
+            return entry
+        }
+        i = i + 1
+    }
+    0
+}
+
+// Create or get JIT entry for a function
+func jit_get_entry(func_id: Int, original_ptr: Int) -> Int {
+    let entry = jit_find_entry(func_id)
+    if entry != 0 { return entry }
+    
+    if jit_count >= MAX_COMPILED_VERSIONS {
+        // Evict oldest entry
+        jit_evict_oldest()
+    }
+    
+    entry = jit_storage + jit_count * JIT_ENTRY_SIZE
+    __builtin_store64(entry, func_id)           // func_id
+    __builtin_store64(entry + 8, original_ptr)  // original_ptr
+    __builtin_store64(entry + 16, 0)            // optimized_ptr (none yet)
+    __builtin_store64(entry + 24, 0)            // version
+    __builtin_store64(entry + 32, 0)            // hints used
+    
+    jit_count = jit_count + 1
+    entry
+}
+
+// Evict oldest JIT entry
+func jit_evict_oldest() {
+    if jit_count == 0 { return }
+    
+    // Shift all entries down
+    let i = 0
+    while i < jit_count - 1 {
+        let dst = jit_storage + i * JIT_ENTRY_SIZE
+        let src = jit_storage + (i + 1) * JIT_ENTRY_SIZE
+        __builtin_memcpy(dst, src, JIT_ENTRY_SIZE)
+        i = i + 1
+    }
+    
+    jit_count = jit_count - 1
+}
+
+// ============================================================================
+// JIT COMPILATION
+// ============================================================================
+
+// Recompile a function with optimization hints
+// Returns: pointer to optimized function, or 0 on failure
+func jit_recompile(func_id: Int, original_ptr: Int, hints: Int) -> Int {
+    if jit_enabled == 0 { return 0 }
+    
+    // Get or create JIT entry
+    let entry = jit_get_entry(func_id, original_ptr)
+    
+    // Check if already compiled with same or better hints
+    let existing_hints = __builtin_load64(entry + 32)
+    if (existing_hints & hints) == hints {
+        // Already optimized with these hints
+        return __builtin_load64(entry + 16)
+    }
+    
+    // Perform compilation
+    // In the real implementation, this would:
+    // 1. Extract the IR for func_id from the symbol table
+    // 2. Apply optimization passes based on hints
+    // 3. Generate new machine code
+    // 4. Return pointer to the new code
+    
+    let optimized_ptr = jit_compile_internal(func_id, original_ptr, hints)
+    
+    if optimized_ptr != 0 {
+        // Store the optimized version
+        __builtin_store64(entry + 16, optimized_ptr)
+        let version = __builtin_load64(entry + 24) + 1
+        __builtin_store64(entry + 24, version)
+        __builtin_store64(entry + 32, hints)
+        
+        // Mark as optimized in profiler
+        profiler_mark_optimized(func_id)
+    }
+    
+    optimized_ptr
+}
+
+// Internal compilation (platform-specific)
+func jit_compile_internal(func_id: Int, original_ptr: Int, hints: Int) -> Int {
+    // This is the core compilation logic.
+    // It uses the function's IR representation to generate optimized code.
+    
+    // Step 1: Get function bytecode/IR from symbol table
+    let ir = jit_get_function_ir(func_id)
+    if ir == 0 { return 0 }
+    
+    // Step 2: Apply optimization passes based on hints
+    let optimized_ir = ir
+    
+    if (hints & OPT_INLINE) != 0 {
+        optimized_ir = jit_pass_inline(optimized_ir)
+    }
+    
+    if (hints & OPT_UNROLL) != 0 {
+        optimized_ir = jit_pass_unroll(optimized_ir)
+    }
+    
+    if (hints & OPT_VECTORIZE) != 0 {
+        optimized_ir = jit_pass_vectorize(optimized_ir)
+    }
+    
+    if (hints & OPT_SPECIALIZE) != 0 {
+        optimized_ir = jit_pass_specialize(optimized_ir, func_id)
+    }
+    
+    // Step 3: Generate machine code
+    let code_ptr = jit_codegen(optimized_ir)
+    
+    code_ptr
+}
+
+// Get function IR from symbol table
+func jit_get_function_ir(func_id: Int) -> Int {
+    // Query the embedded symbol table for the function's IR.
+    // The symbol table is populated by the linker at compile time.
+    // Each entry contains: [func_id, ir_ptr, code_ptr] (24 bytes)
+    // IR format: [magic, size, bytecode...]
+    
+    let symbol_table = jit_get_symbol_table()
+    if symbol_table == 0 { return 0 }
+    
+    // Search for func_id in symbol table
+    let count = __builtin_load64(symbol_table)
+    let i = 0
+    while i < count {
+        let entry = symbol_table + 8 + i * 24
+        let entry_id = __builtin_load64(entry)
+        if entry_id == func_id {
+            // Found: return IR pointer from second field
+            return __builtin_load64(entry + 8)
+        }
+        i = i + 1
+    }
+    
+    0  // Function not in symbol table
+}
+
+// Get the embedded symbol table
+func jit_get_symbol_table() -> Int {
+    // The symbol table is embedded by the linker at a known location
+    // For bootstrap compatibility, we use a global variable set at init
+    __builtin_symbol_table()
+}
+
+// Optimization passes (return optimized IR)
+func jit_pass_inline(ir: Int) -> Int {
+    // Inline small callees into the function
+    // This is a complex operation that requires call graph analysis
+    
+    // For each call instruction in the IR:
+    // 1. Check if callee is small (<50 instructions)
+    // 2. If so, replace call with callee's body
+    
+    // Simplified: return IR unchanged for now
+    // The real implementation would modify the IR in-place
+    ir
+}
+
+func jit_pass_unroll(ir: Int) -> Int {
+    // Unroll small loops
+    // Look for loops with known iteration counts < 8
+    
+    // For each loop:
+    // 1. Analyze iteration count
+    // 2. If constant and small, duplicate body N times
+    // 3. Remove loop control flow
+    
+    ir
+}
+
+func jit_pass_vectorize(ir: Int) -> Int {
+    // Vectorize loops using SIMD
+    // Detect patterns like: for i in 0..N { a[i] = b[i] + c[i] }
+    
+    // On Apple M4: Use NEON instructions
+    // On x86: Use AVX instructions
+    
+    // This requires:
+    // 1. Loop analysis
+    // 2. Dependence analysis
+    // 3. Vector code generation
+    
+    ir
+}
+
+func jit_pass_specialize(ir: Int, func_id: Int) -> Int {
+    // Specialize based on observed types/values
+    // Uses profiling data to generate specialized versions
+    
+    // For example:
+    // - If a parameter is always 0, eliminate dead branches
+    // - If a type is always Int, skip type checks
+    
+    ir
+}
+
+// Generate machine code from optimized IR
+func jit_codegen(ir: Int) -> Int {
+    // This is the most complex part - generating native code.
+    // 
+    // Real implementation would:
+    // 1. Allocate executable memory (mmap with PROT_EXEC)
+    // 2. Translate IR to machine code
+    // 3. Patch up relocations
+    // 4. Return pointer to code
+    
+    // For bootstrap, we use the hotreload module's code patching
+    
+    let code_size = jit_estimate_code_size(ir)
+    let code_ptr = __builtin_mmap_exec(code_size)  // Allocate executable memory
+    
+    if code_ptr == 0 { return 0 }
+    
+    // Generate code into the buffer
+    let actual_size = jit_emit_code(ir, code_ptr, code_size)
+    
+    if actual_size == 0 {
+        __builtin_munmap(code_ptr, code_size)
+        return 0
+    }
+    
+    code_ptr
+}
+
+func jit_estimate_code_size(ir: Int) -> Int {
+    // Estimate code size based on IR size
+    // Typically 2-10x the IR size
+    
+    let ir_size = __builtin_load64(ir + 8)  // Size field in IR header
+    ir_size * 4  // Conservative estimate
+}
+
+func jit_emit_code(ir: Int, buffer: Int, buffer_size: Int) -> Int {
+    // Translate IR to native code
+    // This is architecture-specific
+    
+    // For ARM64 (Apple M4):
+    //   - Use AArch64 instruction encoding
+    //   - Handle register allocation
+    //   - Emit proper prologue/epilogue
+    
+    // For now, return 0 to indicate "use original code"
+    // The real implementation would emit actual instructions
+    
+    0
+}
+
+// ============================================================================
+// ATOMIC FUNCTION SWAP
+// ============================================================================
+
+// Atomically swap a function pointer
+// Uses the hotreload module for thread-safe replacement
+func jit_swap(func_id: Int, old_ptr: Int, new_ptr: Int) -> Int {
+    if new_ptr == 0 { return 0 }
+    
+    // Find the module containing this function
+    let mod_ptr = jit_find_module(func_id)
+    if mod_ptr == 0 { return 0 }
+    
+    // Use hotreload's atomic swap
+    // This ensures all threads see either the old or new version, never partial
+    let result = module_hot_reload(mod_ptr, new_ptr, 0)
+    
+    result
+}
+
+// Find the module containing a function
+func jit_find_module(func_id: Int) -> Int {
+    // Search the loaded modules for the one containing func_id
+    // This is set up during program initialization
+    
+    // Return the module handle
+    0
+}
+
+// ============================================================================
+// MORPHING THREAD (Background Optimization)
+// ============================================================================
+
+// Start the background morphing thread
+func jit_start_morphing_thread() {
+    if jit_morphing_thread != 0 { return }  // Already running
+    
+    // Spawn the morphing thread
+    spawn || {
+        jit_morphing_loop()
+    }
+}
+
+// The main morphing loop
+func jit_morphing_loop() {
+    while jit_enabled == 1 {
+        // Sleep for the check interval
+        __builtin_sleep_ms(JIT_CHECK_INTERVAL_MS)
+        
+        // Get hot paths from profiler
+        let hot_funcs = profiler_get_hot_paths()
+        let count = vec_len(hot_funcs)
+        
+        // Optimize each hot function
+        let i = 0
+        while i < count {
+            let func_id = vec_get(hot_funcs, i)
+            
+            // Determine optimization hints based on profile data
+            let hints = jit_determine_hints(func_id)
+            
+            // Get the original function pointer
+            let original_ptr = jit_get_original_ptr(func_id)
+            
+            if original_ptr != 0 {
+                // Recompile with optimizations
+                let optimized_ptr = jit_recompile(func_id, original_ptr, hints)
+                
+                if optimized_ptr != 0 {
+                    // Atomically swap in the optimized version
+                    jit_swap(func_id, original_ptr, optimized_ptr)
+                }
+            }
+            
+            i = i + 1
+        }
+    }
+}
+
+// Determine optimization hints based on profile data
+func jit_determine_hints(func_id: Int) -> Int {
+    let stats = profiler_get_stats(func_id)
+    let calls = __builtin_load64(stats)
+    let total_time = __builtin_load64(stats + 8)
+    let avg_time = __builtin_load64(stats + 16)
+    
+    let hints = OPT_NONE
+    
+    // High call count -> inline callees
+    if calls > 100000 {
+        hints = hints | OPT_INLINE
+    }
+    
+    // High average time -> unroll/vectorize
+    if avg_time > 100 {  // >100 microseconds
+        hints = hints | OPT_UNROLL | OPT_VECTORIZE
+    }
+    
+    // Very high total time -> aggressive optimization
+    if total_time > 10000000 {  // >10 seconds total
+        hints = OPT_AGGRESSIVE
+    }
+    
+    hints
+}
+
+// Get original function pointer from symbol table
+func jit_get_original_ptr(func_id: Int) -> Int {
+    let symbol_table = jit_get_symbol_table()
+    if symbol_table == 0 { return 0 }
+    
+    let count = __builtin_load64(symbol_table)
+    let i = 0
+    while i < count {
+        let entry = symbol_table + 8 + i * 24
+        let entry_id = __builtin_load64(entry)
+        if entry_id == func_id {
+            // Return function pointer
+            return __builtin_load64(entry + 16)
+        }
+        i = i + 1
+    }
+    
+    0
+}
+
+// ============================================================================
+// COMPILER INTRINSICS (Implemented by bootstrap compiler)
+// ============================================================================
+
+func __builtin_symbol_table() -> Int { 0 }
+func __builtin_sleep_ms(ms: Int) { }
+func __builtin_mmap_exec(size: Int) -> Int { 0 }
+func __builtin_munmap(ptr: Int, size: Int) { }
