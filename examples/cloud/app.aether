@@ -1,0 +1,50 @@
+import stdlib.postgres
+import stdlib.http
+
+func main() -> Int {
+    println()
+    print_str("AETHER CLOUD DEMO")
+    println()
+    
+    // 1. Connect to PostgreSQL
+    print_str("Connecting to database...")
+    println()
+    
+    let conn_str = "host=db user=postgres password=secret dbname=aether"
+    let conn_res = PgConn::connect(conn_str)
+    
+    match conn_res {
+        Result::Ok(conn) => {
+            print_str("Connected to Postgres!")
+            println()
+            conn.close()
+        }
+        Result::Err(msg) => {
+            print_str("DB Connection Failed (Expected if no DB running)")
+            println()
+        }
+    }
+    
+    // 2. HTTP Request (Firebase)
+    print_str("Sending HTTP Request to Firebase...")
+    println()
+    
+    let client = HttpClient::new()
+    let res = client.get("https://firestore.googleapis.com/v1/projects/my-app/databases/(default)/documents/users")
+    
+    match res {
+        Result::Ok(body) => {
+            print_str("Request Sent!")
+            println()
+        }
+        Result::Err(code) => {
+            print_str("Request Failed with code: ")
+            print_int(code)
+            println()
+        }
+    }
+    
+    client.close()
+    
+    0
+}

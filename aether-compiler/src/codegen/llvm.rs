@@ -14,6 +14,10 @@ pub struct LLVMCodeGen {
     ir: String,
     /// Function declarations
     functions: Vec<String>,
+    /// External functions to declare (FFI)
+    external_funcs: std::collections::HashSet<String>,
+    /// Defined functions
+    defined_funcs: std::collections::HashSet<String>,
     /// Local variable counter for SSA
     var_counter: usize,
     /// Local variable map (name -> SSA name)
@@ -29,6 +33,8 @@ impl LLVMCodeGen {
         LLVMCodeGen {
             ir: String::new(),
             functions: Vec::new(),
+            external_funcs: std::collections::HashSet::new(),
+            defined_funcs: std::collections::HashSet::new(),
             var_counter: 0,
             locals: HashMap::new(),
             label_counter: 0,
@@ -103,6 +109,9 @@ impl LLVMCodeGen {
             self.emit(&format!("store {} %{}, {}* {}", ty, name, ty, ptr));
             self.locals.insert(name.to_string(), ptr);
         }
+        
+        // Track definition
+        self.defined_funcs.insert(name.to_string());
     }
     
     /// Generate function end
@@ -181,6 +190,11 @@ impl LLVMCodeGen {
     
     /// Generate function call
     pub fn emit_call(&mut self, name: &str, args: &[&str], ret_type: &str) -> String {
+        // Track external usage
+        if !name.starts_with("llvm.") {
+            self.external_funcs.insert(name.to_string());
+        }
+    
         let args_str = args.iter()
             .map(|a| format!("i64 {}", a))
             .collect::<Vec<_>>()
@@ -251,9 +265,40 @@ impl LLVMCodeGen {
         result
     }
     
-    /// Get generated IR
-    pub fn get_ir(&self) -> &str {
-        &self.ir
+    /// Get generated IR (with auto-generated FFI declarations)
+    pub fn get_ir(&self) -> String {
+        let mut final_ir = self.ir.clone();
+        
+        // Auto-declare external functions (FFI)
+        let mut decls = String::new();
+        decls.push_str("\n; Auto-generated FFI Declarations\n");
+        
+        let builtins = ["malloc", "free", "write", "read", "open", "close", "mmap", "pthread_create", "pthread_join"];
+        
+        for func in &self.external_funcs {
+            if !self.defined_funcs.contains(func) && !builtins.contains(&func.as_str()) {
+                // Declare as varargs i64 function to match C ABI flexibly
+                decls.push_str(&format!("declare i64 @{}(...)\n", func));
+            }
+        }
+        decls.push_str("\n");
+        
+        // Insert declarations after header (find first empty line or just append to header?)
+        // self.ir starts with header.
+        // We can just construct a new string
+        
+        // Actually, simpler: just return header + decls + rest
+        // But self.ir already contains header.
+        // Let's insert after target triple.
+        
+        if let Some(pos) = final_ir.find("declare i8* @malloc") {
+             final_ir.insert_str(pos, &decls);
+        } else {
+             // Fallback
+             final_ir.insert_str(0, &decls);
+        }
+        
+        final_ir
     }
     
     /// Allocate a local variable

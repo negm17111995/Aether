@@ -41,13 +41,9 @@ struct Cli {
     #[arg(short = 'O', long, default_value = "2", global = true)]
     opt_level: u8,
 
-    /// Emit assembly instead of binary
+    /// Emit assembly instead of binary (LLVM IR)
     #[arg(long, global = true)]
     emit_asm: bool,
-
-    /// Emit LLVM IR and use LLVM opt/llc for maximum optimization
-    #[arg(long, global = true)]
-    emit_llvm: bool,
 
     /// Enable debug info
     #[arg(short = 'g', long, global = true)]
@@ -135,7 +131,7 @@ fn compile_file(input: &PathBuf, cli: &Cli) -> anyhow::Result<()> {
     // Read source
     let source = std::fs::read_to_string(input)?;
     if cli.verbose {
-        println!("[1/6] Lexing {} ({} bytes)...", input.display(), source.len());
+        println!("[1/5] Lexing {} ({} bytes)...", input.display(), source.len());
     }
     
     // Lex
@@ -146,87 +142,86 @@ fn compile_file(input: &PathBuf, cli: &Cli) -> anyhow::Result<()> {
     
     // Parse
     if cli.verbose {
-        println!("[2/6] Parsing...");
+        println!("[2/5] Parsing...");
     }
     let ast = parser::parse(&tokens)?;
-    if cli.verbose {
-        println!("      {} declarations", ast.decls.len());
-    }
     
     // Type check
     if cli.verbose {
-        println!("[3/6] Type checking...");
+        println!("[3/5] Type checking...");
     }
     let typed_ast = typechecker::check(&ast)?;
     
     // Borrow check
     if cli.verbose {
-        println!("[4/6] Borrow checking...");
+        println!("[4/5] Borrow checking...");
     }
     borrowck::check(&typed_ast)?;
     
-    // Determine target
-    let target = cli.target.clone().unwrap_or_else(|| {
-        #[cfg(target_os = "macos")]
-        #[cfg(target_arch = "aarch64")]
-        return "aarch64-apple-darwin".to_string();
-        
-        #[cfg(target_os = "macos")]
-        #[cfg(target_arch = "x86_64")]
-        return "x86_64-apple-darwin".to_string();
-        
-        #[cfg(target_os = "linux")]
-        #[cfg(target_arch = "aarch64")]
-        return "aarch64-unknown-linux-gnu".to_string();
-        
-        #[cfg(target_os = "linux")]
-        #[cfg(target_arch = "x86_64")]
-        return "x86_64-unknown-linux-gnu".to_string();
-        
-        #[cfg(target_os = "windows")]
-        return "x86_64-pc-windows-msvc".to_string();
-        
-        #[allow(unreachable_code)]
-        "x86_64-unknown-linux-gnu".to_string()
-    });
+    // LLVM Code Generation
+    if cli.verbose {
+        println!("[5/5] Generating LLVM IR...");
+    }
     
-    // LLVM Mode
-    if cli.emit_llvm {
+    let mut llvm_gen = codegen::llvm::LLVMCodeGen::new();
+    llvm_gen.emit_header();
+    
+    for typed_decl in &typed_ast.decls {
+        llvm_gen.gen_function(&typed_decl.decl);
+    }
+    
+    let ir = llvm_gen.get_ir();
+    
+    // Output handling
+    if cli.emit_asm {
+        // Just write .ll file if emit_asm requested (treating IR as assembly for now)
         let ll_path = cli.output.with_extension("ll");
-        let mut llvm_gen = codegen::llvm::LLVMCodeGen::new();
-        llvm_gen.emit_header();
+        std::fs::write(&ll_path, ir)?;
+        println!("✓ Generated LLVM IR: {}", ll_path.display());
+    } else {
+        // Compile using system clang
+        // 1. Write temp .ll
+        let ll_path = cli.output.with_extension("ll");
+        std::fs::write(&ll_path, ir)?;
         
-        // Generate IR for each function using full codegen
-        for typed_decl in &typed_ast.decls {
-            llvm_gen.gen_function(&typed_decl.decl);
+        if cli.verbose {
+            println!("      Compiling with system clang -O3...");
         }
         
-        std::fs::write(&ll_path, llvm_gen.get_ir())?;
-        println!("✓ Generated LLVM IR: {}", ll_path.display());
+        // 2. Invoke clang
+        let mut cmd = std::process::Command::new("clang");
+        cmd.arg("-O3")
+           .arg(&ll_path)
+           .arg("-o")
+           .arg(&cli.output);
+           
+        // Target settings if needed, but clang usually auto-detects host
+        if let Some(target) = &cli.target {
+            cmd.arg("--target").arg(target);
+        }
         
-        return Ok(());
-    }
-    
-    // Code generation
-    if cli.verbose {
-        println!("[5/6] Generating code for {}...", target);
-    }
-    let mut codegen = codegen::CodeGen::new(&target, cli.opt_level);
-    codegen.generate(&typed_ast);
-    
-    // Write binary
-    if cli.verbose {
-        println!("[6/6] Writing binary...");
-    }
-    
-    if cli.emit_asm {
-        let asm = codegen.get_asm();
-        let asm_path = cli.output.with_extension("s");
-        std::fs::write(&asm_path, asm)?;
-        println!("✓ Assembly written to: {}", asm_path.display());
-    } else {
-        binary::write(&cli.output, codegen.get_asm().as_bytes(), &target)?;
-        println!("✓ Binary written to: {}", cli.output.display());
+        let output = cmd.output();
+        
+        match output {
+            Ok(out) => {
+                if !out.status.success() {
+                    let err = String::from_utf8_lossy(&out.stderr);
+                    anyhow::bail!("Clang compilation failed:\n{}", err);
+                }
+                println!("✓ Binary written to: {}", cli.output.display());
+                
+                // Cleanup intermediate file unless verbose
+                if !cli.verbose && !cli.debug {
+                    let _ = std::fs::remove_file(ll_path);
+                }
+            }
+            Err(e) => {
+                println!("! Error invoking clang: {}", e);
+                println!("  Ensure clang is installed and in PATH.");
+                println!("  Check generated IR at: {}", ll_path.display());
+                return Err(e.into());
+            }
+        }
     }
     
     Ok(())

@@ -1,0 +1,60 @@
+// Aether PostgreSQL Binding (libpq)
+
+// C Function signatures (auto-declared by Aether Compiler):
+// func PQconnectdb(conninfo: String) -> Int
+// func PQstatus(conn: Int) -> Int
+// func PQerrorMessage(conn: Int) -> String
+// func PQexec(conn: Int, query: String) -> Int
+// func PQresultStatus(res: Int) -> Int
+// func PQclear(res: Int)
+// func PQfinish(conn: Int)
+
+struct PgConn {
+    handle: Int
+}
+
+struct PgResult {
+    handle: Int
+}
+
+impl PgConn {
+    func connect(conninfo: String) -> Result<PgConn, String> {
+        let handle = PQconnectdb(conninfo)
+        
+        // CONNECTION_OK = 0
+        if PQstatus(handle) != 0 {
+            // let msg = PQerrorMessage(handle) 
+            // In real impl convert C-string to Aether String
+            PQfinish(handle)
+            return Result::Err("Connection failed")
+        }
+        
+        Result::Ok(PgConn { handle: handle })
+    }
+    
+    func query(self, sql: String) -> Result<PgResult, String> {
+        let res_handle = PQexec(self.handle, sql)
+        
+        // PGRES_COMMAND_OK = 1, PGRES_TUPLES_OK = 2
+        let status = PQresultStatus(res_handle)
+        
+        if status != 1 {
+            if status != 2 {
+                PQclear(res_handle)
+                return Result::Err("Query failed")
+            }
+        }
+        
+        Result::Ok(PgResult { handle: res_handle })
+    }
+    
+    func close(self) {
+        PQfinish(self.handle)
+    }
+}
+
+impl PgResult {
+    func clear(self) {
+        PQclear(self.handle)
+    }
+}

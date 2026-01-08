@@ -1,0 +1,34 @@
+// Aether HTTP Binding (libcurl)
+
+// func curl_easy_init() -> Int
+// func curl_easy_setopt(handle: Int, option: Int, value: Int) -> Int
+// func curl_easy_perform(handle: Int) -> Int
+// func curl_easy_cleanup(handle: Int)
+
+struct HttpClient {
+    handle: Int
+}
+
+impl HttpClient {
+    func new() -> HttpClient {
+        HttpClient { handle: curl_easy_init() }
+    }
+    
+    func get(self, url: String) -> Result<String, Int> {
+        // CURLOPT_URL = 10002
+        curl_easy_setopt(self.handle, 10002, url)
+        
+        // Perform request
+        let res = curl_easy_perform(self.handle)
+        
+        if res != 0 {
+            return Result::Err(res)
+        }
+        
+        Result::Ok("Response Received (Body parsing todo)")
+    }
+    
+    func close(self) {
+        curl_easy_cleanup(self.handle)
+    }
+}
